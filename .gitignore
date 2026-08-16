@@ -5,6 +5,7 @@
 application_default_credentials.json
 gcp-credentials*.json
 *.credentials.json
+gha-creds-*.json
 
 # Terraform working data and private local inputs
 **/.terraform/*
@@ -13,8 +14,7 @@ gcp-credentials*.json
 *.tfplan
 *.plan
 .terraform.tfstate.lock.info
-terraform.tfvars
-*.auto.tfvars
-!*.auto.tfvars.example
+*.tfvars
+*.tfvars.json
 crash.log
 crash.*.log
