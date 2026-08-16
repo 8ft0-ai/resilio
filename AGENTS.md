@@ -9,6 +9,7 @@ This file defines repository-local operating expectations for contributors and e
 - Capability is not authority. Access to mutate the repository, GitHub settings or cloud resources does not itself authorise that action.
 - Treat stale summaries and handovers as navigation aids. Refresh decision-critical state before consequential actions.
 - Prefer evidence from the exact candidate, commit, workflow run or runtime state being judged.
+- Fail closed when required authority or decision-critical evidence cannot be established: do not perform the consequential mutation, and surface the unresolved boundary instead of inferring permission or state.
 
 ## Change discipline
 
