@@ -87,7 +87,18 @@ def check_sensitive_filenames(files: list[str], errors: list[str]) -> None:
         name = path.name
         if (
             name in FORBIDDEN_TRACKED_NAMES
-            or name.endswith((".tfstate", ".tfstate.backup", ".tfplan", ".auto.tfvars"))
+            or name.endswith(
+                (
+                    ".tfstate",
+                    ".tfstate.backup",
+                    ".tfplan",
+                    ".tfvars",
+                    ".tfvars.json",
+                    ".credentials.json",
+                )
+            )
+            or (name.startswith("gha-creds-") and name.endswith(".json"))
+            or (name.startswith("gcp-credentials") and name.endswith(".json"))
         ):
             errors.append(f"sensitive state/config filename must not be tracked: {relative}")
 
