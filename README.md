@@ -30,6 +30,10 @@ The project is currently in its design/foundation stage. The discussions and dec
 - [Security and private-state boundary](docs/security-and-private-state.md)
 - [Reference cost model](docs/cost-model.md)
 - [Delivery roadmap](docs/roadmap.md)
+- [Repository governance controls](docs/repository-governance.md)
+- [Architecture decision records](docs/adr/README.md)
+
+Repository contribution and security expectations are documented in [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the repository-local [AGENTS.md](AGENTS.md) operating contract.
 
 The first meaningful engineering milestone is **M0 — Resilio can change itself safely**: a governed path from authorised Git change through build, deployment and verification using short-lived identity, private remote state, auditable evidence and the declared cost constraint.
 
