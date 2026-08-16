@@ -189,10 +189,20 @@ def check_terraform_contract(errors: list[str]) -> None:
 
     bootstrap = ROOT / "infra/bootstrap/main.tf"
     if bootstrap.is_file():
-        text = bootstrap.read_text(encoding="utf-8").lower()
+        text = bootstrap.read_text(encoding="utf-8")
+        lowered = text.lower()
         for token in FORBIDDEN_BOOTSTRAP_TOKENS:
-            if token.lower() in text:
+            if token.lower() in lowered:
                 errors.append(f"bootstrap configuration contains forbidden authority/resource token: {token}")
+
+        for nonblocking_guard in (
+            'check "project_creation_configuration"',
+            'check "precreated_import_parent"',
+        ):
+            if nonblocking_guard in text:
+                errors.append("project bootstrap mode/parent guards must be blocking preconditions, not check blocks")
+        if "local.project_creation_configuration_valid" not in text or text.count("precondition {") < 2:
+            errors.append("both bootstrap project resources must enforce the blocking project mode/parent precondition")
 
 
 def main() -> int:
