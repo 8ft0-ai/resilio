@@ -1,0 +1,20 @@
+# Local environment / credentials
+.env
+.env.*
+!.env.example
+application_default_credentials.json
+gcp-credentials*.json
+*.credentials.json
+
+# Terraform working data and private local inputs
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.plan
+.terraform.tfstate.lock.info
+terraform.tfvars
+*.auto.tfvars
+!*.auto.tfvars.example
+crash.log
+crash.*.log

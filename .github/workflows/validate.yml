@@ -13,10 +13,24 @@ jobs:
   validate:
     name: repository
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.8
+
       - name: Validate repository invariants
         run: python3 scripts/validate_repo.py
+
+      - name: Check Terraform formatting
+        run: terraform -chdir=infra/bootstrap fmt -check -recursive
+
+      - name: Initialise Terraform without a backend
+        run: terraform -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly
+
+      - name: Validate Terraform configuration
+        run: terraform -chdir=infra/bootstrap validate
