@@ -15,32 +15,18 @@ locals {
   control_org_id    = var.project_parent_type == "organization" ? var.project_parent_id : null
   control_folder_id = var.project_parent_type == "folder" ? var.project_parent_id : null
   state_bucket_name = "${var.control_project_id}-${var.state_bucket_suffix}"
-}
 
-check "project_creation_configuration" {
-  assert {
-    condition = (
-      var.project_creation_mode == "precreated-import" ||
-      (
-        contains(["organization", "folder"], var.project_parent_type) &&
-        try(trimspace(var.project_parent_id), "") != ""
-      )
+  project_creation_configuration_valid = (
+    var.project_creation_mode == "precreated-import"
+    ? (
+      var.project_parent_type == "none" &&
+      var.project_parent_id == null
     )
-    error_message = "managed-parent mode requires an existing organization/folder parent; otherwise use precreated-import and import both owner-created projects before planning."
-  }
-}
-
-check "precreated_import_parent" {
-  assert {
-    condition = (
-      var.project_creation_mode != "precreated-import" ||
-      (
-        var.project_parent_type == "none" &&
-        var.project_parent_id == null
-      )
+    : (
+      contains(["organization", "folder"], var.project_parent_type) &&
+      try(trimspace(var.project_parent_id), "") != ""
     )
-    error_message = "precreated-import mode must use project_parent_type=none with no parent ID."
-  }
+  )
 }
 
 resource "google_project" "control" {
@@ -56,6 +42,13 @@ resource "google_project" "control" {
     system = "resilio"
     role   = "control"
   }
+
+  lifecycle {
+    precondition {
+      condition     = local.project_creation_configuration_valid
+      error_message = "managed-parent mode requires an existing organization/folder parent; precreated-import must use project_parent_type=none with no parent ID and both owner-created projects imported before the authoritative plan."
+    }
+  }
 }
 
 resource "google_project" "reference" {
@@ -70,6 +63,13 @@ resource "google_project" "reference" {
   labels = {
     system = "resilio"
     role   = "reference"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.project_creation_configuration_valid
+      error_message = "managed-parent mode requires an existing organization/folder parent; precreated-import must use project_parent_type=none with no parent ID and both owner-created projects imported before the authoritative plan."
+    }
   }
 }
 
