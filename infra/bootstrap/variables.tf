@@ -9,6 +9,16 @@ variable "billing_account_id" {
   }
 }
 
+variable "budget_units" {
+  description = "Whole units of the Cloud Billing account's native currency used for the monthly alert budget. Select owner-locally so the amount does not exceed the repository US$10/month engineering ceiling."
+  type        = number
+
+  validation {
+    condition     = var.budget_units > 0 && var.budget_units == floor(var.budget_units)
+    error_message = "budget_units must be a positive whole number in the billing account's native currency."
+  }
+}
+
 variable "control_project_id" {
   description = "Globally unique project ID for the Resilio control plane."
   type        = string
