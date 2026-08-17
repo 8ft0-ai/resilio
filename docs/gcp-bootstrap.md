@@ -108,16 +108,22 @@ A successful short-lived token exchange from trusted `main` is sufficient proof.
 
 ## Cost control
 
-The bootstrap defines one monthly **US$10** Cloud Billing budget scoped to the control and reference project numbers with:
+The repository-level architectural constraint remains a normal-spend target of at most **US$5/month** and an engineering ceiling of **US$10/month**.
 
-- 50% current-spend threshold — the US$5 normal target;
+Cloud Billing budgets, however, use the billing account's native currency. The bootstrap therefore does not hard-code a `currency_code`. Gate B supplies `budget_units` as whole units of the billing account's native currency only after current exchange-rate evidence proves that the selected amount is no greater than the US$10 engineering ceiling. A stricter local-currency budget is acceptable; the budget must never be rounded or converted upward beyond the ceiling merely to approximate US$10.
+
+The monthly budget remains scoped to the control and reference project numbers with:
+
+- 50% current-spend threshold — at or below the US$5 normal target when the selected budget is at or below the US$10 ceiling;
 - 80% current-spend threshold — early warning;
-- 100% current-spend threshold — engineering ceiling; and
+- 100% current-spend threshold — the selected conservative alert boundary; and
 - 100% forecasted-spend threshold.
+
+For the current issue #6 owner environment, the billing account is denominated in AUD and Gate B uses `budget_units = 10`. The evidence establishing that AUD 10 is below the US$10 ceiling is recorded in the governed issue rather than hard-coded into reusable Terraform.
 
 Default billing-recipient notifications are used; no Pub/Sub or automated billing shutdown is introduced.
 
-A budget is a detection control, not a hard cap. Pricing and free-tier assumptions must be refreshed immediately before Gate B execution.
+A budget is a detection control, not a hard cap. Pricing, exchange-rate and free-tier assumptions must be refreshed immediately before Gate B execution.
 
 ## Gate B execution and evidence
 
@@ -125,11 +131,12 @@ Cloud mutation requires the still-valid issue #6 authority and owner-authenticat
 
 1. refresh `main`, the governing comments and current official pricing/capability facts;
 2. verify project-ID availability, hierarchy, effective default-network policy, billing access and permissions;
-3. select exactly one project creation mode;
-4. initialise with a temporary local backend;
-5. if Terraform must create projects under a parent, establish those project prerequisites first, then produce the authoritative full plan for the remaining bootstrap;
-6. if projects were precreated, import both before producing the authoritative full plan;
-7. inspect the plan and stop on any resource, IAM grant or service outside the approved shape.
+3. read the billing account's native currency and choose `budget_units` only after proving the resulting local-currency amount is no greater than the current US$10 engineering ceiling;
+4. select exactly one project creation mode;
+5. initialise with a temporary local backend;
+6. if Terraform must create projects under a parent, establish those project prerequisites first, then produce the authoritative full plan for the remaining bootstrap;
+7. if projects were precreated, import both before producing the authoritative full plan;
+8. inspect the plan and stop on any resource, IAM grant, service or cost-control shape outside the approved boundary.
 
 After apply, independently re-read the projects, enabled services, bucket controls, Workload Identity configuration, service-account keys/IAM and budget. Then migrate the same state to GCS and prove both remote-state readability and local-state removal.
 
