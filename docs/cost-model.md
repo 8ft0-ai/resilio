@@ -80,6 +80,8 @@ Expected controls include:
 - automatic cleanup; and
 - detection of residual billable resources after experiments.
 
+Google Cloud Billing budgets are denominated in the billing account's native currency. The repository-level US$5 normal target and US$10 engineering ceiling remain the architectural authority, so each concrete deployment must select a native-currency alert amount that current exchange-rate evidence proves is no greater than the US$10 ceiling. A stricter local-currency budget is valid and keeps the 50% threshold at or below the US$5 normal target. Do not automatically increase the local-currency budget as exchange rates move; exchange-rate evidence is an execution-time guard, not a mechanism for weakening the ceiling.
+
 A possible policy shape is:
 
 ```yaml
