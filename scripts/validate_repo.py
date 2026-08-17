@@ -204,6 +204,19 @@ def check_terraform_contract(errors: list[str]) -> None:
         if "local.project_creation_configuration_valid" not in text or text.count("precondition {") < 2:
             errors.append("both bootstrap project resources must enforce the blocking project mode/parent precondition")
 
+        if re.search(r"\bcurrency_code\s*=", text):
+            errors.append("bootstrap budget must use the billing account's native currency; do not hard-code currency_code")
+        if "units = var.budget_units" not in text:
+            errors.append("bootstrap budget amount must come from validated budget_units")
+
+    variables = ROOT / "infra/bootstrap/variables.tf"
+    if variables.is_file():
+        text = variables.read_text(encoding="utf-8")
+        if 'variable "budget_units"' not in text:
+            errors.append("bootstrap variables must declare budget_units")
+        if "var.budget_units > 0" not in text or "floor(var.budget_units)" not in text:
+            errors.append("budget_units must be validated as a positive whole number")
+
 
 def main() -> int:
     errors: list[str] = []

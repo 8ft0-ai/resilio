@@ -165,8 +165,7 @@ resource "google_billing_budget" "reference" {
 
   amount {
     specified_amount {
-      currency_code = "USD"
-      units         = "10"
+      units = var.budget_units
     }
   }
 
