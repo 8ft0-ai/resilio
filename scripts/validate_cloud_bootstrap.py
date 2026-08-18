@@ -31,6 +31,55 @@ GITHUB_SUBJECT = (
     "repo:8ft0-ai@130460431/resilio@1335801159:ref:refs/heads/main"
 )
 
+EXPECTED_BACKEND = (
+    "terraform {\n"
+    '  backend "gcs" {\n'
+    f'    bucket = "{STATE_BUCKET}"\n'
+    f'    prefix = "{STATE_PREFIX}"\n'
+    "  }\n"
+    "}\n"
+)
+
+EXPECTED_SMOKE = (
+    "name: Federation smoke\n"
+    "\n"
+    "on:\n"
+    "  workflow_dispatch:\n"
+    "\n"
+    "permissions:\n"
+    "  contents: read\n"
+    "  id-token: write\n"
+    "\n"
+    "jobs:\n"
+    "  authenticate:\n"
+    "    name: trusted-main-auth\n"
+    "    runs-on: ubuntu-latest\n"
+    "    timeout-minutes: 5\n"
+    "    steps:\n"
+    "      - name: Require trusted main\n"
+    '        run: test "$GITHUB_REF" = "refs/heads/main"\n'
+    "\n"
+    "      - name: Check out repository\n"
+    f"        uses: actions/checkout@{CHECKOUT_SHA}\n"
+    "\n"
+    "      - name: Authenticate with Workload Identity Federation\n"
+    "        id: auth\n"
+    f"        uses: google-github-actions/auth@{AUTH_SHA}\n"
+    "        with:\n"
+    f"          project_id: {CONTROL_PROJECT_ID}\n"
+    f"          workload_identity_provider: {WIF_PROVIDER}\n"
+    f"          service_account: {PROBE_SERVICE_ACCOUNT}\n"
+    "          token_format: access_token\n"
+    "          access_token_lifetime: 300s\n"
+    "          create_credentials_file: false\n"
+    "          export_environment_variables: false\n"
+    "\n"
+    "      - name: Confirm short-lived service-account token was issued\n"
+    "        env:\n"
+    "          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}\n"
+    '        run: test -n "$ACCESS_TOKEN"\n'
+)
+
 
 def require_file(path: Path, errors: list[str]) -> str:
     if not path.is_file():
@@ -44,25 +93,10 @@ def check_backend(errors: list[str]) -> None:
     if not text:
         return
 
-    required = (
-        'backend "gcs"',
-        f'bucket = "{STATE_BUCKET}"',
-        f'prefix = "{STATE_PREFIX}"',
-    )
-    for item in required:
-        if item not in text:
-            errors.append(f"canonical backend is missing: {item}")
-
-    forbidden = (
-        "credentials",
-        "access_token",
-        "impersonate_service_account",
-        "billing_account",
-    )
-    lowered = text.lower()
-    for token in forbidden:
-        if token in lowered:
-            errors.append(f"canonical backend must not embed credential/private input: {token}")
+    if text != EXPECTED_BACKEND:
+        errors.append(
+            "canonical backend must contain exactly the approved GCS bucket/prefix and no other backend settings"
+        )
 
 
 def check_smoke(errors: list[str]) -> None:
@@ -70,42 +104,10 @@ def check_smoke(errors: list[str]) -> None:
     if not text:
         return
 
-    required = (
-        "workflow_dispatch:",
-        "permissions:\n  contents: read\n  id-token: write",
-        'run: test "$GITHUB_REF" = "refs/heads/main"',
-        f"actions/checkout@{CHECKOUT_SHA}",
-        f"google-github-actions/auth@{AUTH_SHA}",
-        f"project_id: {CONTROL_PROJECT_ID}",
-        f"workload_identity_provider: {WIF_PROVIDER}",
-        f"service_account: {PROBE_SERVICE_ACCOUNT}",
-        "token_format: access_token",
-        "access_token_lifetime: 300s",
-        "create_credentials_file: false",
-        "export_environment_variables: false",
-        "ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}",
-        'run: test -n "$ACCESS_TOKEN"',
-    )
-    for item in required:
-        if item not in text:
-            errors.append(f"federation smoke workflow is missing required contract: {item}")
-
-    forbidden = (
-        "pull_request:",
-        "pull_request_target:",
-        "push:",
-        "schedule:",
-        "${{ secrets.",
-        "continue-on-error:",
-        "gcloud ",
-        "terraform ",
-        "gsutil ",
-        "curl ",
-        "wget ",
-    )
-    for token in forbidden:
-        if token in text:
-            errors.append(f"federation smoke workflow contains forbidden token: {token}")
+    if text != EXPECTED_SMOKE:
+        errors.append(
+            "federation smoke must exactly match the approved manual trusted-main authentication-only contract"
+        )
 
 
 def check_evidence(errors: list[str]) -> None:
@@ -151,6 +153,8 @@ def main() -> int:
     validate_text = require_file(validate_workflow, errors)
     if "python3 scripts/validate_cloud_bootstrap.py" not in validate_text:
         errors.append("repository workflow must invoke Gate C cloud bootstrap validation")
+    if "${{ secrets." in validate_text or "id-token: write" in validate_text:
+        errors.append("repository pull-request validation must remain credential-free")
 
     if errors:
         print("Gate C cloud bootstrap validation failed:", file=sys.stderr)
