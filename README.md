@@ -30,6 +30,7 @@ The project is currently in its design/foundation stage. The discussions and dec
 - [Security and private-state boundary](docs/security-and-private-state.md)
 - [Reference cost model](docs/cost-model.md)
 - [Delivery roadmap](docs/roadmap.md)
+- [M0 foundation through Phase 2 retrospective](docs/retrospectives/2026-08-m0-foundation-through-phase-2.md)
 - [Repository governance controls](docs/repository-governance.md)
 - [Architecture decision records](docs/adr/README.md)
 
