@@ -26,6 +26,9 @@ jobs:
       - name: Validate repository invariants
         run: python3 scripts/validate_repo.py
 
+      - name: Validate cloud bootstrap contract
+        run: python3 scripts/validate_cloud_bootstrap.py
+
       - name: Check Terraform formatting
         run: terraform -chdir=infra/bootstrap fmt -check -recursive
 
