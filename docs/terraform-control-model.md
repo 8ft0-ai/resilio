@@ -16,7 +16,7 @@ The foundation backend reuses the private, versioned `resilio-control-e882d4-tfs
 
 Credential-bearing jobs construct a fresh Terraform directory from trusted `backend.tf`, `versions.tf`, `provider.tf` and `.terraform.lock.hcl`. Candidate-controlled Terraform is exactly `infra/foundation/resources.tf.json`, parsed as strict JSON with duplicate-key rejection before authentication.
 
-The Slice A baseline is empty. The later end-to-end proof may change only to the exact allowed `google_service_account.phase3_terraform_sentinel` resource for `phase3-terraform-sentinel` in `resilio-reference-e882d4`, with literal values and `prevent_destroy = true`. Modules, data sources, outputs, provider/backend blocks, provisioners, interpolation expressions and other resource types are outside the initial grammar. Expanding the grammar requires a separately reviewed control-plane change.
+The Slice A baseline is empty. The later end-to-end proof may change only to the exact allowed `google_service_account.phase3_terraform_sentinel` resource for `phase3-terraform-sentinel` in `resilio-reference-e882d4`, with literal values, provider-native `deletion_policy = "PREVENT"` and Terraform `prevent_destroy = true`. Modules, data sources, outputs, provider/backend blocks, provisioners, interpolation expressions and other resource types are outside the initial grammar. Expanding the grammar requires a separately reviewed control-plane change.
 
 ## Trusted workflow source and identity
 
