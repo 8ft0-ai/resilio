@@ -54,9 +54,8 @@ jobs:
 
           RUN_URL="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           mapfile -t MATCHES < <(
-            gh api --method GET search/issues \
-              -f q="repo:$GITHUB_REPOSITORY is:issue is:open $DRIFT_FINGERPRINT" \
-              --jq '.items[].number'
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" \
+              --jq '.[] | select(.pull_request == null and ((.body // "") | contains("<!-- resilio-foundation-drift:" + env.DRIFT_FINGERPRINT + " -->"))) | .number'
           )
 
           if [ "${#MATCHES[@]}" -gt 1 ]; then
