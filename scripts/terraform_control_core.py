@@ -222,7 +222,13 @@ def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
             "address", "previous_address", "module_address", "mode", "type", "name",
             "index", "index_unknown", "provider_name", "deposed", "action_reason",
         )}
-        identity["change"] = _normalise_change(row.get("change"))
+        change = _normalise_change(row.get("change"))
+        actions = change.get("actions")
+        if not isinstance(actions, list) or not actions or any(not isinstance(action, str) for action in actions):
+            raise ControlError("PLAN_ACTION_SEQUENCE_INVALID")
+        if "delete" in actions:
+            raise ControlError("PLAN_DESTRUCTIVE_ACTION_FORBIDDEN")
+        identity["change"] = change
         changes.append(identity)
     changes.sort(key=canonical_json_bytes)
 
