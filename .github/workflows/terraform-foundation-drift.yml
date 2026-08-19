@@ -53,9 +53,19 @@ jobs:
           [[ "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
 
           RUN_URL="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          ISSUES_JSON="$RUNNER_TEMP/open-issues.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" > "$ISSUES_JSON"
           mapfile -t MATCHES < <(
-            gh api --paginate "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" \
-              --jq '.[] | select(.pull_request == null and ((.body // "") | contains("<!-- resilio-foundation-drift:" + env.DRIFT_FINGERPRINT + " -->"))) | .number'
+            python3 - "$ISSUES_JSON" "$DRIFT_FINGERPRINT" <<'PY'
+          import json, sys
+          pages = json.load(open(sys.argv[1], encoding="utf-8"))
+          marker = f"<!-- resilio-foundation-drift:{sys.argv[2]} -->"
+          for page in pages:
+              for issue in page:
+                  if "pull_request" not in issue and marker in (issue.get("body") or ""):
+                      print(issue["number"])
+          PY
           )
 
           if [ "${#MATCHES[@]}" -gt 1 ]; then
