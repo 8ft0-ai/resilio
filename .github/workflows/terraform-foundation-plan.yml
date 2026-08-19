@@ -33,7 +33,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
           TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          TRIGGER_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          TRIGGER_HEAD_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+          TRIGGER_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
           set -euo pipefail
@@ -42,6 +43,8 @@ jobs:
           test "$TRIGGER_EVENT" = "pull_request" || deny
           test "$TRIGGER_CONCLUSION" = "success" || deny
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || deny
+          [[ "$TRIGGER_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+          [[ "$TRIGGER_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
 
           PR_JSON="$RUNNER_TEMP/pr.json"
           FILES_JSON="$RUNNER_TEMP/files.json"
@@ -66,6 +69,7 @@ jobs:
           test "$BASE_REF" = "main" || deny
           test "$HEAD_REPO_ID" = "1335801159" || deny
           test "$HEAD_SHA" = "$TRIGGER_HEAD_SHA" || deny
+          test "$BASE_SHA" = "$TRIGGER_BASE_SHA" || deny
           test "$CHANGED_FILES" = "1" || deny
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
