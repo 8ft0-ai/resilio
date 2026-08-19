@@ -48,33 +48,37 @@ jobs:
 
           PRS_JSON="$RUNNER_TEMP/pulls.json"
           gh api "repos/$GITHUB_REPOSITORY/commits/$MAIN_SHA/pulls" > "$PRS_JSON"
-          read -r MATCH_COUNT PR_NUMBER STATE MERGED_AT MERGE_SHA BASE_REF HEAD_REPO_ID HEAD_SHA BASE_SHA CHANGED_FILES < <(
+          read -r MATCH_COUNT PR_NUMBER < <(
             python3 - "$PRS_JSON" "$MAIN_SHA" <<'PY'
           import json, sys
           rows = json.load(open(sys.argv[1], encoding="utf-8"))
           main_sha = sys.argv[2]
           matches = [row for row in rows if row.get("merge_commit_sha") == main_sha]
-          if len(matches) != 1:
-              print(len(matches), "", "", "", "", "", "", "", "", "")
-          else:
-              pr = matches[0]
-              print(
-                  1,
-                  pr.get("number", ""),
-                  pr.get("state", ""),
-                  pr.get("merged_at", "") or "",
-                  pr.get("merge_commit_sha", "") or "",
-                  ((pr.get("base") or {}).get("ref") or ""),
-                  (((pr.get("head") or {}).get("repo") or {}).get("id") or ""),
-                  ((pr.get("head") or {}).get("sha") or ""),
-                  ((pr.get("base") or {}).get("sha") or ""),
-                  pr.get("changed_files", ""),
-              )
+          print(len(matches), matches[0].get("number", "") if len(matches) == 1 else "")
+          PY
+          )
+          test "$MATCH_COUNT" = "1" || deny
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || deny
+
+          PR_JSON="$RUNNER_TEMP/pr.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$PR_JSON"
+          read -r STATE MERGED_AT MERGE_SHA BASE_REF HEAD_REPO_ID HEAD_SHA BASE_SHA CHANGED_FILES < <(
+            python3 - "$PR_JSON" <<'PY'
+          import json, sys
+          pr = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(
+              pr.get("state", ""),
+              pr.get("merged_at", "") or "",
+              pr.get("merge_commit_sha", "") or "",
+              ((pr.get("base") or {}).get("ref") or ""),
+              (((pr.get("head") or {}).get("repo") or {}).get("id") or ""),
+              ((pr.get("head") or {}).get("sha") or ""),
+              ((pr.get("base") or {}).get("sha") or ""),
+              pr.get("changed_files", ""),
+          )
           PY
           )
 
-          test "$MATCH_COUNT" = "1" || deny
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || deny
           test "$STATE" = "closed" || deny
           test -n "$MERGED_AT" || deny
           test "$MERGE_SHA" = "$MAIN_SHA" || deny
