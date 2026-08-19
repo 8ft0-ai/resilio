@@ -73,7 +73,7 @@ def main()->int:
                 errors.append(f"{path} must checkout immutable reusable-workflow source")
     for path in WF[:2]:
         text=read(path,errors)
-        for token in ("id-token: write","group: terraform-foundation","cancel-in-progress: false","queue: max"):
+        for token in ("id-token: write","group: terraform-foundation","cancel-in-progress: false","queue: max","token_format: access_token"):
             if token not in text: errors.append(f"{path} missing control: {token}")
     planner=read(WF[0],errors)
     for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','"control_seed_sha"','"backend_namespace":"foundation/default.tfstate"'):
