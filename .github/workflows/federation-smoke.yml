@@ -10,28 +10,8 @@ permissions:
 jobs:
   authenticate:
     name: trusted-main-auth
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require trusted main
-        run: test "$GITHUB_REF" = "refs/heads/main"
-
-      - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-
-      - name: Authenticate with Workload Identity Federation
-        id: auth
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
-        with:
-          project_id: resilio-control-e882d4
-          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
-          service_account: github-federation-probe@resilio-control-e882d4.iam.gserviceaccount.com
-          token_format: access_token
-          access_token_lifetime: 300s
-          create_credentials_file: false
-          export_environment_variables: false
-
-      - name: Confirm short-lived service-account token was issued
-        env:
-          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
-        run: test -n "$ACCESS_TOKEN"
+    if: github.ref == 'refs/heads/main'
+    uses: 8ft0-ai/resilio/.github/workflows/terraform-federation-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04
+    with:
+      service_account: github-federation-probe@resilio-control-e882d4.iam.gserviceaccount.com
+      token_lifetime: 300s
