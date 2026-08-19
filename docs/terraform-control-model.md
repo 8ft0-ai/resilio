@@ -28,11 +28,11 @@ Later slices create distinct `github-foundation-planner` and `github-foundation-
 
 ## Plan evidence and apply interlock
 
-Raw Terraform state, saved plans and `terraform show -json` output are private. A live PR plan later stores **private plan evidence** under `plan-evidence/foundation/`, including exact state identity and a canonical full material-effect representation with before/after semantics, unknown values, replacement paths and output changes.
+Raw Terraform state, saved plans and `terraform show -json` output are private. A live PR plan later stores **private plan evidence** under `plan-evidence/foundation/`, including exact state identity and a canonical full material-effect representation. The canonicaliser binds the complete resource-change object, including the singleton resource index and change semantics such as before/after values, unknown/sensitive markers and replacement paths. It fails closed rather than silently reducing plans that contain resource drift, deferred changes, incomplete planning, action invocations, unknown plan structures, outputs or resource classes outside the initial foundation contract.
 
-Public evidence exposes only non-sensitive identity and review material: PR/base/head, root and configuration/provider digests, hashed state lineage, state serial/object generation, resource addresses/actions, policy/cost results and effect/manifest digests.
+Public evidence exposes only non-sensitive identity and review material: PR/base/head, the immutable control seed SHA, root/backend namespace, configuration/provider digests, hashed state lineage, state serial/object generation, resource addresses/actions, policy/cost results and effect/manifest digests. The private evidence embeds the same public identity record alongside the full private effect and exact state identity.
 
-The reviewed PR plan is evidence, not a binary artefact applied later. After authorised merge, the trusted applier produces a fresh plan from exact current `main`, requires the reviewed state identity to remain current, compares the complete private effect and applies only that freshly generated saved plan from the same job. Any state-generation or material-effect mismatch fails closed.
+The reviewed PR plan is evidence, not a binary artefact applied later. After authorised merge, the trusted applier produces a fresh plan from exact current `main`, requires the reviewed state identity and immutable control seed identity to remain current, compares the complete private effect and applies only that freshly generated saved plan from the same job. Any state-generation, control-seed or material-effect mismatch fails closed.
 
 ## Initial state, drift and cost
 
