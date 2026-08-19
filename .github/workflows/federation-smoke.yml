@@ -8,9 +8,17 @@ permissions:
   id-token: write
 
 jobs:
+  require-main:
+    name: require-trusted-main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require trusted main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
   authenticate:
     name: trusted-main-auth
-    if: github.ref == 'refs/heads/main'
+    needs: require-main
     uses: 8ft0-ai/resilio/.github/workflows/terraform-federation-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04
     with:
       service_account: github-federation-probe@resilio-control-e882d4.iam.gserviceaccount.com
