@@ -36,6 +36,7 @@ SENTINEL_RESOURCE = {
     "project": REFERENCE_PROJECT,
     "deletion_policy": "PREVENT",
 }
+SAFE_SENTINEL_ACTION_SEQUENCES = {("create",), ("no-op",)}
 
 # Terraform v1.15.8 internal/command/jsonplan.plan exact top-level JSON fields.
 PLAN_TOP_LEVEL_KEYS = {
@@ -228,6 +229,8 @@ def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
             raise ControlError("PLAN_ACTION_SEQUENCE_INVALID")
         if "delete" in actions:
             raise ControlError("PLAN_DESTRUCTIVE_ACTION_FORBIDDEN")
+        if tuple(actions) not in SAFE_SENTINEL_ACTION_SEQUENCES:
+            raise ControlError("PLAN_ACTION_SEQUENCE_FORBIDDEN")
         identity["change"] = change
         changes.append(identity)
     changes.sort(key=canonical_json_bytes)
