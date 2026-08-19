@@ -41,6 +41,10 @@ class TerraformControlTests(unittest.TestCase):
     def test_exact_sentinel_allowed(self):
         self.assertEqual(tc.validate_candidate_payload(tc.sentinel_candidate_payload()),"sentinel")
 
+    def test_sentinel_has_provider_native_deletion_policy(self):
+        self.assertEqual(tc.SENTINEL_BODY["deletion_policy"], "PREVENT")
+        self.assertEqual(tc.SENTINEL_BODY["lifecycle"], {"prevent_destroy": True})
+
     def test_duplicate_key_rejected(self):
         with self.assertRaises(tc.ContractError):
             tc.load_json_strict_bytes(b'{"resource":{},"resource":{}}')
