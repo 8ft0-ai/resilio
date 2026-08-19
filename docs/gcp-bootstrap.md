@@ -1,25 +1,25 @@
 # GCP bootstrap control boundary
 
-Issue #6 establishes the first Google Cloud control-plane slice for Resilio. This document defines the repository-side bootstrap contract; it is not evidence that any cloud resource already exists.
+Issue #6 established Resilio's first Google Cloud control plane. Issue #14 Phase 3 extends that bootstrap-owned control plane with the bounded authority envelope required for normal Terraform planning and apply. This document describes repository-owned desired state and execution boundaries; repository content alone is not evidence that a cloud mutation has occurred.
 
 ## Intended final state
 
 The canonical reference deployment uses two projects:
 
-- a **control project** for Terraform state, Workload Identity Federation and the narrowly scoped bootstrap identity; and
-- a **reference project** that establishes the future workload-plane boundary but contains no product/runtime resources in this slice.
+- a **control project** for Terraform state, Workload Identity Federation and narrowly scoped GitHub automation identities; and
+- a **reference project** that establishes the workload-plane boundary while remaining free of Phase 4/5 product runtime.
 
 The project IDs are non-secret owner-supplied execution inputs. The billing-account ID and any real local variable values remain owner-local and must not be committed.
 
-The first Terraform root is [`../infra/bootstrap`](../infra/bootstrap). It is intentionally limited to project/control resources needed to prove private state, keyless GitHub identity and cost detection.
+The bootstrap Terraform root is [`../infra/bootstrap`](../infra/bootstrap). It remains intentionally limited to project/control resources that establish or protect private state, keyless GitHub identity, cost detection and the maximum authority envelope for the operational `foundation` root.
 
 ## Tooling and validation
 
-Terraform is pinned by `.terraform-version` to `1.15.8`. The root constrains `hashicorp/google` to `~> 7.42.0`, and `infra/bootstrap/.terraform.lock.hcl` records the provider selected and integrity hashes produced by Terraform itself.
+Terraform is pinned by `.terraform-version` to `1.15.8`. The root constrains `hashicorp/google` to `~> 7.42.0`, and `infra/bootstrap/.terraform.lock.hcl` records the selected provider and integrity hashes produced by Terraform itself.
 
 The required `repository` GitHub check remains credential-free. It:
 
-1. runs repository invariant validation;
+1. runs repository and cloud-bootstrap invariant validation;
 2. checks Terraform formatting;
 3. runs `terraform init -backend=false -lockfile=readonly`; and
 4. runs `terraform validate`.
@@ -34,7 +34,7 @@ Google Cloud project creation has an unavoidable environment-dependent bootstrap
 
 Use `project_creation_mode = "managed-parent"` with an existing authorised `organization` or `folder` parent.
 
-Before any mutation, read the effective `constraints/compute.skipDefaultNetworkCreation` policy. Do not create or broaden an organisation policy in this slice.
+Before any mutation, read the effective `constraints/compute.skipDefaultNetworkCreation` policy. Do not create or broaden an organisation policy merely to satisfy this repository.
 
 If that policy already prevents default-network creation, leave `remove_default_network = false`.
 
@@ -56,7 +56,7 @@ Do not retain a default network or Compute Engine API merely because the provide
 
 ## Bootstrap resources
 
-The root declares only:
+The bootstrap root owns only control-plane resources whose lifecycle or authority boundary justifies remaining outside ordinary operational Terraform. It declares:
 
 - the control and reference projects;
 - these control-project services:
@@ -70,10 +70,12 @@ The root declares only:
   - `sts.googleapis.com`;
 - one private Terraform-state Cloud Storage bucket;
 - one Workload Identity Pool and GitHub OIDC provider;
-- one federation-probe service account and its impersonation binding; and
+- the authentication-only `github-federation-probe` service account and its existing impersonation binding;
+- distinct `github-foundation-planner` and `github-foundation-applier` service accounts;
+- narrow custom IAM roles and conditional bindings that cap planner/applier state, evidence and reference-project authority; and
 - one monthly billing budget covering the two projects.
 
-Cloud Run, Pub/Sub, Firestore, BigQuery, Cloud Build, Artifact Registry, GKE and other product/runtime services are outside this slice.
+Cloud Run, Pub/Sub, Firestore, BigQuery, Cloud Build, Artifact Registry, GKE and other product/runtime services remain outside this bootstrap authority slice.
 
 ## Terraform state
 
@@ -84,66 +86,101 @@ The state bucket is regional Standard storage in `US-CENTRAL1` and must have:
 - object versioning;
 - `force_destroy = false`;
 - Terraform `prevent_destroy`; and
-- Google-managed encryption for this bootstrap.
+- Google-managed encryption for this control plane.
 
 The normal bucket name is `<control-project-id>-tfstate`. If that globally unique name is unavailable, stop and record an explicitly approved non-secret suffix rather than silently generating a canonical name.
 
-Gate A deliberately has no `backend "gcs"` block. Gate B starts with temporary local bootstrap state, creates and verifies the bucket, then migrates that exact state to GCS. Gate C records the canonical non-sensitive backend identifiers after the cloud resources exist.
+The bootstrap root itself uses the canonical GCS prefix `bootstrap`. Phase 3 adds the separate operational prefix `foundation` without moving any existing bootstrap resource between states.
 
-Any local `.tfstate`, backups, plans, generated credentials and real variable files are ignored and must be removed after migration. Terraform state is sensitive operational data even when the repository is public.
+Planner/applier Cloud Storage access is deliberately split rather than granting Object Admin:
+
+- both identities may list bucket objects only because Terraform's GCS backend discovers workspaces by listing the configured prefix;
+- state reads are conditioned to `foundation/default.tfstate` only;
+- lock create/get/delete is conditioned to `foundation/default.tflock` only;
+- only the applier may create/overwrite `foundation/default.tfstate`;
+- the planner may create private reviewed-plan evidence only under `plan-evidence/foundation/`, with unique names and no overwrite/delete permission; and
+- the applier may read private reviewed-plan evidence only under that same prefix.
+
+Neither identity receives bootstrap-state content access. Saved plans, raw state, unsanitised plan JSON, generated credentials and real variable files remain private and untracked.
 
 ## Keyless GitHub trust
 
-The current immutable GitHub subject authorised by this bootstrap is:
+The immutable GitHub subject authorised by the existing provider remains:
 
 ```text
 repo:8ft0-ai@130460431/resilio@1335801159:ref:refs/heads/main
 ```
 
-The Workload Identity Provider maps only `google.subject = assertion.sub` and its attribute condition requires that exact subject.
+The provider preserves `google.subject = assertion.sub` and that exact subject condition. Phase 3 additionally maps GitHub reusable-workflow identity claims:
 
-The resulting federated principal may impersonate only the dedicated `github-federation-probe` service account through `roles/iam.workloadIdentityUser`. The probe service account receives no project resource role in this slice.
+```text
+attribute.job_workflow_ref = assertion.job_workflow_ref
+attribute.job_workflow_sha = assertion.job_workflow_sha
+```
 
-A successful short-lived token exchange from trusted `main` is sufficient proof. No service-account key may be created. Public pull requests receive no cloud identity.
+The existing probe binding remains subject-based and proof-only. Before this mapping is activated in Google Cloud, the federation smoke is migrated to the immutable reusable authentication workflow so the proof path itself carries the reusable-workflow claims.
+
+Planner and applier impersonation are narrower. Each `roles/iam.workloadIdentityUser` binding uses a `principalSet` for exactly one immutable reusable workflow at the Phase 3 control-seed commit:
+
+- planner → `terraform-plan-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04`;
+- applier → `terraform-apply-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04`.
+
+The repository/main subject condition remains an independent provider-level requirement. A candidate branch therefore cannot gain cloud authority merely by naming the service account or copying a workflow. No service-account key may be created.
+
+## Foundation resource authority
+
+The planner and applier use distinct custom roles in the reference project.
+
+Planner permissions are exactly:
+
+- `iam.serviceAccounts.get`;
+- `iam.serviceAccountKeys.list`;
+- `iam.serviceAccounts.getIamPolicy`; and
+- `resourcemanager.projects.getIamPolicy`.
+
+These are used by trusted code to refresh or verify the initial zero-role/zero-key service-account proof. Raw IAM policies or key metadata must not be emitted publicly.
+
+Applier permissions are exactly:
+
+- `iam.serviceAccounts.create`;
+- `iam.serviceAccounts.get`; and
+- `iam.serviceAccounts.update`.
+
+The authority envelope deliberately excludes service-account deletion, key creation/deletion, `setIamPolicy`, `actAs`, token creation, project IAM mutation and basic/admin roles. If the pinned provider proves an additional permission is genuinely required, stop and amend the governed contract rather than broadening for convenience.
 
 ## Cost control
 
 The repository-level architectural constraint remains a normal-spend target of at most **US$5/month** and an engineering ceiling of **US$10/month**.
 
-Cloud Billing budgets, however, use the billing account's native currency. The bootstrap therefore does not hard-code a `currency_code`. Gate B supplies `budget_units` as whole units of the billing account's native currency only after current exchange-rate evidence proves that the selected amount is no greater than the US$10 engineering ceiling. A stricter local-currency budget is acceptable; the budget must never be rounded or converted upward beyond the ceiling merely to approximate US$10.
+Cloud Billing budgets, however, use the billing account's native currency. The bootstrap therefore does not hard-code a `currency_code`. The owner supplies `budget_units` as whole units of the billing account's native currency only after current exchange-rate evidence proves that the selected amount is no greater than the US$10 engineering ceiling. A stricter local-currency budget is acceptable; the budget must never be rounded or converted upward beyond the ceiling merely to approximate US$10.
 
 The monthly budget remains scoped to the control and reference project numbers with:
 
-- 50% current-spend threshold — at or below the US$5 normal target when the selected budget is at or below the US$10 ceiling;
-- 80% current-spend threshold — early warning;
-- 100% current-spend threshold — the selected conservative alert boundary; and
+- 50% current-spend threshold;
+- 80% current-spend threshold;
+- 100% current-spend threshold; and
 - 100% forecasted-spend threshold.
 
-For the current issue #6 owner environment, the billing account is denominated in AUD and Gate B uses `budget_units = 10`. The evidence establishing that AUD 10 is below the US$10 ceiling is recorded in the governed issue rather than hard-coded into reusable Terraform.
+For the current owner environment, the billing account is denominated in AUD and the existing bootstrap uses `budget_units = 10`. The evidence establishing that amount remains in the governed issue rather than reusable Terraform.
 
-Default billing-recipient notifications are used; no Pub/Sub or automated billing shutdown is introduced.
+A budget is a detection control, not a hard cap. Pricing, exchange-rate and free-tier assumptions must be refreshed before any materially cost-bearing execution.
 
-A budget is a detection control, not a hard cap. Pricing, exchange-rate and free-tier assumptions must be refreshed immediately before Gate B execution.
+## Phase 3 authority-envelope execution
 
-## Gate B execution and evidence
+Landing the Slice C repository candidate does **not** mutate Google Cloud. The bootstrap authority envelope is activated only after the exact candidate receives repository validation, fresh substantive review and merge under issue #14 authority.
 
-Cloud mutation requires the still-valid issue #6 authority and owner-authenticated short-lived credentials. Before applying:
+Because the existing Phase 2 control plane intentionally has no routine deployment identity permitted to broaden its own authority, Slice C uses one owner-local external bootstrap operation after merge. That operation must:
 
-1. refresh `main`, the governing comments and current official pricing/capability facts;
-2. verify project-ID availability, hierarchy, effective default-network policy, billing access and permissions;
-3. read the billing account's native currency and choose `budget_units` only after proving the resulting local-currency amount is no greater than the current US$10 engineering ceiling;
-4. select exactly one project creation mode;
-5. initialise with a temporary local backend;
-6. if Terraform must create projects under a parent, establish those project prerequisites first, then produce the authoritative full plan for the remaining bootstrap;
-7. if projects were precreated, import both before producing the authoritative full plan;
-8. inspect the plan and stop on any resource, IAM grant, service or cost-control shape outside the approved boundary.
+1. authenticate with short-lived owner credentials and preserve the existing private billing input handling;
+2. initialise the existing `bootstrap` GCS backend and use the existing remote state lineage;
+3. produce an exact reviewed-main full plan without `-target`;
+4. fail unless the plan contains only the approved WIF claim-mapping amendment, planner/applier service accounts, custom roles and bounded IAM/Storage bindings;
+5. apply that exact plan without migrating state or changing product runtime;
+6. record sanitised resulting-state evidence and a subsequent no-change plan; and
+7. immediately rerun the existing federation smoke.
 
-After apply, independently re-read the projects, enabled services, bucket controls, Workload Identity configuration, service-account keys/IAM and budget. Then migrate the same state to GCS and prove both remote-state readability and local-state removal.
+If the post-apply smoke fails, stop Phase 3 and repair the bootstrap control plane before any foundation-state initialisation or planner activation.
 
-Any unexpected existing project, hierarchy, IAM, resource, network, pricing, state-migration or authentication condition is fail-closed. Do not compensate with Owner/Editor roles, service-account keys, public state, repository bypasses or broader APIs.
+## Historical Phase 2 bootstrap evidence
 
-## Gate C
-
-After successful owner-local bootstrap, a separate reconciliation PR records only non-sensitive canonical identifiers and evidence, adds the manual trusted-`main` federation smoke workflow, and undergoes a genuinely fresh substantive review before merge.
-
-Gate A repository code does not itself mutate Google Cloud.
+Issue #6 established the projects, private/versioned state bucket, main-only WIF provider, proof identity, billing budget and canonical remote bootstrap state. `docs/gcp-bootstrap-evidence.md` remains the non-sensitive evidence record for that completed bootstrap and must not be rewritten to claim the Phase 3 authority envelope exists before the Slice C cloud operation is actually reconciled.

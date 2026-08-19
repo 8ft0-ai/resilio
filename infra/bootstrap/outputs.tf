@@ -37,3 +37,23 @@ output "github_main_subject" {
   value       = local.github_main_subject
   description = "Exact immutable GitHub OIDC subject authorised for federation."
 }
+
+output "foundation_planner_service_account" {
+  value       = google_service_account.foundation_planner.email
+  description = "Dedicated read-only foundation planner service account."
+}
+
+output "foundation_applier_service_account" {
+  value       = google_service_account.foundation_applier.email
+  description = "Dedicated bounded foundation applier service account."
+}
+
+output "foundation_plan_workflow_ref" {
+  value       = local.foundation_plan_workflow_ref
+  description = "Exact immutable reusable-workflow identity authorised to impersonate the foundation planner."
+}
+
+output "foundation_apply_workflow_ref" {
+  value       = local.foundation_apply_workflow_ref
+  description = "Exact immutable reusable-workflow identity authorised to impersonate the foundation applier."
+}

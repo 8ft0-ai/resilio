@@ -22,15 +22,27 @@ REQUIRED_PATHS = (
     "docs/engineering-model.md", "docs/gcp-bootstrap.md", "docs/repository-governance.md", "docs/roadmap.md",
     "docs/security-and-private-state.md", "docs/terraform-control-model.md", "docs/vision.md",
     "infra/bootstrap/.terraform.lock.hcl", "infra/bootstrap/main.tf", "infra/bootstrap/outputs.tf",
-    "infra/bootstrap/variables.tf", "infra/bootstrap/versions.tf", "infra/foundation/.terraform.lock.hcl",
-    "infra/foundation/backend.tf", "infra/foundation/provider.tf", "infra/foundation/resources.tf.json",
-    "infra/foundation/versions.tf", "scripts/terraform_control.py", "scripts/terraform_control_core.py",
-    "scripts/terraform_control_remote.py", "scripts/validate_terraform_control.py", "tests/test_terraform_control.py",
+    "infra/bootstrap/phase3_authority.tf", "infra/bootstrap/variables.tf", "infra/bootstrap/versions.tf",
+    "infra/foundation/.terraform.lock.hcl", "infra/foundation/backend.tf", "infra/foundation/provider.tf",
+    "infra/foundation/resources.tf.json", "infra/foundation/versions.tf", "scripts/terraform_control.py",
+    "scripts/terraform_control_core.py", "scripts/terraform_control_remote.py", "scripts/validate_terraform_control.py",
+    "tests/test_terraform_control.py",
 )
 FORBIDDEN_TRACKED_NAMES = {".env", ".env.local", ".env.production", "application_default_credentials.json",
                            "terraform.tfstate", "terraform.tfstate.backup", "terraform.tfvars"}
-FORBIDDEN_BOOTSTRAP_TOKENS = ('resource "google_service_account_key"', 'roles/owner', 'roles/editor',
-                              'roles/resourcemanager.projectIamAdmin', 'roles/storage.admin', 'roles/compute.admin')
+FORBIDDEN_BOOTSTRAP_TOKENS = (
+    'resource "google_service_account_key"',
+    'roles/owner',
+    'roles/editor',
+    'roles/resourcemanager.projectIamAdmin',
+    'roles/storage.admin',
+    'roles/storage.objectAdmin',
+    'roles/storage.objectUser',
+    'roles/storage.objectCreator',
+    'roles/compute.admin',
+    'roles/iam.serviceAccountAdmin',
+    'roles/iam.serviceAccountTokenCreator',
+)
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 
 
@@ -130,20 +142,21 @@ def check_terraform_contract(errors: list[str]) -> None:
                 errors.append(f"{root_name} Terraform lock file does not select the approved Google provider")
             if "h1:" not in text or "zh:" not in text:
                 errors.append(f"{root_name} Terraform lock file must contain provider integrity hashes")
-    bootstrap = ROOT / "infra/bootstrap/main.tf"
-    if bootstrap.is_file():
-        text = bootstrap.read_text(encoding="utf-8"); lowered = text.lower()
+    bootstrap_files = (ROOT / "infra/bootstrap/main.tf", ROOT / "infra/bootstrap/phase3_authority.tf")
+    bootstrap_text = "\n".join(path.read_text(encoding="utf-8") for path in bootstrap_files if path.is_file())
+    if bootstrap_text:
+        lowered = bootstrap_text.lower()
         for token in FORBIDDEN_BOOTSTRAP_TOKENS:
             if token.lower() in lowered:
                 errors.append(f"bootstrap configuration contains forbidden authority/resource token: {token}")
         for nonblocking_guard in ('check "project_creation_configuration"', 'check "precreated_import_parent"'):
-            if nonblocking_guard in text:
+            if nonblocking_guard in bootstrap_text:
                 errors.append("project bootstrap mode/parent guards must be blocking preconditions, not check blocks")
-        if "local.project_creation_configuration_valid" not in text or text.count("precondition {") < 2:
+        if "local.project_creation_configuration_valid" not in bootstrap_text or bootstrap_text.count("precondition {") < 2:
             errors.append("both bootstrap project resources must enforce the blocking project mode/parent precondition")
-        if re.search(r"\bcurrency_code\s*=", text):
+        if re.search(r"\bcurrency_code\s*=", bootstrap_text):
             errors.append("bootstrap budget must use the billing account's native currency; do not hard-code currency_code")
-        if "units = var.budget_units" not in text:
+        if "units = var.budget_units" not in bootstrap_text:
             errors.append("bootstrap budget amount must come from validated budget_units")
     variables = ROOT / "infra/bootstrap/variables.tf"
     if variables.is_file():

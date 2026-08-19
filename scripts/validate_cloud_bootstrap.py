@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free validation of the canonical Gate C cloud bootstrap contract."""
+"""Credential-free validation of the canonical cloud bootstrap control contract."""
 
 from __future__ import annotations
 
@@ -9,6 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 BACKEND = ROOT / "infra/bootstrap/backend.tf"
+BOOTSTRAP_MAIN = ROOT / "infra/bootstrap/main.tf"
+AUTHORITY = ROOT / "infra/bootstrap/phase3_authority.tf"
+OUTPUTS = ROOT / "infra/bootstrap/outputs.tf"
 SMOKE = ROOT / ".github/workflows/federation-smoke.yml"
 EVIDENCE = ROOT / "docs/gcp-bootstrap-evidence.md"
 
@@ -26,8 +29,22 @@ WIF_PROVIDER = (
 PROBE_SERVICE_ACCOUNT = (
     "github-federation-probe@resilio-control-e882d4.iam.gserviceaccount.com"
 )
+PLANNER_SERVICE_ACCOUNT = (
+    "github-foundation-planner@resilio-control-e882d4.iam.gserviceaccount.com"
+)
+APPLIER_SERVICE_ACCOUNT = (
+    "github-foundation-applier@resilio-control-e882d4.iam.gserviceaccount.com"
+)
 GITHUB_SUBJECT = (
     "repo:8ft0-ai@130460431/resilio@1335801159:ref:refs/heads/main"
+)
+PLANNER_WORKFLOW_REF = (
+    "8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@"
+    + CONTROL_SEED_SHA
+)
+APPLIER_WORKFLOW_REF = (
+    "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@"
+    + CONTROL_SEED_SHA
 )
 
 EXPECTED_BACKEND = (
@@ -73,17 +90,14 @@ EXPECTED_SMOKE = (
 
 def require_file(path: Path, errors: list[str]) -> str:
     if not path.is_file():
-        errors.append(f"required Gate C path is missing: {path.relative_to(ROOT)}")
+        errors.append(f"required cloud bootstrap path is missing: {path.relative_to(ROOT)}")
         return ""
     return path.read_text(encoding="utf-8")
 
 
 def check_backend(errors: list[str]) -> None:
     text = require_file(BACKEND, errors)
-    if not text:
-        return
-
-    if text != EXPECTED_BACKEND:
+    if text and text != EXPECTED_BACKEND:
         errors.append(
             "canonical backend must contain exactly the approved GCS bucket/prefix and no other backend settings"
         )
@@ -91,10 +105,7 @@ def check_backend(errors: list[str]) -> None:
 
 def check_smoke(errors: list[str]) -> None:
     text = require_file(SMOKE, errors)
-    if not text:
-        return
-
-    if text != EXPECTED_SMOKE:
+    if text and text != EXPECTED_SMOKE:
         errors.append(
             "federation smoke must exactly match the approved manual trusted-main immutable reusable-auth contract"
         )
@@ -122,15 +133,152 @@ def check_evidence(errors: list[str]) -> None:
         if item not in text:
             errors.append(f"Gate C evidence is missing canonical public evidence: {item}")
 
-    forbidden = (
+    for token in (
         "billingAccounts/",
         "application_default_credentials",
         '"private_key"',
         '"access_token"',
-    )
-    for token in forbidden:
+    ):
         if token in text:
             errors.append(f"Gate C evidence contains forbidden private material marker: {token}")
+
+
+def custom_role_permissions(text: str, resource_name: str) -> tuple[str, ...] | None:
+    header = f'resource "google_project_iam_custom_role" "{resource_name}"'
+    start = text.find(header)
+    if start < 0:
+        return None
+    end = text.find('\nresource "', start + len(header))
+    block = text[start:] if end < 0 else text[start:end]
+    marker = "permissions = ["
+    pstart = block.find(marker)
+    if pstart < 0:
+        return None
+    pend = block.find("\n  ]", pstart)
+    if pend < 0:
+        return None
+    lines = block[pstart + len(marker):pend].splitlines()
+    return tuple(
+        line.strip().rstrip(",").strip('"')
+        for line in lines
+        if line.strip()
+    )
+
+
+def check_phase3_authority(errors: list[str]) -> None:
+    main_text = require_file(BOOTSTRAP_MAIN, errors)
+    authority_text = require_file(AUTHORITY, errors)
+    outputs_text = require_file(OUTPUTS, errors)
+    if not main_text or not authority_text or not outputs_text:
+        return
+
+    expected_mapping = (
+        '  attribute_mapping = {\n'
+        '    "google.subject"             = "assertion.sub"\n'
+        '    "attribute.job_workflow_ref" = "assertion.job_workflow_ref"\n'
+        '    "attribute.job_workflow_sha" = "assertion.job_workflow_sha"\n'
+        '  }\n'
+    )
+    if expected_mapping not in main_text:
+        errors.append("WIF provider must map subject plus reusable-workflow ref/SHA claims exactly")
+    expected_condition = 'attribute_condition = "assertion.sub == \\"${local.github_main_subject}\\""'
+    if expected_condition not in main_text:
+        errors.append("WIF provider must preserve the exact immutable repository/main subject condition")
+    if 'issuer_uri = "https://token.actions.githubusercontent.com"' not in main_text:
+        errors.append("WIF provider must preserve the GitHub Actions OIDC issuer")
+
+    required_authority = (
+        f'phase3_control_seed_sha             = "{CONTROL_SEED_SHA}"',
+        'account_id   = "github-foundation-planner"',
+        'account_id   = "github-foundation-applier"',
+        '"8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase3_control_seed_sha}"',
+        '"8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@${local.phase3_control_seed_sha}"',
+        'role               = "roles/iam.workloadIdentityUser"',
+        'attribute.job_workflow_ref/${local.foundation_plan_workflow_ref}',
+        'attribute.job_workflow_ref/${local.foundation_apply_workflow_ref}',
+        'foundation/default.tfstate',
+        'foundation/default.tflock',
+        'plan-evidence/foundation/',
+        'resource.name == \\"${local.foundation_state_resource_name}\\"',
+        'resource.name == \\"${local.foundation_lock_resource_name}\\"',
+        'resource.name.startsWith(\\"${local.foundation_evidence_resource_prefix}\\")',
+    )
+    for token in required_authority:
+        if token not in authority_text:
+            errors.append(f"Phase 3 authority envelope is missing required exact contract token: {token}")
+
+    expected_roles = {
+        "foundation_planner": (
+            "iam.serviceAccountKeys.list",
+            "iam.serviceAccounts.get",
+            "iam.serviceAccounts.getIamPolicy",
+            "resourcemanager.projects.getIamPolicy",
+        ),
+        "foundation_applier": (
+            "iam.serviceAccounts.create",
+            "iam.serviceAccounts.get",
+            "iam.serviceAccounts.update",
+        ),
+        "foundation_state_list": ("storage.objects.list",),
+        "foundation_object_reader": ("storage.objects.get",),
+        "foundation_lock": (
+            "storage.objects.create",
+            "storage.objects.delete",
+            "storage.objects.get",
+        ),
+        "foundation_state_writer": (
+            "storage.objects.create",
+            "storage.objects.delete",
+        ),
+        "foundation_evidence_creator": ("storage.objects.create",),
+    }
+    for role_name, expected in expected_roles.items():
+        actual = custom_role_permissions(authority_text, role_name)
+        if actual != expected:
+            errors.append(
+                f"custom role {role_name} permissions must exactly match {expected}; found {actual}"
+            )
+
+    forbidden_authority = (
+        'resource "google_service_account_key"',
+        "roles/owner",
+        "roles/editor",
+        "roles/storage.admin",
+        "roles/storage.objectAdmin",
+        "roles/storage.objectUser",
+        "roles/storage.objectCreator",
+        "roles/iam.serviceAccountAdmin",
+        "roles/iam.serviceAccountTokenCreator",
+        "iam.serviceAccounts.delete",
+        "iam.serviceAccountKeys.create",
+        "iam.serviceAccountKeys.delete",
+        "iam.serviceAccounts.setIamPolicy",
+        "iam.serviceAccounts.actAs",
+        "iam.serviceAccounts.getAccessToken",
+        "resourcemanager.projects.setIamPolicy",
+    )
+    lowered = authority_text.lower()
+    for token in forbidden_authority:
+        if token.lower() in lowered:
+            errors.append(f"Phase 3 authority envelope contains forbidden broad authority: {token}")
+
+    for output_name in (
+        "foundation_planner_service_account",
+        "foundation_applier_service_account",
+        "foundation_plan_workflow_ref",
+        "foundation_apply_workflow_ref",
+    ):
+        if f'output "{output_name}"' not in outputs_text:
+            errors.append(f"bootstrap outputs must expose non-sensitive Phase 3 identity: {output_name}")
+
+    if PLANNER_SERVICE_ACCOUNT.split("@", 1)[0] not in authority_text:
+        errors.append("foundation planner identity must remain the approved dedicated service account")
+    if APPLIER_SERVICE_ACCOUNT.split("@", 1)[0] not in authority_text:
+        errors.append("foundation applier identity must remain the approved dedicated service account")
+    if PLANNER_WORKFLOW_REF.split("@", 1)[0] not in authority_text:
+        errors.append("foundation planner binding must remain tied to the approved reusable workflow path")
+    if APPLIER_WORKFLOW_REF.split("@", 1)[0] not in authority_text:
+        errors.append("foundation applier binding must remain tied to the approved reusable workflow path")
 
 
 def main() -> int:
@@ -138,21 +286,22 @@ def main() -> int:
     check_backend(errors)
     check_smoke(errors)
     check_evidence(errors)
+    check_phase3_authority(errors)
 
     validate_workflow = ROOT / ".github/workflows/validate.yml"
     validate_text = require_file(validate_workflow, errors)
     if "python3 scripts/validate_cloud_bootstrap.py" not in validate_text:
-        errors.append("repository workflow must invoke Gate C cloud bootstrap validation")
+        errors.append("repository workflow must invoke cloud bootstrap validation")
     if "${{ secrets." in validate_text or "id-token: write" in validate_text:
         errors.append("repository pull-request validation must remain credential-free")
 
     if errors:
-        print("Gate C cloud bootstrap validation failed:", file=sys.stderr)
+        print("Cloud bootstrap validation failed:", file=sys.stderr)
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
 
-    print("Gate C cloud bootstrap validation passed.")
+    print("Cloud bootstrap validation passed.")
     return 0
 
 
