@@ -11,9 +11,12 @@ class TerraformControlTests(unittest.TestCase):
         return {
             "format_version":"1.2",
             "terraform_version":"1.15.8",
+            "applyable":True,
             "complete":True,
+            "errored":False,
             "resource_drift":[],
             "deferred_changes":[],
+            "deferred_action_invocations":[],
             "action_invocations":[],
             "resource_changes":[{
                 "address":"google_service_account.phase3_terraform_sentinel",
@@ -52,6 +55,12 @@ class TerraformControlTests(unittest.TestCase):
         with self.assertRaises(tc.ContractError):
             tc.validate_candidate_payload(p)
 
+    def test_exact_terraform_1158_top_level_schema_is_accepted(self):
+        effect=tc.plan_effect(self.plan())
+        self.assertTrue(effect["applyable"])
+        self.assertTrue(effect["complete"])
+        self.assertFalse(effect["errored"])
+
     def test_effect_records_explicit_singleton_index(self):
         effect=tc.plan_effect(self.plan())
         self.assertIn("index",effect["resource_changes"][0])
@@ -62,12 +71,28 @@ class TerraformControlTests(unittest.TestCase):
         b=tc.sha256_bytes(tc.canonical_bytes(tc.plan_effect(self.plan("b"))))
         self.assertNotEqual(a,b)
 
+    def test_missing_applyability_rejected(self):
+        p=self.plan(); del p["applyable"]
+        with self.assertRaises(tc.ContractError): tc.plan_effect(p)
+
+    def test_false_applyability_is_preserved_for_complete_nonerrored_plan(self):
+        p=self.plan(); p["applyable"]=False; p["resource_changes"]=[]
+        self.assertFalse(tc.plan_effect(p)["applyable"])
+
+    def test_errored_plan_rejected(self):
+        p=self.plan(); p["errored"]=True
+        with self.assertRaises(tc.ContractError): tc.plan_effect(p)
+
     def test_resource_drift_rejected(self):
         p=self.plan(); p["resource_drift"]=[copy.deepcopy(p["resource_changes"][0])]
         with self.assertRaises(tc.ContractError): tc.plan_effect(p)
 
     def test_deferred_change_rejected(self):
         p=self.plan(); p["deferred_changes"]=[{"reason":"deferred","resource_change":copy.deepcopy(p["resource_changes"][0])}]
+        with self.assertRaises(tc.ContractError): tc.plan_effect(p)
+
+    def test_deferred_action_invocation_rejected(self):
+        p=self.plan(); p["deferred_action_invocations"]=[{"reason":"deferred","action_invocation":{"address":"action.example"}}]
         with self.assertRaises(tc.ContractError): tc.plan_effect(p)
 
     def test_incomplete_plan_rejected(self):
