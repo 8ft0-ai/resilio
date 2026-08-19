@@ -52,7 +52,6 @@ jobs:
             apply)
               printf '%s' "$BLOB" | grep -Eq '^[0-9a-f]{40}$'
               printf '%s' "$RH" | grep -Eq '^[0-9a-f]{40}$'
-              test "$RH" = "$SHA"
               [[ "$EO" = plan-evidence/foundation/* ]]
               [[ "$EG" =~ ^[0-9]+$ ]] ;;
             *) exit 1 ;;
@@ -75,6 +74,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.desired_sha }}
           BLOB: ${{ inputs.candidate_blob_sha }}
+          RH: ${{ inputs.reviewed_head_sha }}
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/foundation"; rm -rf "$W"; mkdir -p "$W"
@@ -83,7 +83,9 @@ jobs:
             cp infra/foundation/resources.tf.json "$W/resources.tf.json"
             python3 scripts/terraform_control.py validate-candidate --path "$W/resources.tf.json"
           else
+            python3 scripts/terraform_control.py fetch-candidate --ref "$RH" --output "$RUNNER_TEMP/reviewed-resources.tf.json"
             python3 scripts/terraform_control.py fetch-candidate --ref "$SHA" --expected-blob-sha "$BLOB" --output "$W/resources.tf.json"
+            cmp "$RUNNER_TEMP/reviewed-resources.tf.json" "$W/resources.tf.json"
             python3 scripts/terraform_control.py validate-candidate --path "$W/resources.tf.json" --require-sentinel
           fi
 
