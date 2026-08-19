@@ -2,6 +2,14 @@
 
 This file defines repository-local operating expectations for contributors and engineering agents working in Resilio.
 
+## Praxis engineering practice
+
+For governed engineering work, use `https://github.com/8ft0-ai/praxis` as Resilio's linked engineering-practice source.
+
+Praxis baseline: `5af4740552c284008de09e1b6c0d1b5dad4c754b`. Resolve this repository-selected baseline to one exact commit at the start of each new governed task, keep that task pin unchanged for the lifetime of the task, and start with `PRACTICE.md` from that exact commit.
+
+Repository-local Resilio instructions and explicit task authority remain higher precedence. Updating the repository-selected Praxis baseline is a separate governed Resilio change and does not alter an already-running task pin.
+
 ## Authority and evidence
 
 - Git is authoritative for desired state where state can reasonably be represented declaratively.
