@@ -109,6 +109,16 @@ jobs:
           python3 scripts/terraform_control.py gcs-assert-absent
           terraform -chdir="$W" init -input=false -lockfile=readonly >/dev/null
           terraform -chdir="$W" state pull >"$RUNNER_TEMP/result-state.json"
+          python3 - "$RUNNER_TEMP/result-state.json" <<'PY'
+          import json,sys
+          state=json.load(open(sys.argv[1]))
+          resources=state.get("resources", [])
+          outputs=state.get("outputs", {})
+          if not isinstance(resources, list) or resources:
+              raise SystemExit("Initial foundation state contains unexpected resources")
+          if not isinstance(outputs, dict) or outputs:
+              raise SystemExit("Initial foundation state contains unexpected outputs")
+          PY
           python3 scripts/terraform_control.py gcs-metadata >"$RUNNER_TEMP/result-meta.json"
 
       - name: Verify reviewed effect and apply fresh main plan
@@ -126,10 +136,26 @@ jobs:
           python3 scripts/terraform_control.py download-evidence --object "$EO" --generation "$EG" --output "$RUNNER_TEMP/reviewed.json"
           terraform -chdir="$W" state pull >"$RUNNER_TEMP/pre-state.json"
           python3 scripts/terraform_control.py gcs-metadata >"$RUNNER_TEMP/pre-meta.json"
-          G="$(python3 -c 'import json;print(json.load(open("'"$RUNNER_TEMP/pre-meta.json"'"))["generation"])')"
+          PRE_G="$(python3 -c 'import json;print(json.load(open("'"$RUNNER_TEMP/pre-meta.json"'"))["generation"])')"
+
           terraform -chdir="$W" plan -input=false -lock-timeout=60s -out="$RUNNER_TEMP/fresh-plan" >/dev/null
           terraform -chdir="$W" show -json "$RUNNER_TEMP/fresh-plan" >"$RUNNER_TEMP/fresh-plan.json"
-          python3 scripts/terraform_control.py verify-reviewed --reviewed-evidence "$RUNNER_TEMP/reviewed.json" --plan-json "$RUNNER_TEMP/fresh-plan.json" --state-json "$RUNNER_TEMP/pre-state.json" --state-generation "$G" --reviewed-head-sha "$RH" --control-seed-sha "$CONTROL_SEED_SHA"
+
+          terraform -chdir="$W" state pull >"$RUNNER_TEMP/post-plan-state.json"
+          python3 scripts/terraform_control.py gcs-metadata >"$RUNNER_TEMP/post-plan-meta.json"
+          python3 - "$RUNNER_TEMP/pre-state.json" "$RUNNER_TEMP/pre-meta.json" "$RUNNER_TEMP/post-plan-state.json" "$RUNNER_TEMP/post-plan-meta.json" <<'PY'
+          import json,sys
+          pre_state=json.load(open(sys.argv[1])); pre_meta=json.load(open(sys.argv[2]))
+          post_state=json.load(open(sys.argv[3])); post_meta=json.load(open(sys.argv[4]))
+          if pre_state.get("lineage") != post_state.get("lineage"):
+              raise SystemExit("Terraform state lineage changed while creating fresh apply plan")
+          if pre_state.get("serial") != post_state.get("serial"):
+              raise SystemExit("Terraform state serial changed while creating fresh apply plan")
+          if str(pre_meta.get("generation", "")) != str(post_meta.get("generation", "")):
+              raise SystemExit("Terraform state generation changed while creating fresh apply plan")
+          PY
+
+          python3 scripts/terraform_control.py verify-reviewed --reviewed-evidence "$RUNNER_TEMP/reviewed.json" --plan-json "$RUNNER_TEMP/fresh-plan.json" --state-json "$RUNNER_TEMP/pre-state.json" --state-generation "$PRE_G" --reviewed-head-sha "$RH" --control-seed-sha "$CONTROL_SEED_SHA"
           terraform -chdir="$W" apply -input=false "$RUNNER_TEMP/fresh-plan" >/dev/null
           set +e
           terraform -chdir="$W" plan -input=false -lock-timeout=60s -detailed-exitcode >/dev/null
