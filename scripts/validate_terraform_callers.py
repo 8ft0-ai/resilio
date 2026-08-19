@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_CALLER_BLOBS = {
     ".github/workflows/terraform-foundation-plan.yml": "828eb68a9ccc722e8851608d30230f12b8dd4202",
-    ".github/workflows/terraform-foundation-apply.yml": "09544cc89bcf91d61c102dd0f786ccb16c4a92f0",
-    ".github/workflows/terraform-foundation-drift.yml": "c5122387465b154b930023f9c6810dcf2dc598e8",
+    ".github/workflows/terraform-foundation-apply.yml": "a020ab83ae29b4f6bb71c8105311d77a723eea75",
+    ".github/workflows/terraform-foundation-drift.yml": "97b93e57791586da0c78f43b1add99b10aca4b38",
 }
 
 RETIRED_SETUP_PATHS = (
