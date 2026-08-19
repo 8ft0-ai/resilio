@@ -75,11 +75,20 @@ def main()->int:
         text=read(path,errors)
         for token in ("id-token: write","group: terraform-foundation","cancel-in-progress: false","queue: max"):
             if token not in text: errors.append(f"{path} missing control: {token}")
+    planner=read(WF[0],errors)
+    for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','"control_seed_sha"','"backend_namespace":"foundation/default.tfstate"'):
+        if token not in planner: errors.append(f"reusable planner evidence identity missing: {token}")
+    applier=read(WF[1],errors)
+    for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','--control-seed-sha "$CONTROL_SEED_SHA"'):
+        if token not in applier: errors.append(f"reusable applier reviewed-control guard missing: {token}")
+    helper=read("scripts/terraform_control.py",errors)
+    for token in ("resource_drift","deferred_changes","action_invocations","Terraform plan is incomplete","unrecognised Terraform plan structure","control_seed_sha","backend_namespace"):
+        if token not in helper: errors.append(f"Terraform effect/evidence helper missing fail-closed control: {token}")
     smoke=read(WF[2],errors)
     for token in ("github-federation-probe@","create_credentials_file: false","export_environment_variables: false"):
         if token not in smoke: errors.append(f"reusable federation proof missing: {token}")
     doc=read("docs/terraform-control-model.md",errors)
-    for token in ("repository-only control seed","workflow_call","plan-evidence/foundation/","foundation/default.tfstate","private plan evidence","phase3-terraform-sentinel","US$10"):
+    for token in ("repository-only control seed","workflow_call","plan-evidence/foundation/","foundation/default.tfstate","private plan evidence","control seed","phase3-terraform-sentinel","US$10"):
         if token not in doc: errors.append(f"Terraform control documentation missing: {token}")
     if errors:
         print("Phase 3 Terraform control validation failed:",file=sys.stderr)
