@@ -32,6 +32,9 @@ jobs:
       - name: Validate Terraform control seed
         run: python3 scripts/validate_terraform_control.py
 
+      - name: Validate one-time foundation state initialiser
+        run: python3 scripts/validate_foundation_state_init.py
+
       - name: Run Terraform control unit tests
         run: python3 -m unittest discover -s tests -v
 
