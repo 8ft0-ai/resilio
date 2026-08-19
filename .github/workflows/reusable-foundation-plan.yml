@@ -74,6 +74,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
           BASE_SHA: ${{ inputs.base_sha }}
           HEAD_SHA: ${{ inputs.head_sha }}
+          CONTROL_SEED_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/foundation"; rm -rf "$W"; mkdir -p "$W"
@@ -91,7 +92,10 @@ jobs:
           json.dump({
               "pr":int(os.environ["PR_NUMBER"]),
               "base_sha":os.environ["BASE_SHA"],
-              "head_sha":os.environ["HEAD_SHA"],"root":"foundation",
+              "head_sha":os.environ["HEAD_SHA"],
+              "control_seed_sha":os.environ["CONTROL_SEED_SHA"],
+              "root":"foundation",
+              "backend_namespace":"foundation/default.tfstate",
               "terraform_version":"1.15.8",
               "provider_lock_digest":hashlib.sha256((w/".terraform.lock.hcl").read_bytes()).hexdigest(),
               "configuration_tree_digest":h.hexdigest(),
