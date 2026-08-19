@@ -117,6 +117,7 @@ jobs:
           EO: ${{ inputs.reviewed_evidence_object }}
           EG: ${{ inputs.reviewed_evidence_generation }}
           RH: ${{ inputs.reviewed_head_sha }}
+          CONTROL_SEED_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/foundation"
@@ -127,7 +128,7 @@ jobs:
           G="$(python3 -c 'import json;print(json.load(open("'"$RUNNER_TEMP/pre-meta.json"'"))["generation"])')"
           terraform -chdir="$W" plan -input=false -lock-timeout=60s -out="$RUNNER_TEMP/fresh-plan" >/dev/null
           terraform -chdir="$W" show -json "$RUNNER_TEMP/fresh-plan" >"$RUNNER_TEMP/fresh-plan.json"
-          python3 scripts/terraform_control.py verify-reviewed --reviewed-evidence "$RUNNER_TEMP/reviewed.json" --plan-json "$RUNNER_TEMP/fresh-plan.json" --state-json "$RUNNER_TEMP/pre-state.json" --state-generation "$G" --reviewed-head-sha "$RH"
+          python3 scripts/terraform_control.py verify-reviewed --reviewed-evidence "$RUNNER_TEMP/reviewed.json" --plan-json "$RUNNER_TEMP/fresh-plan.json" --state-json "$RUNNER_TEMP/pre-state.json" --state-generation "$G" --reviewed-head-sha "$RH" --control-seed-sha "$CONTROL_SEED_SHA"
           terraform -chdir="$W" apply -input=false "$RUNNER_TEMP/fresh-plan" >/dev/null
           set +e
           terraform -chdir="$W" plan -input=false -lock-timeout=60s -detailed-exitcode >/dev/null
