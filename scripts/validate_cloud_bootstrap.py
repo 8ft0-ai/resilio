@@ -12,8 +12,7 @@ BACKEND = ROOT / "infra/bootstrap/backend.tf"
 SMOKE = ROOT / ".github/workflows/federation-smoke.yml"
 EVIDENCE = ROOT / "docs/gcp-bootstrap-evidence.md"
 
-AUTH_SHA = "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
-CHECKOUT_SHA = "11d5960a326750d5838078e36cf38b85af677262"
+CONTROL_SEED_SHA = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -53,31 +52,11 @@ EXPECTED_SMOKE = (
     "jobs:\n"
     "  authenticate:\n"
     "    name: trusted-main-auth\n"
-    "    runs-on: ubuntu-latest\n"
-    "    timeout-minutes: 5\n"
-    "    steps:\n"
-    "      - name: Require trusted main\n"
-    '        run: test "$GITHUB_REF" = "refs/heads/main"\n'
-    "\n"
-    "      - name: Check out repository\n"
-    f"        uses: actions/checkout@{CHECKOUT_SHA}\n"
-    "\n"
-    "      - name: Authenticate with Workload Identity Federation\n"
-    "        id: auth\n"
-    f"        uses: google-github-actions/auth@{AUTH_SHA}\n"
-    "        with:\n"
-    f"          project_id: {CONTROL_PROJECT_ID}\n"
-    f"          workload_identity_provider: {WIF_PROVIDER}\n"
-    f"          service_account: {PROBE_SERVICE_ACCOUNT}\n"
-    "          token_format: access_token\n"
-    "          access_token_lifetime: 300s\n"
-    "          create_credentials_file: false\n"
-    "          export_environment_variables: false\n"
-    "\n"
-    "      - name: Confirm short-lived service-account token was issued\n"
-    "        env:\n"
-    "          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}\n"
-    '        run: test -n "$ACCESS_TOKEN"\n'
+    "    if: github.ref == 'refs/heads/main'\n"
+    f"    uses: 8ft0-ai/resilio/.github/workflows/terraform-federation-reusable.yml@{CONTROL_SEED_SHA}\n"
+    "    with:\n"
+    f"      service_account: {PROBE_SERVICE_ACCOUNT}\n"
+    "      token_lifetime: 300s\n"
 )
 
 
@@ -106,7 +85,7 @@ def check_smoke(errors: list[str]) -> None:
 
     if text != EXPECTED_SMOKE:
         errors.append(
-            "federation smoke must exactly match the approved manual trusted-main authentication-only contract"
+            "federation smoke must exactly match the approved manual trusted-main authentication-only reusable-workflow caller pinned to the immutable control seed"
         )
 
 
