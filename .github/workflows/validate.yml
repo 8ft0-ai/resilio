@@ -13,7 +13,7 @@ jobs:
   validate:
     name: repository
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -29,11 +29,26 @@ jobs:
       - name: Validate cloud bootstrap contract
         run: python3 scripts/validate_cloud_bootstrap.py
 
-      - name: Check Terraform formatting
+      - name: Validate Terraform control seed
+        run: python3 scripts/validate_terraform_control.py
+
+      - name: Run Terraform control unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Check bootstrap Terraform formatting
         run: terraform -chdir=infra/bootstrap fmt -check -recursive
 
-      - name: Initialise Terraform without a backend
+      - name: Initialise bootstrap Terraform without a backend
         run: terraform -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly
 
-      - name: Validate Terraform configuration
+      - name: Validate bootstrap Terraform configuration
         run: terraform -chdir=infra/bootstrap validate
+
+      - name: Check foundation Terraform formatting
+        run: terraform -chdir=infra/foundation fmt -check -recursive
+
+      - name: Initialise foundation Terraform without a backend
+        run: terraform -chdir=infra/foundation init -backend=false -input=false -lockfile=readonly
+
+      - name: Validate foundation Terraform configuration
+        run: terraform -chdir=infra/foundation validate

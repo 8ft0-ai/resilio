@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import terraform_control as control  # noqa: E402
+
+
+class CandidateContractTests(unittest.TestCase):
+    def test_slice_a_empty_payload_is_valid(self) -> None:
+        self.assertEqual(control.validate_candidate_document({}), {})
+
+    def test_exact_sentinel_payload_is_valid(self) -> None:
+        document = {"resource": {"google_service_account": {"phase3_terraform_sentinel": dict(control.SENTINEL_RESOURCE)}}}
+        self.assertEqual(control.validate_candidate_document(document), document)
+
+    def test_duplicate_keys_fail_closed(self) -> None:
+        with self.assertRaisesRegex(control.ControlError, "DUPLICATE_JSON_KEY"):
+            control.load_json_strict_bytes(b'{"resource":{},"resource":{}}')
+
+    def test_provider_block_is_forbidden(self) -> None:
+        with self.assertRaisesRegex(control.ControlError, "CANDIDATE_TOP_LEVEL_FORBIDDEN"):
+            control.validate_candidate_document({"provider": {"google": {}}})
+
+    def test_expression_string_is_forbidden(self) -> None:
+        document = {"resource": {"google_service_account": {"phase3_terraform_sentinel": {**control.SENTINEL_RESOURCE, "project": "${var.project}"}}}}
+        with self.assertRaisesRegex(control.ControlError, "EXPRESSION_STRING_FORBIDDEN"):
+            control.validate_candidate_document(document)
+
+    def test_sentinel_configuration_must_match_exactly(self) -> None:
+        document = {"resource": {"google_service_account": {"phase3_terraform_sentinel": {**control.SENTINEL_RESOURCE, "deletion_policy": "DELETE"}}}}
+        with self.assertRaisesRegex(control.ControlError, "SENTINEL_CONFIGURATION_MISMATCH"):
+            control.validate_candidate_document(document)
+
+    def test_canonical_candidate_bytes_are_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "resources.tf.json"
+            path.write_text("{\n}\n", encoding="utf-8")
+            self.assertEqual(control.canonicalise_candidate(path), b"{}\n")
+
+
+class MaterialEffectTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.plan = {"format_version": "1.2", "terraform_version": "1.15.8", "applyable": True, "complete": True,
+                     "resource_changes": [{"address": control.SENTINEL_ADDRESS, "mode": "managed", "type": "google_service_account",
+                                            "name": "phase3_terraform_sentinel", "provider_name": "registry.terraform.io/hashicorp/google",
+                                            "change": {"actions": ["create"], "before": None,
+                                                       "after": {"account_id": "phase3-terraform-sentinel"},
+                                                       "after_unknown": {"email": True}, "before_sensitive": False,
+                                                       "after_sensitive": {"email": False}, "replace_paths": []}}],
+                     "output_changes": {}}
+        self.state = {"lineage": "lineage-1", "serial": 1, "generation": "123", "managed_resource_count": 0}
+
+    def _effect(self, plan: dict | None = None) -> dict:
+        return control.build_private_effect(plan=self.plan if plan is None else plan, state_identity=self.state,
+                                            candidate_sha="a" * 40, candidate_digest="b" * 64,
+                                            trusted_workflow_sha="c" * 40, trusted_tree_digest="d" * 64,
+                                            provider_lock_digest="e" * 64)
+
+    def test_full_material_effect_is_preserved_privately(self) -> None:
+        change = self._effect()["effect"]["resource_changes"][0]["change"]
+        self.assertEqual(change["after"]["account_id"], "phase3-terraform-sentinel")
+        self.assertEqual(change["after_unknown"], {"email": True})
+        self.assertEqual(change["replace_paths"], [])
+
+    def test_public_manifest_does_not_expose_attribute_values(self) -> None:
+        manifest = control.public_manifest(self._effect(), pr_number=17, workflow_run_id="1234",
+                                           evidence_object="plan-evidence/foundation/pr-17-" + "a" * 40 + ".json")
+        encoded = json.dumps(manifest, sort_keys=True)
+        self.assertNotIn("account_id", encoded)
+        self.assertNotIn("phase3-terraform-sentinel", encoded)
+        self.assertEqual(manifest["resource_actions"], [{"address": control.SENTINEL_ADDRESS, "actions": ["create"]}])
+        self.assertEqual(manifest["policy_result"], "PASS")
+        self.assertEqual(manifest["cost_class"], "known-negligible/control-plane")
+
+    def test_material_difference_fails_closed(self) -> None:
+        expected = self._effect()
+        changed = json.loads(json.dumps(self.plan))
+        changed["resource_changes"][0]["change"]["after"]["account_id"] = "other"
+        with self.assertRaisesRegex(control.ControlError, "MATERIAL_EFFECT_MISMATCH"):
+            control.compare_private_effects(expected, self._effect(changed))
+
+    def test_state_generation_difference_fails_closed(self) -> None:
+        expected = self._effect(); actual = json.loads(json.dumps(expected)); actual["state"]["generation"] = "124"
+        with self.assertRaisesRegex(control.ControlError, "MATERIAL_EFFECT_MISMATCH"):
+            control.compare_private_effects(expected, actual)
+
+    def test_state_identity_counts_managed_blocks(self) -> None:
+        state = {"lineage": "lineage-1", "serial": 3,
+                 "resources": [{"mode": "managed", "type": "google_service_account"}, {"mode": "data", "type": "google_client_config"}]}
+        self.assertEqual(control.state_identity_from_state(state, "42"),
+                         {"lineage": "lineage-1", "serial": 3, "generation": "42", "managed_resource_count": 1})
+
+
+class IdentityGuardTests(unittest.TestCase):
+    def test_only_explicit_service_accounts_are_allowed(self) -> None:
+        for account in control.ALLOWED_SERVICE_ACCOUNTS:
+            self.assertEqual(control.validate_service_account(account), account)
+        with self.assertRaisesRegex(control.ControlError, "SERVICE_ACCOUNT_NOT_APPROVED"):
+            control.validate_service_account("owner@example.iam.gserviceaccount.com")
+
+    def test_evidence_object_is_bound_to_pr_and_head(self) -> None:
+        good = "plan-evidence/foundation/pr-12-" + "f" * 40 + ".json"
+        self.assertRegex(good, control.SAFE_EVIDENCE_OBJECT)
+        self.assertNotRegex("plan-evidence/foundation/latest.json", control.SAFE_EVIDENCE_OBJECT)
+
+
+if __name__ == "__main__":
+    unittest.main()

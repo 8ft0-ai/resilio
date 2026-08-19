@@ -1,0 +1,188 @@
+name: Terraform trusted applier
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: plan-apply for normal changes; initialise-empty-state for the one-time setup caller.
+        required: true
+        type: string
+      pr_number:
+        required: false
+        default: 0
+        type: number
+      candidate_sha:
+        required: true
+        type: string
+      base_sha:
+        required: false
+        default: 0000000000000000000000000000000000000000
+        type: string
+      expected_main_sha:
+        required: true
+        type: string
+      reviewed_evidence_object:
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply:
+    name: foundation-apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out immutable reusable-workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Validate invocation and candidate before authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            initialise-empty-state|plan-apply) ;;
+            *) echo "unsupported applier mode" >&2; exit 1 ;;
+          esac
+          python3 scripts/terraform_control.py verify-main --sha "$EXPECTED_MAIN_SHA"
+          if [ "$MODE" = plan-apply ]; then
+            test "$PR_NUMBER" -gt 0
+            python3 scripts/terraform_control.py verify-pr \
+              --pr-number "$PR_NUMBER" \
+              --head-sha "$CANDIDATE_SHA" \
+              --base-sha "$BASE_SHA" \
+              --merge-sha "$EXPECTED_MAIN_SHA" \
+              --require-merged \
+              --allowed-file infra/foundation/resources.tf.json
+            python3 scripts/terraform_control.py fetch-candidate \
+              --sha "$CANDIDATE_SHA" \
+              --output "$RUNNER_TEMP/reviewed-resources.tf.json"
+            python3 scripts/terraform_control.py fetch-candidate \
+              --sha "$EXPECTED_MAIN_SHA" \
+              --output "$RUNNER_TEMP/resources.tf.json"
+            cmp "$RUNNER_TEMP/reviewed-resources.tf.json" "$RUNNER_TEMP/resources.tf.json"
+            test "$(cat "$RUNNER_TEMP/reviewed-resources.tf.json")" != '{}'
+          else
+            python3 scripts/terraform_control.py fetch-candidate \
+              --sha "$EXPECTED_MAIN_SHA" \
+              --output "$RUNNER_TEMP/resources.tf.json"
+          fi
+          python3 scripts/terraform_control.py assemble \
+            --trusted-root "$GITHUB_WORKSPACE" \
+            --candidate "$RUNNER_TEMP/resources.tf.json" \
+            --output "$RUNNER_TEMP/foundation"
+
+      - name: Authenticate as the dedicated bounded applier
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-foundation-applier@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 1200s
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Initialise empty foundation state exactly once
+        if: inputs.mode == 'initialise-empty-state'
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/foundation"
+          test "$(cat "$RUNNER_TEMP/resources.tf.json")" = '{}'
+          test "$(python3 scripts/terraform_control.py gcs-metadata --object foundation/default.tfstate --allow-absent)" = 'ABSENT'
+          terraform -chdir="$WORK" init -input=false -lockfile=readonly >/dev/null
+          terraform -chdir="$WORK" state pull > "$RUNNER_TEMP/initial-state.json"
+          META="$(python3 scripts/terraform_control.py gcs-metadata --object foundation/default.tfstate)"
+          GENERATION="$(printf '%s' "$META" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
+          python3 scripts/terraform_control.py state-identity \
+            --state-json "$RUNNER_TEMP/initial-state.json" \
+            --generation "$GENERATION" \
+            --output "$RUNNER_TEMP/initial-state-identity.json"
+          python3 - "$RUNNER_TEMP/initial-state-identity.json" <<'PY'
+          import json, sys
+          state = json.load(open(sys.argv[1], encoding="utf-8"))
+          if state["managed_resource_count"] != 0:
+              raise SystemExit("initial foundation state is not empty")
+          print(json.dumps(state, sort_keys=True, separators=(",", ":")))
+          PY
+
+      - name: Re-plan, compare private full effect, and apply the fresh plan
+        if: inputs.mode == 'plan-apply'
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TRUSTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          REVIEWED_EVIDENCE_OBJECT: ${{ inputs.reviewed_evidence_object }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/foundation"
+          REVIEWED="$RUNNER_TEMP/reviewed-effect.json"
+          CURRENT="$RUNNER_TEMP/current-effect.json"
+          PUBLIC="$RUNNER_TEMP/current-manifest.json"
+          STATE_JSON="$RUNNER_TEMP/state.json"
+          STATE_ID="$RUNNER_TEMP/state-identity.json"
+          PLAN_FILE="$RUNNER_TEMP/foundation.tfplan"
+          PLAN_JSON="$RUNNER_TEMP/plan.json"
+
+          python3 scripts/terraform_control.py gcs-download \
+            --object "$REVIEWED_EVIDENCE_OBJECT" \
+            --output "$REVIEWED"
+          META="$(python3 scripts/terraform_control.py gcs-metadata --object foundation/default.tfstate)"
+          GENERATION="$(printf '%s' "$META" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
+
+          terraform -chdir="$WORK" init -input=false -lockfile=readonly >/dev/null
+          terraform -chdir="$WORK" state pull > "$STATE_JSON"
+          python3 scripts/terraform_control.py state-identity \
+            --state-json "$STATE_JSON" \
+            --generation "$GENERATION" \
+            --output "$STATE_ID"
+
+          terraform -chdir="$WORK" plan -input=false -out="$PLAN_FILE" >/dev/null
+          terraform -chdir="$WORK" show -json "$PLAN_FILE" > "$PLAN_JSON"
+          CANDIDATE_DIGEST="$(sha256sum "$RUNNER_TEMP/reviewed-resources.tf.json" | cut -d' ' -f1)"
+          LOCK_DIGEST="$(sha256sum "$WORK/.terraform.lock.hcl" | cut -d' ' -f1)"
+          TREE_DIGEST="$(cat "$WORK/backend.tf" "$WORK/versions.tf" "$WORK/provider.tf" "$WORK/.terraform.lock.hcl" | sha256sum | cut -d' ' -f1)"
+          python3 scripts/terraform_control.py build-effect \
+            --plan-json "$PLAN_JSON" \
+            --state-identity "$STATE_ID" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --candidate-digest "$CANDIDATE_DIGEST" \
+            --trusted-workflow-sha "$TRUSTED_WORKFLOW_SHA" \
+            --trusted-tree-digest "$TREE_DIGEST" \
+            --provider-lock-digest "$LOCK_DIGEST" \
+            --pr-number "$PR_NUMBER" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --private-output "$CURRENT" \
+            --public-output "$PUBLIC"
+          python3 scripts/terraform_control.py compare-effect --expected "$REVIEWED" --actual "$CURRENT"
+          terraform -chdir="$WORK" apply -input=false -auto-approve "$PLAN_FILE" >/dev/null
+          terraform -chdir="$WORK" plan -input=false -detailed-exitcode >/dev/null
+          cat "$PUBLIC"
+
+      - name: Remove generated WIF credential material
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE"/gha-creds-*.json "$RUNNER_TEMP"/gha-creds-*.json
