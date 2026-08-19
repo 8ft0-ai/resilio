@@ -25,6 +25,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
+      pull-requests: read
       id-token: write
     uses: 8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04
     with:

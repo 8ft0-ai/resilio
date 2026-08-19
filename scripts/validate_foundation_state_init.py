@@ -40,6 +40,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
+      pull-requests: read
       id-token: write
     uses: {APPLIER_REF}
     with:
