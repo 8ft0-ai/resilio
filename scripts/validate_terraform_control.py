@@ -59,6 +59,15 @@ REUSABLE_WORKFLOWS = {
                      "token_format: access_token", '--base-sha "$BASE_SHA"'),
         "permissions": "permissions:\n  contents: read\n  pull-requests: read\n  id-token: write",
     },
+    ".github/workflows/terraform-drift-reusable.yml": {
+        "required": ("workflow_call:", f"actions/checkout@{CHECKOUT_SHA}", f"hashicorp/setup-terraform@{SETUP_TERRAFORM_SHA}",
+                     f"google-github-actions/auth@{AUTH_SHA}", "repository: ${{ job.workflow_repository }}",
+                     "ref: ${{ job.workflow_sha }}", "verify-main", "fetch-candidate", "assemble",
+                     "python3 scripts/terraform_drift.py", "-detailed-exitcode", "token_format: access_token",
+                     control.PLANNER_SERVICE_ACCOUNT, 'POST_STATE_ID="$RUNNER_TEMP/post-state-identity.json"',
+                     'cmp "$STATE_ID" "$POST_STATE_ID"', "drift_fingerprint"),
+        "permissions": "permissions:\n  contents: read\n  id-token: write",
+    },
 }
 FORBIDDEN_TRIGGERS = ("workflow_dispatch:", "pull_request:", "pull_request_target:", "workflow_run:", "\npush:", "\nschedule:")
 
@@ -124,11 +133,22 @@ def check_reusable_workflows(errors: list[str]) -> None:
                 errors.append(f"{name} must bind to the dedicated foundation automation identity")
             if "gha-creds-" in text and "rm -f" not in text:
                 errors.append(f"{name} must explicitly clean generated WIF credential files")
+    drift = ROOT / ".github/workflows/terraform-drift-reusable.yml"
+    if drift.is_file():
+        text = drift.read_text(encoding="utf-8")
+        if control.PLANNER_SERVICE_ACCOUNT not in text:
+            errors.append("drift reusable workflow must use the existing read-only planner identity")
+        if "terraform -chdir=\"$WORK\" apply" in text or "terraform apply" in text:
+            errors.append("drift reusable workflow must never call Terraform apply")
+        if "pull-requests: read" in text or "issues: write" in text or "contents: write" in text:
+            errors.append("drift reusable cloud job must not acquire PR/reporting/repository write permissions")
+        if "gha-creds-" in text and "rm -f" not in text:
+            errors.append("drift reusable workflow must explicitly clean generated WIF credential files")
 
 
 def check_script_contract(errors: list[str]) -> None:
     paths = [ROOT / "scripts/terraform_control.py", ROOT / "scripts/terraform_control_core.py",
-             ROOT / "scripts/terraform_control_remote.py"]
+             ROOT / "scripts/terraform_control_remote.py", ROOT / "scripts/terraform_drift.py"]
     for path in paths + [ROOT / "scripts/validate_terraform_control.py"]:
         if not path.is_file():
             errors.append(f"Terraform control script missing: {path.relative_to(ROOT)}")
@@ -146,6 +166,8 @@ def check_script_contract(errors: list[str]) -> None:
         "PLAN_RESOURCE_CLASS_FORBIDDEN", "PLAN_ACTION_SEQUENCE_INVALID", "PLAN_DESTRUCTIVE_ACTION_FORBIDDEN",
         "SAFE_SENTINEL_ACTION_SEQUENCES", "PLAN_ACTION_SEQUENCE_FORBIDDEN", "PLAN_PROOF_CHANGE_COUNT_INVALID",
         "before_identity", "after_identity", "BACKEND_NAMESPACE", "base_sha", "pr_number",
+        "DRIFT_CONTRACT", "DRIFT_FINGERPRINT_CONTRACT", "SAFE_DRIFT_ACTIONS", "DRIFT_OUTPUT_CHANGES_FORBIDDEN",
+        "DRIFT_PLAN_STRUCTURE_UNRECOGNISED", "drift_fingerprint",
     ):
         if required not in text:
             errors.append(f"Terraform control code missing required fail-closed control: {required}")
