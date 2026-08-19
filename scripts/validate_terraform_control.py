@@ -98,6 +98,34 @@ def main()->int:
     applier=read(WF[1],errors)
     for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','--control-seed-sha "$CONTROL_SEED_SHA"'):
         if token not in applier: errors.append(f"reusable applier reviewed-control guard missing: {token}")
+    setup_sequence=(
+        "gcs-assert-absent",
+        'state pull >"$RUNNER_TEMP/result-state.json"',
+        "Initial foundation state contains unexpected resources",
+        "Initial foundation state contains unexpected outputs",
+        'gcs-metadata >"$RUNNER_TEMP/result-meta.json"',
+    )
+    positions=[applier.find(token) for token in setup_sequence]
+    if any(pos < 0 for pos in positions) or positions != sorted(positions):
+        errors.append("reusable setup must prove newly initialised foundation state is empty before publishing identity")
+    apply_sequence=(
+        'state pull >"$RUNNER_TEMP/pre-state.json"',
+        'plan -input=false -lock-timeout=60s -out="$RUNNER_TEMP/fresh-plan"',
+        'state pull >"$RUNNER_TEMP/post-plan-state.json"',
+        "Terraform state generation changed while creating fresh apply plan",
+        '--state-json "$RUNNER_TEMP/pre-state.json"',
+        '--state-generation "$PRE_G"',
+        'apply -input=false "$RUNNER_TEMP/fresh-plan"',
+    )
+    positions=[applier.find(token) for token in apply_sequence]
+    if any(pos < 0 for pos in positions) or positions != sorted(positions):
+        errors.append("reusable applier must prove reviewed state stayed unchanged while creating the fresh apply plan")
+    for token in (
+        "Terraform state lineage changed while creating fresh apply plan",
+        "Terraform state serial changed while creating fresh apply plan",
+        "Terraform state generation changed while creating fresh apply plan",
+    ):
+        if token not in applier: errors.append(f"reusable applier missing fresh-plan state-stability guard: {token}")
     helper=read("scripts/terraform_control.py",errors)
     for token in (
         "resource_drift","deferred_changes","deferred_action_invocations","action_invocations",
