@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import terraform_control as control  # noqa: E402
 import terraform_drift as drift  # noqa: E402
+import validate_terraform_control as validator  # noqa: E402
 
 
 class DriftManifestTests(unittest.TestCase):
@@ -150,6 +151,29 @@ class DriftManifestTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(control.ControlError, error):
                 self._manifest(plan)
 
+    def test_supported_terraform_1158_action_sequences_are_accepted(self) -> None:
+        for actions in sorted(drift.SAFE_DRIFT_ACTION_SEQUENCES):
+            plan = json.loads(json.dumps(self.plan))
+            plan["applyable"] = actions != ("no-op",)
+            plan["resource_changes"] = [self._sentinel_row(list(actions))]
+            with self.subTest(actions=actions):
+                self._manifest(plan)
+
+    def test_malformed_known_action_sequences_fail_closed(self) -> None:
+        for actions in (
+            ["create", "update"],
+            ["update", "create"],
+            ["no-op", "delete"],
+            ["create", "create"],
+            ["forget", "create"],
+            ["create", "forget", "delete"],
+        ):
+            plan = json.loads(json.dumps(self.plan))
+            plan["applyable"] = True
+            plan["resource_changes"] = [self._sentinel_row(actions)]
+            with self.subTest(actions=actions), self.assertRaisesRegex(control.ControlError, "DRIFT_ACTION_SEQUENCE_INVALID"):
+                self._manifest(plan)
+
     def test_unknown_future_action_fails_closed(self) -> None:
         plan = json.loads(json.dumps(self.plan))
         plan["applyable"] = True
@@ -162,6 +186,31 @@ class DriftManifestTests(unittest.TestCase):
         plan["future_field"] = {}
         with self.assertRaisesRegex(control.ControlError, "DRIFT_PLAN_STRUCTURE_UNRECOGNISED"):
             self._manifest(plan)
+
+    def test_workflow_call_only_guard_rejects_active_triggers(self) -> None:
+        callable_only = """name: Test reusable
+
+on:
+  workflow_call:
+    inputs:
+      value:
+        required: false
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+"""
+        errors: list[str] = []
+        validator.check_workflow_call_only("test.yml", callable_only, errors)
+        self.assertEqual(errors, [])
+        for event in ("push", "schedule", "repository_dispatch"):
+            text = callable_only.replace("  workflow_call:\n", f"  workflow_call:\n  {event}:\n", 1)
+            errors = []
+            validator.check_workflow_call_only("test.yml", text, errors)
+            with self.subTest(event=event):
+                self.assertTrue(errors)
+                self.assertIn("workflow_call-only", errors[0])
 
 
 if __name__ == "__main__":
