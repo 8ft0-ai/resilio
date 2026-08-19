@@ -1,7 +1,9 @@
 locals {
   phase3_control_seed_sha             = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
+  phase3_drift_workflow_sha           = "2acbc425f688383375f724da7a4d80025dd9cc23"
   foundation_plan_workflow_ref        = "8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase3_control_seed_sha}"
   foundation_apply_workflow_ref       = "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@${local.phase3_control_seed_sha}"
+  foundation_drift_workflow_ref       = "8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@${local.phase3_drift_workflow_sha}"
   state_bucket_object_resource_prefix = "projects/_/buckets/${google_storage_bucket.terraform_state.name}/objects/"
   foundation_state_resource_name      = "${local.state_bucket_object_resource_prefix}foundation/default.tfstate"
   foundation_lock_resource_name       = "${local.state_bucket_object_resource_prefix}foundation/default.tflock"
@@ -32,6 +34,16 @@ resource "google_service_account_iam_member" "github_foundation_planner" {
   service_account_id = google_service_account.foundation_planner.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.foundation_plan_workflow_ref}"
+
+  depends_on = [
+    google_iam_workload_identity_pool_provider.github,
+  ]
+}
+
+resource "google_service_account_iam_member" "github_foundation_drift" {
+  service_account_id = google_service_account.foundation_planner.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.foundation_drift_workflow_ref}"
 
   depends_on = [
     google_iam_workload_identity_pool_provider.github,
