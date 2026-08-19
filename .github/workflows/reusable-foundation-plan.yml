@@ -112,6 +112,7 @@ jobs:
           project_id: resilio-control-e882d4
           workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
           service_account: github-foundation-planner@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
           access_token_lifetime: 300s
           create_credentials_file: true
           export_environment_variables: true
