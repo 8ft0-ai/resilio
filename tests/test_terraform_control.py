@@ -23,7 +23,7 @@ class TerraformControlTests(unittest.TestCase):
         return {"lineage":"lineage-1","serial":serial,"version":4}
 
     def test_empty_seed_candidate_allowed(self):
-        self.assertEqual(tc.validate_candidate_payload({"resource":{}}),"empty")
+        self.assertEqual(tc.validate_candidate_payload({}),"empty")
 
     def test_exact_sentinel_allowed(self):
         self.assertEqual(tc.validate_candidate_payload(tc.sentinel_candidate_payload()),"sentinel")

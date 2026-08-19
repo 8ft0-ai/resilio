@@ -54,7 +54,7 @@ def load_json_strict_bytes(data: bytes) -> Any:
 
 
 def empty_candidate_payload() -> dict[str, Any]:
-    return {"resource": {}}
+    return {}
 
 
 def sentinel_candidate_payload() -> dict[str, Any]:
@@ -62,15 +62,12 @@ def sentinel_candidate_payload() -> dict[str, Any]:
 
 
 def validate_candidate_payload(payload: Any, allow_empty: bool = True) -> str:
-    if not isinstance(payload, dict) or set(payload) != {"resource"}:
-        raise ContractError("candidate must contain only top-level resource")
-    resources = payload["resource"]
-    if not isinstance(resources, dict):
-        raise ContractError("resource must be an object")
-    if resources == {}:
+    if payload == {}:
         if allow_empty:
             return "empty"
         raise ContractError("empty candidate is not allowed")
+    if not isinstance(payload, dict) or set(payload) != {"resource"}:
+        raise ContractError("candidate must be empty or contain only top-level resource")
     if payload != sentinel_candidate_payload():
         raise ContractError("candidate is outside the exact Phase 3 sentinel grammar")
     return "sentinel"
