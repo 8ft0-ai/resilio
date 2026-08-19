@@ -13,75 +13,62 @@ APPLIER_REF = (
     "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@"
     + CONTROL_SEED
 )
+EXPECTED_WORKFLOW = f"""name: Terraform foundation state initialisation
 
-REQUIRED = (
-    "name: Terraform foundation state initialisation",
-    "on:\n  workflow_dispatch:",
-    "permissions:\n  contents: read",
-    "concurrency:\n  group: terraform-foundation-state-initialisation\n  cancel-in-progress: false",
-    'run: test "$GITHUB_REF" = "refs/heads/main"',
-    "needs: require-main",
-    "if: github.ref == 'refs/heads/main'",
-    "permissions:\n      contents: read\n      id-token: write",
-    f"uses: {APPLIER_REF}",
-    "mode: initialise-empty-state",
-    "candidate_sha: ${{ github.sha }}",
-    "expected_main_sha: ${{ github.sha }}",
-)
+on:
+  workflow_dispatch:
 
-FORBIDDEN = (
-    "pull_request:",
-    "pull_request_target:",
-    "\npush:",
-    "\nschedule:",
-    "workflow_run:",
-    "${{ secrets.",
-    "google-github-actions/auth@",
-    "hashicorp/setup-terraform@",
-    "actions/checkout@",
-    "continue-on-error:",
-    "pull-requests:",
-)
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-foundation-state-initialisation
+  cancel-in-progress: false
+
+jobs:
+  require-main:
+    name: require-trusted-main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require trusted main
+        run: test \"$GITHUB_REF\" = \"refs/heads/main\"
+
+  initialise:
+    name: initialise-empty-foundation-state
+    needs: require-main
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    uses: {APPLIER_REF}
+    with:
+      mode: initialise-empty-state
+      candidate_sha: ${{{{ github.sha }}}}
+      expected_main_sha: ${{{{ github.sha }}}}
+"""
 
 
 def main() -> int:
-    errors: list[str] = []
     if not WORKFLOW.is_file():
-        errors.append(f"Slice D setup caller is missing: {WORKFLOW.relative_to(ROOT)}")
-    else:
-        text = WORKFLOW.read_text(encoding="utf-8")
-        for required in REQUIRED:
-            if required not in text:
-                errors.append(f"Slice D setup caller missing required contract token: {required}")
-        for forbidden in FORBIDDEN:
-            if forbidden in text:
-                errors.append(f"Slice D setup caller contains forbidden token: {forbidden.strip()}")
-        if text.count("workflow_dispatch:") != 1:
-            errors.append("Slice D setup caller must expose exactly one workflow_dispatch trigger")
-        use_lines = [
-            line.strip()[len("uses: "):]
-            for line in text.splitlines()
-            if line.strip().startswith("uses: ")
-        ]
-        if use_lines != [APPLIER_REF]:
-            errors.append(
-                "Slice D setup caller may invoke only the immutable trusted applier reusable workflow"
-            )
-        run_lines = [
-            line.strip()[len("run: "):]
-            for line in text.splitlines()
-            if line.strip().startswith("run: ")
-        ]
-        if run_lines != ['test "$GITHUB_REF" = "refs/heads/main"']:
-            errors.append(
-                "Slice D setup caller may execute only the local trusted-main guard; "
-                "Terraform/authentication must remain inside the immutable reusable workflow"
-            )
+        print(
+            f"Slice D setup caller validation failed: missing {WORKFLOW.relative_to(ROOT)}",
+            file=sys.stderr,
+        )
+        return 1
 
-    if errors:
-        print("Slice D setup caller validation failed:", file=sys.stderr)
-        for error in errors:
-            print(f"- {error}", file=sys.stderr)
+    try:
+        text = WORKFLOW.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        print("Slice D setup caller validation failed: workflow is not UTF-8", file=sys.stderr)
+        return 1
+
+    if text != EXPECTED_WORKFLOW:
+        print(
+            "Slice D setup caller validation failed: workflow must match the complete "
+            "canonical one-time caller contract exactly",
+            file=sys.stderr,
+        )
         return 1
 
     print("Slice D setup caller validation passed.")
