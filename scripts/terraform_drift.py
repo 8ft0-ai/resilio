@@ -14,7 +14,18 @@ import terraform_control as control
 
 DRIFT_CONTRACT = "resilio-terraform-drift-manifest/v1"
 DRIFT_FINGERPRINT_CONTRACT = "resilio-terraform-drift-fingerprint/v1"
-SAFE_DRIFT_ACTIONS = {"no-op", "create", "read", "update", "delete", "forget"}
+# Terraform v1.15.8 internal/command/jsonplan.plan exact Change.Actions sequences.
+SAFE_DRIFT_ACTION_SEQUENCES = {
+    ("no-op",),
+    ("create",),
+    ("read",),
+    ("update",),
+    ("delete", "create"),
+    ("create", "delete"),
+    ("delete",),
+    ("forget",),
+    ("create", "forget"),
+}
 
 
 def _normalise_change(change: Any) -> dict[str, Any]:
@@ -25,7 +36,8 @@ def _normalise_change(change: Any) -> dict[str, Any]:
         raise control.ControlError("DRIFT_CHANGE_STRUCTURE_UNRECOGNISED:" + ",".join(sorted(unknown)))
     actions = change.get("actions")
     if (not isinstance(actions, list) or not actions
-            or any(not isinstance(action, str) or action not in SAFE_DRIFT_ACTIONS for action in actions)):
+            or any(not isinstance(action, str) for action in actions)
+            or tuple(actions) not in SAFE_DRIFT_ACTION_SEQUENCES):
         raise control.ControlError("DRIFT_ACTION_SEQUENCE_INVALID")
     return {key: change.get(key) for key in sorted(control.PLAN_CHANGE_KEYS)}
 
