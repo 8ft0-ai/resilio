@@ -26,7 +26,7 @@ The privileged working directory is assembled from trusted `backend.tf`, `versio
 
 ## Reusable workflow trust
 
-The control seed contains exactly three reusable workflows: `terraform-federation-reusable.yml`, `terraform-plan-reusable.yml` and `terraform-apply-reusable.yml`. Credential-bearing callers invoke them by the immutable control-seed SHA. Each reusable job checks out security-critical repository code from `${{ job.workflow_repository }}` at `${{ job.workflow_sha }}` with persisted checkout credentials disabled.
+The control seed contains exactly three reusable workflows: `terraform-federation-reusable.yml`, `terraform-plan-reusable.yml` and `terraform-apply-reusable.yml`. They remain `workflow_call`-only entry points. Their presence in Git creates **no cloud authority**; cloud capability exists only after a separately governed WIF/IAM binding is activated. Credential-bearing callers invoke the workflows by the immutable control-seed SHA. Each reusable job checks out security-critical repository code from `${{ job.workflow_repository }}` at `${{ job.workflow_sha }}` with persisted checkout credentials disabled.
 
 Slice B proved this binding operationally: the manual `federation-smoke.yml` on protected `main` called `terraform-federation-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04`, used the unchanged `github-federation-probe` service account and obtained the intended 300-second token without resource mutation.
 
