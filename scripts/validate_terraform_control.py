@@ -98,6 +98,17 @@ def main()->int:
     applier=read(WF[1],errors)
     for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','--control-seed-sha "$CONTROL_SEED_SHA"'):
         if token not in applier: errors.append(f"reusable applier reviewed-control guard missing: {token}")
+    if 'test "$RH" = "$SHA"' in applier:
+        errors.append("reusable applier must not conflate reviewed PR head with desired/main commit")
+    identity_sequence=(
+        'fetch-candidate --ref "$RH" --output "$RUNNER_TEMP/reviewed-resources.tf.json"',
+        'fetch-candidate --ref "$SHA" --expected-blob-sha "$BLOB" --output "$W/resources.tf.json"',
+        'cmp "$RUNNER_TEMP/reviewed-resources.tf.json" "$W/resources.tf.json"',
+        'validate-candidate --path "$W/resources.tf.json" --require-sentinel',
+    )
+    positions=[applier.find(token) for token in identity_sequence]
+    if any(pos < 0 for pos in positions) or positions != sorted(positions):
+        errors.append("reusable applier must compare exact reviewed-head and desired/main candidate bytes before authentication")
     setup_sequence=(
         "gcs-assert-absent",
         'state pull >"$RUNNER_TEMP/result-state.json"',
