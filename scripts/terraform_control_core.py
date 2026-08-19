@@ -36,7 +36,7 @@ SENTINEL_RESOURCE = {
     "project": REFERENCE_PROJECT,
     "deletion_policy": "PREVENT",
 }
-SAFE_SENTINEL_ACTION_SEQUENCES = {("create",), ("no-op",)}
+SAFE_SENTINEL_ACTION_SEQUENCES = {("create",)}
 
 # Terraform v1.15.8 internal/command/jsonplan.plan exact top-level JSON fields.
 PLAN_TOP_LEVEL_KEYS = {
@@ -203,6 +203,8 @@ def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
     rows = plan.get("resource_changes") or []
     if not isinstance(rows, list):
         raise ControlError("PLAN_RESOURCE_CHANGES_INVALID")
+    if len(rows) != 1:
+        raise ControlError("PLAN_PROOF_CHANGE_COUNT_INVALID")
     changes: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
