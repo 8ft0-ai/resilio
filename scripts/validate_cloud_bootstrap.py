@@ -3,15 +3,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-BACKEND = ROOT / "infra/bootstrap/backend.tf"
-BOOTSTRAP_MAIN = ROOT / "infra/bootstrap/main.tf"
-AUTHORITY = ROOT / "infra/bootstrap/phase3_authority.tf"
-OUTPUTS = ROOT / "infra/bootstrap/outputs.tf"
+BOOTSTRAP_DIR = ROOT / "infra/bootstrap"
+BACKEND = BOOTSTRAP_DIR / "backend.tf"
+BOOTSTRAP_MAIN = BOOTSTRAP_DIR / "main.tf"
+AUTHORITY = BOOTSTRAP_DIR / "phase3_authority.tf"
+OUTPUTS = BOOTSTRAP_DIR / "outputs.tf"
 SMOKE = ROOT / ".github/workflows/federation-smoke.yml"
 EVIDENCE = ROOT / "docs/gcp-bootstrap-evidence.md"
 
@@ -46,6 +48,19 @@ APPLIER_WORKFLOW_REF = (
     "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@"
     + CONTROL_SEED_SHA
 )
+
+# These are Git blob identities for the complete reviewed Slice C bootstrap
+# Terraform configuration. Any Terraform configuration drift must therefore
+# update this validator and pass a new substantive review rather than silently
+# widening the authority envelope while retaining the same required tokens.
+EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
+    "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
+    "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
+    "outputs.tf": "68691c38ea5e4b34729448b43b469e42ef3f5acc",
+    "phase3_authority.tf": "0154779655e2fdd0b5bdd38add2f42c046ec8aa2",
+    "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
+    "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
+}
 
 EXPECTED_BACKEND = (
     "terraform {\n"
@@ -93,6 +108,39 @@ def require_file(path: Path, errors: list[str]) -> str:
         errors.append(f"required cloud bootstrap path is missing: {path.relative_to(ROOT)}")
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def git_blob_sha(path: Path) -> str:
+    content = path.read_bytes()
+    prefix = f"blob {len(content)}\0".encode("ascii")
+    return hashlib.sha1(prefix + content).hexdigest()
+
+
+def check_bootstrap_terraform_identity(errors: list[str]) -> None:
+    expected_names = tuple(sorted(EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS))
+    actual_names = tuple(
+        sorted(
+            path.name
+            for path in BOOTSTRAP_DIR.iterdir()
+            if path.is_file()
+            and (path.name.endswith(".tf") or path.name.endswith(".tf.json"))
+        )
+    )
+    if actual_names != expected_names:
+        errors.append(
+            "bootstrap Terraform configuration file set must exactly match "
+            f"{expected_names}; found {actual_names}"
+        )
+        return
+
+    for name, expected_sha in EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS.items():
+        path = BOOTSTRAP_DIR / name
+        actual_sha = git_blob_sha(path)
+        if actual_sha != expected_sha:
+            errors.append(
+                f"bootstrap Terraform configuration {name} must remain at reviewed "
+                f"blob {expected_sha}; found {actual_sha}"
+            )
 
 
 def check_backend(errors: list[str]) -> None:
@@ -171,6 +219,10 @@ def check_phase3_authority(errors: list[str]) -> None:
     outputs_text = require_file(OUTPUTS, errors)
     if not main_text or not authority_text or not outputs_text:
         return
+
+    exact_subject = f'  github_main_subject = "{GITHUB_SUBJECT}"'
+    if exact_subject not in main_text:
+        errors.append("WIF provider must preserve the exact immutable repository/main subject value")
 
     expected_mapping = (
         '  attribute_mapping = {\n'
@@ -283,6 +335,7 @@ def check_phase3_authority(errors: list[str]) -> None:
 
 def main() -> int:
     errors: list[str] = []
+    check_bootstrap_terraform_identity(errors)
     check_backend(errors)
     check_smoke(errors)
     check_evidence(errors)
