@@ -50,9 +50,17 @@ EXPECTED_SMOKE = (
     "  id-token: write\n"
     "\n"
     "jobs:\n"
+    "  require-main:\n"
+    "    name: require-trusted-main\n"
+    "    runs-on: ubuntu-latest\n"
+    "    timeout-minutes: 2\n"
+    "    steps:\n"
+    "      - name: Require trusted main\n"
+    '        run: test "$GITHUB_REF" = "refs/heads/main"\n'
+    "\n"
     "  authenticate:\n"
     "    name: trusted-main-auth\n"
-    "    if: github.ref == 'refs/heads/main'\n"
+    "    needs: require-main\n"
     f"    uses: 8ft0-ai/resilio/.github/workflows/terraform-federation-reusable.yml@{CONTROL_SEED_SHA}\n"
     "    with:\n"
     f"      service_account: {PROBE_SERVICE_ACCOUNT}\n"
@@ -85,7 +93,7 @@ def check_smoke(errors: list[str]) -> None:
 
     if text != EXPECTED_SMOKE:
         errors.append(
-            "federation smoke must exactly match the approved manual trusted-main authentication-only reusable-workflow caller pinned to the immutable control seed"
+            "federation smoke must exactly match the approved fail-closed manual trusted-main authentication-only reusable-workflow caller pinned to the immutable control seed"
         )
 
 
