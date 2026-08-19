@@ -103,6 +103,16 @@ class TerraformControlTests(unittest.TestCase):
         p=self.plan(); p["action_invocations"]=[{"address":"action.example"}]
         with self.assertRaises(tc.ContractError): tc.plan_effect(p)
 
+    def test_delete_action_rejected(self):
+        p=self.plan(); p["resource_changes"][0]["change"]["actions"]=["delete"]
+        with self.assertRaises(tc.ContractError): tc.plan_effect(p)
+
+    def test_replacement_action_rejected(self):
+        for actions in (["delete","create"],["create","delete"]):
+            with self.subTest(actions=actions):
+                p=self.plan(); p["resource_changes"][0]["change"]["actions"]=actions
+                with self.assertRaises(tc.ContractError): tc.plan_effect(p)
+
     def test_unrecognised_plan_structure_rejected(self):
         p=self.plan(); p["future_effects"]=[{"action":"create"}]
         with self.assertRaises(tc.ContractError): tc.plan_effect(p)

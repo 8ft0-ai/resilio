@@ -143,8 +143,12 @@ def main()->int:
         '"applyable"','"errored"',"Terraform plan applyability is missing or invalid",
         "Terraform plan is incomplete","Terraform plan is errored",
         "unrecognised Terraform plan structure","control_seed_sha","backend_namespace",
+        "Terraform plan contains a deletion or replacement action",
     ):
         if token not in helper: errors.append(f"Terraform effect/evidence helper missing fail-closed control: {token}")
+    tests=read("tests/test_terraform_control.py",errors)
+    for token in ("test_delete_action_rejected","test_replacement_action_rejected"):
+        if token not in tests: errors.append(f"Terraform control tests missing destructive-action coverage: {token}")
     smoke=read(WF[2],errors)
     for token in ("github-federation-probe@","create_credentials_file: false","export_environment_variables: false"):
         if token not in smoke: errors.append(f"reusable federation proof missing: {token}")

@@ -128,6 +128,8 @@ def plan_effect(plan: dict[str, Any]) -> dict[str, Any]:
         change = item.get("change")
         if not isinstance(change, dict) or not isinstance(change.get("actions"), list):
             raise ContractError("Terraform resource change semantics are incomplete")
+        if "delete" in change["actions"]:
+            raise ContractError("Terraform plan contains a deletion or replacement action")
         canonical_change = copy.deepcopy(item)
         canonical_change["index"] = item.get("index")
         changes.append(canonical_change)
