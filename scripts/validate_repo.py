@@ -26,6 +26,9 @@ REQUIRED_PATHS = (
     ".github/ISSUE_TEMPLATE/change.md",
     ".github/pull_request_template.md",
     ".github/workflows/validate.yml",
+    ".github/workflows/reusable-foundation-plan.yml",
+    ".github/workflows/reusable-foundation-apply.yml",
+    ".github/workflows/reusable-federation-smoke.yml",
     "docs/adr/README.md",
     "docs/architecture.md",
     "docs/cost-model.md",
@@ -34,12 +37,21 @@ REQUIRED_PATHS = (
     "docs/repository-governance.md",
     "docs/roadmap.md",
     "docs/security-and-private-state.md",
+    "docs/terraform-control-model.md",
     "docs/vision.md",
     "infra/bootstrap/.terraform.lock.hcl",
     "infra/bootstrap/main.tf",
     "infra/bootstrap/outputs.tf",
     "infra/bootstrap/variables.tf",
     "infra/bootstrap/versions.tf",
+    "infra/foundation/.terraform.lock.hcl",
+    "infra/foundation/backend.tf",
+    "infra/foundation/provider.tf",
+    "infra/foundation/resources.tf.json",
+    "infra/foundation/versions.tf",
+    "scripts/terraform_control.py",
+    "scripts/validate_terraform_control.py",
+    "tests/test_terraform_control.py",
 )
 
 FORBIDDEN_TRACKED_NAMES = {
@@ -158,17 +170,25 @@ def check_baseline_workflow(errors: list[str]) -> None:
     if expected_setup not in text:
         errors.append("Terraform setup action must be pinned to the approved immutable commit")
     for command in (
+        "python3 scripts/validate_terraform_control.py",
+        "python3 -m unittest discover -s tests -p 'test_*.py'",
         "terraform -chdir=infra/bootstrap fmt -check -recursive",
         "terraform -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly",
         "terraform -chdir=infra/bootstrap validate",
+        "terraform -chdir=infra/foundation fmt -check -recursive",
+        "terraform -chdir=infra/foundation init -backend=false -input=false -lockfile=readonly",
+        "terraform -chdir=infra/foundation validate",
     ):
         if command not in text:
-            errors.append(f"baseline workflow is missing Terraform validation command: {command}")
+            errors.append(f"baseline workflow is missing validation command: {command}")
 
 
 def check_terraform_contract(errors: list[str]) -> None:
     version_file = ROOT / ".terraform-version"
-    if version_file.is_file() and version_file.read_text(encoding="utf-8").strip() != TERRAFORM_VERSION:
+    if (
+        version_file.is_file()
+        and version_file.read_text(encoding="utf-8").strip() != TERRAFORM_VERSION
+    ):
         errors.append(f".terraform-version must pin Terraform {TERRAFORM_VERSION}")
 
     versions = ROOT / "infra/bootstrap/versions.tf"
@@ -193,19 +213,33 @@ def check_terraform_contract(errors: list[str]) -> None:
         lowered = text.lower()
         for token in FORBIDDEN_BOOTSTRAP_TOKENS:
             if token.lower() in lowered:
-                errors.append(f"bootstrap configuration contains forbidden authority/resource token: {token}")
+                errors.append(
+                    f"bootstrap configuration contains forbidden authority/resource token: {token}"
+                )
 
         for nonblocking_guard in (
             'check "project_creation_configuration"',
             'check "precreated_import_parent"',
         ):
             if nonblocking_guard in text:
-                errors.append("project bootstrap mode/parent guards must be blocking preconditions, not check blocks")
-        if "local.project_creation_configuration_valid" not in text or text.count("precondition {") < 2:
-            errors.append("both bootstrap project resources must enforce the blocking project mode/parent precondition")
+                errors.append(
+                    "project bootstrap mode/parent guards must be blocking preconditions, "
+                    "not check blocks"
+                )
+        if (
+            "local.project_creation_configuration_valid" not in text
+            or text.count("precondition {") < 2
+        ):
+            errors.append(
+                "both bootstrap project resources must enforce the blocking project mode/parent "
+                "precondition"
+            )
 
         if re.search(r"\bcurrency_code\s*=", text):
-            errors.append("bootstrap budget must use the billing account's native currency; do not hard-code currency_code")
+            errors.append(
+                "bootstrap budget must use the billing account's native currency; "
+                "do not hard-code currency_code"
+            )
         if "units = var.budget_units" not in text:
             errors.append("bootstrap budget amount must come from validated budget_units")
 

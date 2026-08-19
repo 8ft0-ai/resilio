@@ -1,0 +1,50 @@
+name: Reusable federation smoke authentication
+
+on:
+  workflow_call:
+    outputs:
+      token_issued:
+        value: ${{ jobs.authenticate.outputs.token_issued }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  authenticate:
+    name: trusted-main-authentication-proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      token_issued: ${{ steps.prove.outputs.token_issued }}
+
+    steps:
+      - name: Require trusted reusable workflow source
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$WORKFLOW_REPOSITORY" = "8ft0-ai/resilio"
+          printf '%s' "$WORKFLOW_SHA" | grep -Eq '^[0-9a-f]{40}$'
+
+      - name: Authenticate proof identity with Workload Identity Federation
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-federation-probe@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Prove short-lived token issuance only
+        id: prove
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          test -n "$ACCESS_TOKEN"
+          echo "token_issued=true" >> "$GITHUB_OUTPUT"

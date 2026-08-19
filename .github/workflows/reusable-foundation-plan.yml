@@ -1,0 +1,146 @@
+name: Reusable foundation Terraform planner
+
+on:
+  workflow_call:
+    inputs:
+      mode: {required: true, type: string}
+      head_sha: {required: true, type: string}
+      base_sha: {required: false, default: "", type: string}
+      pr_number: {required: false, default: 0, type: number}
+      candidate_blob_sha: {required: false, default: "", type: string}
+    outputs:
+      public_manifest_json: {value: "${{ jobs.plan.outputs.public_manifest_json }}"}
+      evidence_object: {value: "${{ jobs.plan.outputs.evidence_object }}"}
+      evidence_generation: {value: "${{ jobs.plan.outputs.evidence_generation }}"}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-foundation
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    outputs:
+      public_manifest_json: ${{ steps.out.outputs.public_manifest_json }}
+      evidence_object: ${{ steps.out.outputs.evidence_object }}
+      evidence_generation: ${{ steps.out.outputs.evidence_generation }}
+    steps:
+      - name: Validate immutable workflow and input identity
+        env:
+          MODE: ${{ inputs.mode }}
+          HEAD: ${{ inputs.head_sha }}
+          BASE: ${{ inputs.base_sha }}
+          PR: ${{ inputs.pr_number }}
+          BLOB: ${{ inputs.candidate_blob_sha }}
+          WREPO: ${{ job.workflow_repository }}
+          WSHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$WREPO" = "8ft0-ai/resilio"
+          printf '%s' "$WSHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$HEAD" | grep -Eq '^[0-9a-f]{40}$'
+          case "$MODE" in
+            pr)
+              printf '%s' "$BASE" | grep -Eq '^[0-9a-f]{40}$'
+              printf '%s' "$BLOB" | grep -Eq '^[0-9a-f]{40}$'
+              test "$PR" -gt 0 ;;
+            drift)
+              test -z "$BASE"; test -z "$BLOB"; test "$PR" -eq 0 ;;
+            *) exit 1 ;;
+          esac
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Fetch candidate as data before authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD: ${{ inputs.head_sha }}
+          BLOB: ${{ inputs.candidate_blob_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/foundation"; rm -rf "$W"; mkdir -p "$W"
+          A=(fetch-candidate --ref "$HEAD" --output "$RUNNER_TEMP/resources.tf.json")
+          test -z "$BLOB" || A+=(--expected-blob-sha "$BLOB")
+          python3 scripts/terraform_control.py "${A[@]}"
+          cp infra/foundation/{backend.tf,versions.tf,provider.tf,.terraform.lock.hcl} "$W/"
+          cp "$RUNNER_TEMP/resources.tf.json" "$W/resources.tf.json"
+          python3 scripts/terraform_control.py validate-candidate --path "$W/resources.tf.json"
+          python3 - "$W" "$RUNNER_TEMP/meta.json" <<'PY'
+          import hashlib,json,os,pathlib,sys
+          w=pathlib.Path(sys.argv[1]); h=hashlib.sha256()
+          for n in ("backend.tf","versions.tf","provider.tf",".terraform.lock.hcl","resources.tf.json"):
+              h.update(n.encode()+b"\0"+(w/n).read_bytes()+b"\0")
+          json.dump({
+              "pr":int(os.environ["PR_NUMBER"]),
+              "base_sha":os.environ["BASE_SHA"],
+              "head_sha":os.environ["HEAD_SHA"],"root":"foundation",
+              "terraform_version":"1.15.8",
+              "provider_lock_digest":hashlib.sha256((w/".terraform.lock.hcl").read_bytes()).hexdigest(),
+              "configuration_tree_digest":h.hexdigest(),
+              "workflow_run_id":os.environ["GITHUB_RUN_ID"],
+              "workflow_run_attempt":os.environ["GITHUB_RUN_ATTEMPT"],
+              "policy_result":"PASS","cost_result":"known-negligible/control-plane",
+          },open(sys.argv[2],"w"),sort_keys=True)
+          PY
+
+      - name: Authenticate read-only planner
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-foundation-planner@resilio-control-e882d4.iam.gserviceaccount.com
+          access_token_lifetime: 300s
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Create private effect evidence
+        env:
+          GCS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/foundation"
+          terraform -chdir="$W" init -input=false -lockfile=readonly >/dev/null
+          terraform -chdir="$W" plan -input=false -lock-timeout=60s -out="$RUNNER_TEMP/plan" >/dev/null
+          terraform -chdir="$W" show -json "$RUNNER_TEMP/plan" >"$RUNNER_TEMP/plan.json"
+          terraform -chdir="$W" state pull >"$RUNNER_TEMP/state.json"
+          python3 scripts/terraform_control.py gcs-metadata >"$RUNNER_TEMP/state-meta.json"
+          G="$(python3 -c 'import json;print(json.load(open("'"$RUNNER_TEMP/state-meta.json"'"))["generation"])')"
+          python3 scripts/terraform_control.py build-evidence --plan-json "$RUNNER_TEMP/plan.json" --state-json "$RUNNER_TEMP/state.json" --state-generation "$G" --metadata-json "$RUNNER_TEMP/meta.json" --private-output "$RUNNER_TEMP/private.json" --public-output "$RUNNER_TEMP/public.json"
+
+      - name: Publish bounded evidence identity
+        id: out
+        env:
+          MODE: ${{ inputs.mode }}
+          PR: ${{ inputs.pr_number }}
+          HEAD: ${{ inputs.head_sha }}
+          GCS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          echo "public_manifest_json=$(cat "$RUNNER_TEMP/public.json")" >>"$GITHUB_OUTPUT"
+          if [ "$MODE" = pr ]; then
+            O="plan-evidence/foundation/pr-${PR}/head-${HEAD}/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+            python3 scripts/terraform_control.py upload-evidence --object "$O" --path "$RUNNER_TEMP/private.json" >"$RUNNER_TEMP/evidence-meta.json"
+            G="$(python3 -c 'import json;print(json.load(open("'"$RUNNER_TEMP/evidence-meta.json"'"))["generation"])')"
+            echo "evidence_object=$O" >>"$GITHUB_OUTPUT"; echo "evidence_generation=$G" >>"$GITHUB_OUTPUT"
+          else
+            echo "evidence_object=" >>"$GITHUB_OUTPUT"; echo "evidence_generation=" >>"$GITHUB_OUTPUT"
+          fi
