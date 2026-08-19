@@ -1,0 +1,123 @@
+name: Terraform foundation protected-main apply
+
+on:
+  workflow_run:
+    workflows:
+      - Validate repository
+    types:
+      - completed
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: terraform-foundation
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  select:
+    name: select-exact-merged-foundation-change
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.select.outputs.eligible }}
+      pr_number: ${{ steps.select.outputs.pr_number }}
+      candidate_sha: ${{ steps.select.outputs.candidate_sha }}
+      base_sha: ${{ steps.select.outputs.base_sha }}
+      expected_main_sha: ${{ steps.select.outputs.expected_main_sha }}
+      reviewed_evidence_object: ${{ steps.select.outputs.reviewed_evidence_object }}
+    steps:
+      - name: Select exact merged foundation candidate
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          TRIGGER_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          MAIN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          deny() { printf 'eligible=false\n' >> "$GITHUB_OUTPUT"; exit 0; }
+
+          test "$TRIGGER_EVENT" = "push" || deny
+          test "$TRIGGER_CONCLUSION" = "success" || deny
+          test "$TRIGGER_HEAD_BRANCH" = "main" || deny
+          [[ "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+
+          PRS_JSON="$RUNNER_TEMP/pulls.json"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$MAIN_SHA/pulls" > "$PRS_JSON"
+          read -r MATCH_COUNT PR_NUMBER STATE MERGED_AT MERGE_SHA BASE_REF HEAD_REPO_ID HEAD_SHA BASE_SHA CHANGED_FILES < <(
+            python3 - "$PRS_JSON" "$MAIN_SHA" <<'PY'
+          import json, sys
+          rows = json.load(open(sys.argv[1], encoding="utf-8"))
+          main_sha = sys.argv[2]
+          matches = [row for row in rows if row.get("merge_commit_sha") == main_sha]
+          if len(matches) != 1:
+              print(len(matches), "", "", "", "", "", "", "", "", "")
+          else:
+              pr = matches[0]
+              print(
+                  1,
+                  pr.get("number", ""),
+                  pr.get("state", ""),
+                  pr.get("merged_at", "") or "",
+                  pr.get("merge_commit_sha", "") or "",
+                  ((pr.get("base") or {}).get("ref") or ""),
+                  (((pr.get("head") or {}).get("repo") or {}).get("id") or ""),
+                  ((pr.get("head") or {}).get("sha") or ""),
+                  ((pr.get("base") or {}).get("sha") or ""),
+                  pr.get("changed_files", ""),
+              )
+          PY
+          )
+
+          test "$MATCH_COUNT" = "1" || deny
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || deny
+          test "$STATE" = "closed" || deny
+          test -n "$MERGED_AT" || deny
+          test "$MERGE_SHA" = "$MAIN_SHA" || deny
+          test "$BASE_REF" = "main" || deny
+          test "$HEAD_REPO_ID" = "1335801159" || deny
+          test "$CHANGED_FILES" = "1" || deny
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+
+          FILES_JSON="$RUNNER_TEMP/files.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" > "$FILES_JSON"
+          read -r FILE_COUNT FILE_NAME < <(
+            python3 - "$FILES_JSON" <<'PY'
+          import json, sys
+          rows = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(len(rows), rows[0].get("filename", "") if len(rows) == 1 else "")
+          PY
+          )
+          test "$FILE_COUNT" = "1" || deny
+          test "$FILE_NAME" = "infra/foundation/resources.tf.json" || deny
+
+          {
+            printf 'eligible=true\n'
+            printf 'pr_number=%s\n' "$PR_NUMBER"
+            printf 'candidate_sha=%s\n' "$HEAD_SHA"
+            printf 'base_sha=%s\n' "$BASE_SHA"
+            printf 'expected_main_sha=%s\n' "$MAIN_SHA"
+            printf 'reviewed_evidence_object=plan-evidence/foundation/pr-%s-%s.json\n' "$PR_NUMBER" "$HEAD_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+  apply:
+    name: trusted-foundation-apply
+    needs: select
+    if: needs.select.outputs.eligible == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04
+    with:
+      mode: plan-apply
+      pr_number: ${{ fromJSON(needs.select.outputs.pr_number) }}
+      candidate_sha: ${{ needs.select.outputs.candidate_sha }}
+      base_sha: ${{ needs.select.outputs.base_sha }}
+      expected_main_sha: ${{ needs.select.outputs.expected_main_sha }}
+      reviewed_evidence_object: ${{ needs.select.outputs.reviewed_evidence_object }}
