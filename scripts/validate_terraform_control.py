@@ -82,7 +82,12 @@ def main()->int:
     for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','--control-seed-sha "$CONTROL_SEED_SHA"'):
         if token not in applier: errors.append(f"reusable applier reviewed-control guard missing: {token}")
     helper=read("scripts/terraform_control.py",errors)
-    for token in ("resource_drift","deferred_changes","action_invocations","Terraform plan is incomplete","unrecognised Terraform plan structure","control_seed_sha","backend_namespace"):
+    for token in (
+        "resource_drift","deferred_changes","deferred_action_invocations","action_invocations",
+        '"applyable"','"errored"',"Terraform plan applyability is missing or invalid",
+        "Terraform plan is incomplete","Terraform plan is errored",
+        "unrecognised Terraform plan structure","control_seed_sha","backend_namespace",
+    ):
         if token not in helper: errors.append(f"Terraform effect/evidence helper missing fail-closed control: {token}")
     smoke=read(WF[2],errors)
     for token in ("github-federation-probe@","create_credentials_file: false","export_environment_variables: false"):
