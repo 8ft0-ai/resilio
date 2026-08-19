@@ -18,6 +18,7 @@ SMOKE = ROOT / ".github/workflows/federation-smoke.yml"
 EVIDENCE = ROOT / "docs/gcp-bootstrap-evidence.md"
 
 CONTROL_SEED_SHA = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
+DRIFT_WORKFLOW_SHA = "2acbc425f688383375f724da7a4d80025dd9cc23"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -48,17 +49,21 @@ APPLIER_WORKFLOW_REF = (
     "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@"
     + CONTROL_SEED_SHA
 )
+DRIFT_WORKFLOW_REF = (
+    "8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@"
+    + DRIFT_WORKFLOW_SHA
+)
 
-# These are Git blob identities for the complete reviewed Slice C bootstrap
-# Terraform configuration. Any Terraform configuration drift must therefore
-# update this validator and pass a new substantive review rather than silently
-# widening the authority envelope while retaining the same required tokens.
+# These are Git blob identities for the complete reviewed bootstrap Terraform
+# configuration. Any Terraform configuration drift must therefore update this
+# validator and pass a new substantive review rather than silently widening the
+# authority envelope while retaining the same required tokens.
 EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "68691c38ea5e4b34729448b43b469e42ef3f5acc",
-    "phase3_authority.tf": "0154779655e2fdd0b5bdd38add2f42c046ec8aa2",
-    "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
+    "phase3_authority.tf": "4020e190ea0816d962b5b3ffe1b1e74f828aea4b",
+    "variables.tf": "8be4636d1493e9498f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
 
@@ -241,13 +246,16 @@ def check_phase3_authority(errors: list[str]) -> None:
 
     required_authority = (
         f'phase3_control_seed_sha             = "{CONTROL_SEED_SHA}"',
+        f'phase3_drift_workflow_sha           = "{DRIFT_WORKFLOW_SHA}"',
         'account_id   = "github-foundation-planner"',
         'account_id   = "github-foundation-applier"',
         '"8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase3_control_seed_sha}"',
         '"8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@${local.phase3_control_seed_sha}"',
+        '"8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@${local.phase3_drift_workflow_sha}"',
         'role               = "roles/iam.workloadIdentityUser"',
         'attribute.job_workflow_ref/${local.foundation_plan_workflow_ref}',
         'attribute.job_workflow_ref/${local.foundation_apply_workflow_ref}',
+        'attribute.job_workflow_ref/${local.foundation_drift_workflow_ref}',
         'foundation/default.tfstate',
         'foundation/default.tflock',
         'plan-evidence/foundation/',
@@ -258,6 +266,11 @@ def check_phase3_authority(errors: list[str]) -> None:
     for token in required_authority:
         if token not in authority_text:
             errors.append(f"Phase 3 authority envelope is missing required exact contract token: {token}")
+
+    if authority_text.count('resource "google_service_account_iam_member"') != 3:
+        errors.append("Phase 3 authority envelope must contain exactly planner, drift and applier WIF service-account bindings")
+    if authority_text.count('role               = "roles/iam.workloadIdentityUser"') != 3:
+        errors.append("Phase 3 authority envelope must contain exactly three workloadIdentityUser bindings")
 
     expected_roles = {
         "foundation_planner": (
@@ -331,6 +344,8 @@ def check_phase3_authority(errors: list[str]) -> None:
         errors.append("foundation planner binding must remain tied to the approved reusable workflow path")
     if APPLIER_WORKFLOW_REF.split("@", 1)[0] not in authority_text:
         errors.append("foundation applier binding must remain tied to the approved reusable workflow path")
+    if DRIFT_WORKFLOW_REF.split("@", 1)[0] not in authority_text:
+        errors.append("foundation drift binding must remain tied to the approved reusable workflow path")
 
 
 def main() -> int:
