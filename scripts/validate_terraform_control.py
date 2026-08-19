@@ -69,7 +69,32 @@ REUSABLE_WORKFLOWS = {
         "permissions": "permissions:\n  contents: read\n  id-token: write",
     },
 }
-FORBIDDEN_TRIGGERS = ("workflow_dispatch:", "pull_request:", "pull_request_target:", "workflow_run:", "\npush:", "\nschedule:")
+
+
+def check_workflow_call_only(relative: str, text: str, errors: list[str]) -> None:
+    """Require an exact top-level `on` mapping whose sole event is workflow_call."""
+    lines = text.splitlines()
+    if lines.count("on:") != 1:
+        errors.append(f"{relative} must contain exactly one canonical top-level on: mapping")
+        return
+    start = lines.index("on:")
+    events: list[str] = []
+    for line in lines[start + 1:]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            break
+        if indent != 2:
+            continue
+        stripped = line.strip()
+        if ":" not in stripped:
+            errors.append(f"{relative} contains an unrecognised top-level workflow trigger entry: {stripped}")
+            return
+        events.append(stripped.split(":", 1)[0].strip("'\""))
+    if events != ["workflow_call"]:
+        rendered = ",".join(events) if events else "<none>"
+        errors.append(f"{relative} must remain workflow_call-only; found events: {rendered}")
 
 
 def check_foundation_contract(errors: list[str]) -> None:
@@ -111,9 +136,7 @@ def check_reusable_workflows(errors: list[str]) -> None:
         for required in contract["required"]:
             if required not in text:
                 errors.append(f"{relative} missing required trusted-workflow token: {required}")
-        for forbidden in FORBIDDEN_TRIGGERS:
-            if forbidden in text:
-                errors.append(f"{relative} must remain workflow_call-only; found {forbidden.strip()}")
+        check_workflow_call_only(relative, text, errors)
         if "persist-credentials: false" not in text:
             errors.append(f"{relative} must disable persisted checkout credentials")
         if contract["permissions"] not in text:
@@ -166,7 +189,7 @@ def check_script_contract(errors: list[str]) -> None:
         "PLAN_RESOURCE_CLASS_FORBIDDEN", "PLAN_ACTION_SEQUENCE_INVALID", "PLAN_DESTRUCTIVE_ACTION_FORBIDDEN",
         "SAFE_SENTINEL_ACTION_SEQUENCES", "PLAN_ACTION_SEQUENCE_FORBIDDEN", "PLAN_PROOF_CHANGE_COUNT_INVALID",
         "before_identity", "after_identity", "BACKEND_NAMESPACE", "base_sha", "pr_number",
-        "DRIFT_CONTRACT", "DRIFT_FINGERPRINT_CONTRACT", "SAFE_DRIFT_ACTIONS", "DRIFT_OUTPUT_CHANGES_FORBIDDEN",
+        "DRIFT_CONTRACT", "DRIFT_FINGERPRINT_CONTRACT", "SAFE_DRIFT_ACTION_SEQUENCES", "DRIFT_OUTPUT_CHANGES_FORBIDDEN",
         "DRIFT_PLAN_STRUCTURE_UNRECOGNISED", "drift_fingerprint",
     ):
         if required not in text:
