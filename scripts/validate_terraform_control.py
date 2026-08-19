@@ -143,8 +143,8 @@ def check_script_contract(errors: list[str]) -> None:
         "MATERIAL_EFFECT_MISMATCH", "ifGenerationMatch", "PLAN_TOP_LEVEL_KEYS", "PLAN_RESOURCE_DRIFT",
         "PLAN_DEFERRED_CHANGES", "PLAN_DEFERRED_ACTION_INVOCATIONS", "PLAN_ACTION_INVOCATIONS",
         "PLAN_TOP_LEVEL_STRUCTURE_UNRECOGNISED", "PLAN_CHANGE_STRUCTURE_UNRECOGNISED",
-        "PLAN_RESOURCE_CLASS_FORBIDDEN", "before_identity", "after_identity", "BACKEND_NAMESPACE",
-        "base_sha", "pr_number",
+        "PLAN_RESOURCE_CLASS_FORBIDDEN", "PLAN_ACTION_SEQUENCE_INVALID", "PLAN_DESTRUCTIVE_ACTION_FORBIDDEN",
+        "before_identity", "after_identity", "BACKEND_NAMESPACE", "base_sha", "pr_number",
     ):
         if required not in text:
             errors.append(f"Terraform control code missing required fail-closed control: {required}")
