@@ -1,0 +1,33 @@
+name: Terraform foundation state initialisation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-foundation-state-initialisation
+  cancel-in-progress: false
+
+jobs:
+  require-main:
+    name: require-trusted-main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require trusted main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+  initialise:
+    name: initialise-empty-foundation-state
+    needs: require-main
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04
+    with:
+      mode: initialise-empty-state
+      candidate_sha: ${{ github.sha }}
+      expected_main_sha: ${{ github.sha }}
