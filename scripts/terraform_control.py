@@ -12,8 +12,11 @@ CANDIDATE_PATH = "infra/foundation/resources.tf.json"
 STATE_BUCKET = "resilio-control-e882d4-tfstate"
 STATE_OBJECT = "foundation/default.tfstate"
 EVIDENCE_PREFIX = "plan-evidence/foundation/"
+TERRAFORM_VERSION = "1.15.8"
 SENTINEL_TYPE = "google_service_account"
 SENTINEL_NAME = "phase3_terraform_sentinel"
+SENTINEL_ADDRESS = f"{SENTINEL_TYPE}.{SENTINEL_NAME}"
+SENTINEL_PROVIDER = "registry.terraform.io/hashicorp/google"
 SENTINEL_BODY = {
     "account_id": "phase3-terraform-sentinel",
     "display_name": "Phase 3 Terraform sentinel",
@@ -23,6 +26,12 @@ SENTINEL_BODY = {
 }
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+PLAN_TOP_LEVEL_KEYS = {
+    "format_version", "terraform_version", "variables", "planned_values",
+    "resource_drift", "resource_changes", "deferred_changes", "complete",
+    "output_changes", "prior_state", "configuration", "relevant_attributes",
+    "checks", "timestamp", "action_invocations",
+}
 
 
 class ContractError(RuntimeError):
@@ -82,19 +91,48 @@ def plan_effect(plan: dict[str, Any]) -> dict[str, Any]:
     fmt = str(plan.get("format_version", ""))
     if not fmt.startswith("1."):
         raise ContractError(f"unsupported Terraform JSON plan format: {fmt!r}")
-    changes = []
-    for item in plan.get("resource_changes", []):
-        changes.append({
-            "address": item.get("address"),
-            "mode": item.get("mode"),
-            "type": item.get("type"),
-            "name": item.get("name"),
-            "provider_name": item.get("provider_name"),
-            "change": item.get("change"),
-        })
-    changes.sort(key=lambda x: str(x["address"]))
+    if plan.get("terraform_version") != TERRAFORM_VERSION:
+        raise ContractError("Terraform plan version does not match the trusted control version")
+
+    unknown = sorted(set(plan) - PLAN_TOP_LEVEL_KEYS)
+    if unknown:
+        raise ContractError(f"unrecognised Terraform plan structure: {', '.join(unknown)}")
+    if plan.get("complete") is not True:
+        raise ContractError("Terraform plan is incomplete or does not prove completeness")
+    for field in ("resource_drift", "deferred_changes", "action_invocations"):
+        if plan.get(field):
+            raise ContractError(f"Terraform plan contains unsupported effect-bearing structure: {field}")
+
+    raw_changes = plan.get("resource_changes") or []
+    if not isinstance(raw_changes, list):
+        raise ContractError("Terraform resource_changes must be a list")
+    changes: list[dict[str, Any]] = []
+    for item in raw_changes:
+        if not isinstance(item, dict):
+            raise ContractError("Terraform resource change must be an object")
+        if (
+            item.get("address") != SENTINEL_ADDRESS
+            or item.get("mode") != "managed"
+            or item.get("type") != SENTINEL_TYPE
+            or item.get("name") != SENTINEL_NAME
+            or item.get("provider_name") != SENTINEL_PROVIDER
+            or item.get("index") is not None
+        ):
+            raise ContractError("Terraform plan contains a resource outside the exact Phase 3 sentinel class")
+        change = item.get("change")
+        if not isinstance(change, dict) or not isinstance(change.get("actions"), list):
+            raise ContractError("Terraform resource change semantics are incomplete")
+        canonical_change = copy.deepcopy(item)
+        canonical_change["index"] = item.get("index")
+        changes.append(canonical_change)
+    changes.sort(key=lambda x: (str(x.get("address")), json.dumps(x.get("index"), sort_keys=True)))
+
     outputs = plan.get("output_changes") or {}
-    return {"resource_changes": changes, "output_changes": outputs}
+    if not isinstance(outputs, dict):
+        raise ContractError("Terraform output_changes must be an object")
+    if outputs:
+        raise ContractError("Terraform plan contains outputs outside the initial Phase 3 candidate grammar")
+    return {"resource_changes": changes, "output_changes": copy.deepcopy(outputs)}
 
 
 def state_identity(state: dict[str, Any], generation: str) -> dict[str, Any]:
@@ -119,8 +157,8 @@ def public_manifest(plan: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any
         for name, change in sorted(effect["output_changes"].items())
     }
     manifest = {k: meta[k] for k in (
-        "pr", "base_sha", "head_sha", "root", "terraform_version",
-        "provider_lock_digest", "configuration_tree_digest",
+        "pr", "base_sha", "head_sha", "control_seed_sha", "root", "backend_namespace",
+        "terraform_version", "provider_lock_digest", "configuration_tree_digest",
         "state_lineage_digest", "state_serial", "state_generation",
         "workflow_run_id", "workflow_run_attempt", "policy_result", "cost_result",
     ) if k in meta}
@@ -152,11 +190,25 @@ def private_evidence(plan: dict[str, Any], state: dict[str, Any], generation: st
     }
 
 
-def verify_reviewed(reviewed: dict[str, Any], plan: dict[str, Any], state: dict[str, Any], generation: str, head_sha: str) -> None:
+def verify_reviewed(
+    reviewed: dict[str, Any],
+    plan: dict[str, Any],
+    state: dict[str, Any],
+    generation: str,
+    head_sha: str,
+    control_seed_sha: str,
+) -> None:
     if reviewed.get("schema") != "resilio/terraform-plan-evidence/v1":
         raise ContractError("unsupported reviewed evidence schema")
     if reviewed.get("review", {}).get("head_sha") != head_sha:
         raise ContractError("reviewed head does not match current authorised head")
+    manifest = reviewed.get("public_manifest")
+    if not isinstance(manifest, dict):
+        raise ContractError("reviewed public manifest is missing")
+    if manifest.get("control_seed_sha") != control_seed_sha:
+        raise ContractError("reviewed control seed does not match current trusted workflow")
+    if manifest.get("backend_namespace") != STATE_OBJECT:
+        raise ContractError("reviewed backend namespace does not match foundation state")
     current_state = state_identity(state, generation)
     if reviewed.get("state") != current_state:
         raise ContractError("Terraform state identity changed after review")
@@ -255,7 +307,7 @@ def main() -> int:
     b = sp.add_parser("build-evidence")
     for x in ("plan-json", "state-json", "state-generation", "metadata-json", "private-output", "public-output"): b.add_argument("--"+x, required=True)
     q = sp.add_parser("verify-reviewed")
-    for x in ("reviewed-evidence", "plan-json", "state-json", "state-generation", "reviewed-head-sha"): q.add_argument("--"+x, required=True)
+    for x in ("reviewed-evidence", "plan-json", "state-json", "state-generation", "reviewed-head-sha", "control-seed-sha"): q.add_argument("--"+x, required=True)
     m = sp.add_parser("gcs-metadata"); m.add_argument("--object", default=STATE_OBJECT)
     a = sp.add_parser("gcs-assert-absent"); a.add_argument("--object", default=STATE_OBJECT)
     u = sp.add_parser("upload-evidence"); u.add_argument("--object", required=True); u.add_argument("--path", required=True)
@@ -271,7 +323,7 @@ def main() -> int:
     elif args.cmd == "build-evidence":
         ev = private_evidence(_load(args.plan_json), _load(args.state_json), args.state_generation, _load(args.metadata_json)); Path(args.private_output).write_bytes(canonical_bytes(ev)); Path(args.public_output).write_bytes(canonical_bytes(ev["public_manifest"]))
     elif args.cmd == "verify-reviewed":
-        verify_reviewed(_load(args.reviewed_evidence), _load(args.plan_json), _load(args.state_json), args.state_generation, args.reviewed_head_sha); print("reviewed_effect_match=true")
+        verify_reviewed(_load(args.reviewed_evidence), _load(args.plan_json), _load(args.state_json), args.state_generation, args.reviewed_head_sha, args.control_seed_sha); print("reviewed_effect_match=true")
     elif args.cmd == "gcs-metadata":
         if not token: raise ContractError("GCS_ACCESS_TOKEN is required")
         obj = gcs_metadata(args.object, token)
