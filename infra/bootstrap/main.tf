@@ -125,7 +125,9 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   display_name                       = "Resilio trusted main"
 
   attribute_mapping = {
-    "google.subject" = "assertion.sub"
+    "google.subject"             = "assertion.sub"
+    "attribute.job_workflow_ref" = "assertion.job_workflow_ref"
+    "attribute.job_workflow_sha" = "assertion.job_workflow_sha"
   }
 
   attribute_condition = "assertion.sub == \"${local.github_main_subject}\""
