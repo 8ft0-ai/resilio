@@ -135,18 +135,21 @@ class MaterialEffectTests(unittest.TestCase):
                 self._effect(plan)
 
     def test_forget_and_unsupported_actions_fail_closed(self) -> None:
-        for actions in (["forget"], ["create", "forget"], ["read"], ["update"], ["future-action"]):
+        for actions in (["forget"], ["create", "forget"], ["read"], ["update"], ["no-op"], ["future-action"]):
             plan = json.loads(json.dumps(self.plan))
             plan["resource_changes"][0]["change"]["actions"] = actions
             with self.subTest(actions=actions), self.assertRaisesRegex(control.ControlError, "PLAN_ACTION_SEQUENCE_FORBIDDEN"):
                 self._effect(plan)
 
-    def test_only_proof_action_sequences_are_allowed(self) -> None:
-        for actions in (["create"], ["no-op"]):
+    def test_exact_create_action_is_allowed(self) -> None:
+        self.assertEqual(self._effect()["effect"]["resource_changes"][0]["change"]["actions"], ["create"])
+
+    def test_exactly_one_resource_change_is_required(self) -> None:
+        for rows in ([], self.plan["resource_changes"] * 2):
             plan = json.loads(json.dumps(self.plan))
-            plan["resource_changes"][0]["change"]["actions"] = actions
-            with self.subTest(actions=actions):
-                self.assertEqual(self._effect(plan)["effect"]["resource_changes"][0]["change"]["actions"], actions)
+            plan["resource_changes"] = rows
+            with self.subTest(count=len(rows)), self.assertRaisesRegex(control.ControlError, "PLAN_PROOF_CHANGE_COUNT_INVALID"):
+                self._effect(plan)
 
     def test_unrecognised_plan_or_change_structure_fails_closed(self) -> None:
         plan = json.loads(json.dumps(self.plan))
