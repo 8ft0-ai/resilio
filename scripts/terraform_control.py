@@ -20,7 +20,7 @@ def parser() -> argparse.ArgumentParser:
     p = commands.add_parser("verify-main"); p.add_argument("--repository", default=REPOSITORY); p.add_argument("--sha", required=True)
     p = commands.add_parser("assemble"); p.add_argument("--trusted-root", required=True); p.add_argument("--candidate", required=True); p.add_argument("--output", required=True)
     p = commands.add_parser("state-identity"); p.add_argument("--state-json", required=True); p.add_argument("--generation", required=True); p.add_argument("--output", required=True)
-    p = commands.add_parser("build-effect"); p.add_argument("--plan-json", required=True); p.add_argument("--state-identity", required=True); p.add_argument("--candidate-sha", required=True); p.add_argument("--candidate-digest", required=True); p.add_argument("--trusted-workflow-sha", required=True); p.add_argument("--trusted-tree-digest", required=True); p.add_argument("--provider-lock-digest", required=True); p.add_argument("--pr-number", type=int); p.add_argument("--workflow-run-id", required=True); p.add_argument("--evidence-object"); p.add_argument("--private-output", required=True); p.add_argument("--public-output", required=True)
+    p = commands.add_parser("build-effect"); p.add_argument("--plan-json", required=True); p.add_argument("--state-identity", required=True); p.add_argument("--pr-number", type=int, required=True); p.add_argument("--base-sha", required=True); p.add_argument("--candidate-sha", required=True); p.add_argument("--candidate-digest", required=True); p.add_argument("--trusted-workflow-sha", required=True); p.add_argument("--trusted-tree-digest", required=True); p.add_argument("--provider-lock-digest", required=True); p.add_argument("--workflow-run-id", required=True); p.add_argument("--evidence-object"); p.add_argument("--private-output", required=True); p.add_argument("--public-output", required=True)
     p = commands.add_parser("compare-effect"); p.add_argument("--expected", required=True); p.add_argument("--actual", required=True)
     p = commands.add_parser("gcs-metadata"); p.add_argument("--bucket", default=STATE_BUCKET); p.add_argument("--object", required=True); p.add_argument("--allow-absent", action="store_true")
     p = commands.add_parser("gcs-upload"); p.add_argument("--bucket", default=STATE_BUCKET); p.add_argument("--object", required=True); p.add_argument("--file", required=True)
@@ -54,12 +54,12 @@ def run(args: argparse.Namespace) -> None:
         state, plan = load_json_strict(Path(args.state_identity)), load_json_strict(Path(args.plan_json))
         if not isinstance(state, dict) or not isinstance(plan, dict):
             raise ControlError("EFFECT_INPUT_INVALID")
-        effect = build_private_effect(plan=plan, state_identity=state, candidate_sha=args.candidate_sha,
+        effect = build_private_effect(plan=plan, state_identity=state, pr_number=args.pr_number,
+                                      base_sha=args.base_sha, candidate_sha=args.candidate_sha,
                                       candidate_digest=args.candidate_digest, trusted_workflow_sha=args.trusted_workflow_sha,
                                       trusted_tree_digest=args.trusted_tree_digest, provider_lock_digest=args.provider_lock_digest)
         write_json(Path(args.private_output), effect)
-        write_json(Path(args.public_output), public_manifest(effect, pr_number=args.pr_number,
-                                                             workflow_run_id=args.workflow_run_id,
+        write_json(Path(args.public_output), public_manifest(effect, workflow_run_id=args.workflow_run_id,
                                                              evidence_object=args.evidence_object))
     elif cmd == "compare-effect":
         left, right = load_json_strict(Path(args.expected)), load_json_strict(Path(args.actual))

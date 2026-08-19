@@ -15,6 +15,7 @@ FOUNDATION_ROOT = "infra/foundation"
 CANDIDATE_PATH = f"{FOUNDATION_ROOT}/resources.tf.json"
 STATE_BUCKET = "resilio-control-e882d4-tfstate"
 STATE_OBJECT = "foundation/default.tfstate"
+BACKEND_NAMESPACE = f"gs://{STATE_BUCKET}/{STATE_OBJECT}"
 PLAN_EVIDENCE_PREFIX = "plan-evidence/foundation/"
 REFERENCE_PROJECT = "resilio-reference-e882d4"
 CONTROL_PROJECT = "resilio-control-e882d4"
@@ -34,6 +35,24 @@ SENTINEL_RESOURCE = {
     "description": "Non-privileged Resilio Phase 3 Terraform control-path sentinel.",
     "project": REFERENCE_PROJECT,
     "deletion_policy": "PREVENT",
+}
+
+# Terraform v1.15.8 internal/command/jsonplan.plan exact top-level JSON fields.
+PLAN_TOP_LEVEL_KEYS = {
+    "format_version", "terraform_version", "variables", "planned_values",
+    "resource_drift", "resource_changes", "deferred_changes",
+    "deferred_action_invocations", "output_changes", "action_invocations",
+    "prior_state", "configuration", "relevant_attributes", "checks",
+    "timestamp", "applyable", "complete", "errored",
+}
+PLAN_CHANGE_KEYS = {
+    "actions", "before", "after", "after_unknown", "before_sensitive",
+    "after_sensitive", "replace_paths", "importing", "generated_config",
+    "before_identity", "after_identity",
+}
+PLAN_RESOURCE_CHANGE_KEYS = {
+    "address", "previous_address", "module_address", "mode", "type", "name",
+    "index", "index_unknown", "provider_name", "deposed", "change", "action_reason",
 }
 
 
@@ -150,41 +169,76 @@ def assemble_workdir(trusted_root: Path, candidate_path: Path, output: Path) -> 
     return digests
 
 
+def _require_empty(plan: dict[str, Any], key: str, error: str) -> None:
+    value = plan.get(key)
+    if value not in (None, [], {}):
+        raise ControlError(error)
+
+
 def _normalise_change(change: Any) -> dict[str, Any]:
     if not isinstance(change, dict):
         raise ControlError("PLAN_CHANGE_INVALID")
-    keys = ("actions", "before", "after", "after_unknown", "before_sensitive", "after_sensitive",
-            "replace_paths", "importing", "generated_config")
-    return {key: change.get(key) for key in keys}
+    unknown = set(change) - PLAN_CHANGE_KEYS
+    if unknown:
+        raise ControlError("PLAN_CHANGE_STRUCTURE_UNRECOGNISED:" + ",".join(sorted(unknown)))
+    return {key: change.get(key) for key in sorted(PLAN_CHANGE_KEYS)}
 
 
 def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(plan, dict) or plan.get("errored") is True:
+    if not isinstance(plan, dict):
         raise ControlError("PLAN_INVALID")
+    unknown = set(plan) - PLAN_TOP_LEVEL_KEYS
+    if unknown:
+        raise ControlError("PLAN_TOP_LEVEL_STRUCTURE_UNRECOGNISED:" + ",".join(sorted(unknown)))
+    if plan.get("format_version") != "1.2" or plan.get("terraform_version") != "1.15.8":
+        raise ControlError("PLAN_VERSION_MISMATCH")
+    if plan.get("errored") is not False or plan.get("complete") is not True or plan.get("applyable") is not True:
+        raise ControlError("PLAN_NOT_APPLYABLE_COMPLETE_SUCCESS")
+    _require_empty(plan, "resource_drift", "PLAN_RESOURCE_DRIFT")
+    _require_empty(plan, "deferred_changes", "PLAN_DEFERRED_CHANGES")
+    _require_empty(plan, "deferred_action_invocations", "PLAN_DEFERRED_ACTION_INVOCATIONS")
+    _require_empty(plan, "action_invocations", "PLAN_ACTION_INVOCATIONS")
+
     rows = plan.get("resource_changes") or []
     if not isinstance(rows, list):
         raise ControlError("PLAN_RESOURCE_CHANGES_INVALID")
-    changes = []
+    changes: list[dict[str, Any]] = []
     for row in rows:
-        if not isinstance(row, dict) or not isinstance(row.get("address"), str):
+        if not isinstance(row, dict):
             raise ControlError("PLAN_RESOURCE_CHANGE_INVALID")
-        identity = {key: row.get(key) for key in ("address", "mode", "type", "name", "provider_name", "index", "deposed")}
+        unknown_row = set(row) - PLAN_RESOURCE_CHANGE_KEYS
+        if unknown_row:
+            raise ControlError("PLAN_RESOURCE_CHANGE_STRUCTURE_UNRECOGNISED:" + ",".join(sorted(unknown_row)))
+        if (row.get("address") != SENTINEL_ADDRESS or row.get("mode") != "managed"
+                or row.get("type") != "google_service_account"
+                or row.get("name") != "phase3_terraform_sentinel"
+                or row.get("provider_name") != "registry.terraform.io/hashicorp/google"):
+            raise ControlError("PLAN_RESOURCE_CLASS_FORBIDDEN")
+        if row.get("previous_address") not in (None, "") or row.get("module_address") not in (None, ""):
+            raise ControlError("PLAN_RESOURCE_MOVE_OR_MODULE_FORBIDDEN")
+        if row.get("index") is not None or row.get("index_unknown") not in (None, False) or row.get("deposed") not in (None, ""):
+            raise ControlError("PLAN_RESOURCE_INSTANCE_SHAPE_FORBIDDEN")
+        identity = {key: row.get(key) for key in (
+            "address", "previous_address", "module_address", "mode", "type", "name",
+            "index", "index_unknown", "provider_name", "deposed", "action_reason",
+        )}
         identity["change"] = _normalise_change(row.get("change"))
         changes.append(identity)
     changes.sort(key=canonical_json_bytes)
+
     outputs = plan.get("output_changes") or {}
     if not isinstance(outputs, dict):
         raise ControlError("PLAN_OUTPUT_CHANGES_INVALID")
     normal_outputs = {name: _normalise_change(change) for name, change in sorted(outputs.items())}
+
     return {
-        "format_version": plan.get("format_version"),
-        "terraform_version": plan.get("terraform_version"),
-        "applyable": plan.get("applyable"),
-        "complete": plan.get("complete"),
+        "format_version": plan["format_version"],
+        "terraform_version": plan["terraform_version"],
+        "applyable": True,
+        "complete": True,
+        "errored": False,
         "resource_changes": changes,
         "output_changes": normal_outputs,
-        "deferred_changes": plan.get("deferred_changes") or [],
-        "relevant_attributes": plan.get("relevant_attributes") or [],
     }
 
 
@@ -198,17 +252,26 @@ def state_identity_from_state(state: dict[str, Any], generation: str) -> dict[st
     return {"lineage": lineage, "serial": serial, "generation": generation, "managed_resource_count": count}
 
 
-def build_private_effect(*, plan: dict[str, Any], state_identity: dict[str, Any], candidate_sha: str,
-                         candidate_digest: str, trusted_workflow_sha: str, trusted_tree_digest: str,
-                         provider_lock_digest: str, root: str = "foundation") -> dict[str, Any]:
-    if not FULL_SHA.fullmatch(candidate_sha) or not FULL_SHA.fullmatch(trusted_workflow_sha):
+def build_private_effect(*, plan: dict[str, Any], state_identity: dict[str, Any], pr_number: int,
+                         base_sha: str, candidate_sha: str, candidate_digest: str,
+                         trusted_workflow_sha: str, trusted_tree_digest: str,
+                         provider_lock_digest: str, root: str = "foundation",
+                         backend_namespace: str = BACKEND_NAMESPACE) -> dict[str, Any]:
+    if pr_number <= 0:
+        raise ControlError("PRIVATE_EFFECT_PR_INVALID")
+    if not FULL_SHA.fullmatch(base_sha) or not FULL_SHA.fullmatch(candidate_sha) or not FULL_SHA.fullmatch(trusted_workflow_sha):
         raise ControlError("PRIVATE_EFFECT_SHA_INVALID")
     if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in (candidate_digest, trusted_tree_digest, provider_lock_digest)):
         raise ControlError("PRIVATE_EFFECT_DIGEST_INVALID")
+    if root != "foundation" or backend_namespace != BACKEND_NAMESPACE:
+        raise ControlError("PRIVATE_EFFECT_ROOT_INVALID")
     return {
         "contract": "resilio-terraform-plan-effect/v1",
-        "root": root,
+        "pr_number": pr_number,
+        "base_sha": base_sha,
         "candidate_sha": candidate_sha,
+        "root": root,
+        "backend_namespace": backend_namespace,
         "candidate_digest": candidate_digest,
         "trusted_workflow_sha": trusted_workflow_sha,
         "trusted_tree_digest": trusted_tree_digest,
@@ -222,7 +285,7 @@ def private_effect_digest(effect: dict[str, Any]) -> str:
     return sha256_bytes(canonical_json_bytes(effect))
 
 
-def public_manifest(private_effect: dict[str, Any], *, pr_number: int | None, workflow_run_id: str,
+def public_manifest(private_effect: dict[str, Any], *, workflow_run_id: str,
                     evidence_object: str | None) -> dict[str, Any]:
     effect, state = private_effect.get("effect"), private_effect.get("state")
     if not isinstance(effect, dict) or not isinstance(state, dict):
@@ -231,12 +294,16 @@ def public_manifest(private_effect: dict[str, Any], *, pr_number: int | None, wo
                for row in effect.get("resource_changes", [])]
     manifest: dict[str, Any] = {
         "contract": "resilio-terraform-plan-manifest/v1",
-        "root": private_effect.get("root"),
+        "pr_number": private_effect.get("pr_number"),
+        "base_sha": private_effect.get("base_sha"),
         "candidate_sha": private_effect.get("candidate_sha"),
+        "root": private_effect.get("root"),
+        "backend_namespace": private_effect.get("backend_namespace"),
         "candidate_digest": private_effect.get("candidate_digest"),
         "trusted_workflow_sha": private_effect.get("trusted_workflow_sha"),
         "trusted_tree_digest": private_effect.get("trusted_tree_digest"),
         "provider_lock_digest": private_effect.get("provider_lock_digest"),
+        "terraform_version": effect.get("terraform_version"),
         "state": {key: state.get(key) for key in ("lineage", "serial", "generation")},
         "resource_actions": sorted(actions, key=canonical_json_bytes),
         "policy_result": "PASS",
@@ -244,10 +311,6 @@ def public_manifest(private_effect: dict[str, Any], *, pr_number: int | None, wo
         "private_effect_sha256": private_effect_digest(private_effect),
         "workflow_run_id": str(workflow_run_id),
     }
-    if pr_number is not None:
-        if pr_number <= 0:
-            raise ControlError("INVALID_PR_NUMBER")
-        manifest["pr_number"] = pr_number
     if evidence_object is not None:
         if not SAFE_EVIDENCE_OBJECT.fullmatch(evidence_object):
             raise ControlError("EVIDENCE_OBJECT_INVALID")

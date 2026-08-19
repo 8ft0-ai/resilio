@@ -14,14 +14,14 @@ SETUP_TERRAFORM_SHA = "dfe3c3f87815947d99a8997f908cb6525fc44e9e"
 AUTH_SHA = "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
 
 EXPECTED_TRUSTED_FILES = {
-    "backend.tf": '''terraform {
+    "backend.tf": """terraform {
   backend "gcs" {
     bucket = "resilio-control-e882d4-tfstate"
     prefix = "foundation"
   }
 }
-''',
-    "versions.tf": '''terraform {
+""",
+    "versions.tf": """terraform {
   required_version = "= 1.15.8"
 
   required_providers {
@@ -31,17 +31,34 @@ EXPECTED_TRUSTED_FILES = {
     }
   }
 }
-''',
-    "provider.tf": '''provider "google" {
+""",
+    "provider.tf": """provider "google" {
   project = "resilio-reference-e882d4"
 }
-''',
+""",
 }
 
 REUSABLE_WORKFLOWS = {
-    ".github/workflows/terraform-federation-reusable.yml": {"required": ("workflow_call:", f"actions/checkout@{CHECKOUT_SHA}", f"google-github-actions/auth@{AUTH_SHA}", "repository: ${{ job.workflow_repository }}", "ref: ${{ job.workflow_sha }}")},
-    ".github/workflows/terraform-plan-reusable.yml": {"required": ("workflow_call:", f"actions/checkout@{CHECKOUT_SHA}", f"hashicorp/setup-terraform@{SETUP_TERRAFORM_SHA}", f"google-github-actions/auth@{AUTH_SHA}", "repository: ${{ job.workflow_repository }}", "ref: ${{ job.workflow_sha }}", "fetch-candidate", "assemble", "build-effect")},
-    ".github/workflows/terraform-apply-reusable.yml": {"required": ("workflow_call:", f"actions/checkout@{CHECKOUT_SHA}", f"hashicorp/setup-terraform@{SETUP_TERRAFORM_SHA}", f"google-github-actions/auth@{AUTH_SHA}", "repository: ${{ job.workflow_repository }}", "ref: ${{ job.workflow_sha }}", "fetch-candidate", "assemble", "compare-effect")},
+    ".github/workflows/terraform-federation-reusable.yml": {
+        "required": ("workflow_call:", f"actions/checkout@{CHECKOUT_SHA}", f"google-github-actions/auth@{AUTH_SHA}",
+                     "repository: ${{ job.workflow_repository }}", "ref: ${{ job.workflow_sha }}"),
+        "permissions": "permissions:\n  contents: read\n  id-token: write",
+    },
+    ".github/workflows/terraform-plan-reusable.yml": {
+        "required": ("workflow_call:", f"actions/checkout@{CHECKOUT_SHA}", f"hashicorp/setup-terraform@{SETUP_TERRAFORM_SHA}",
+                     f"google-github-actions/auth@{AUTH_SHA}", "repository: ${{ job.workflow_repository }}",
+                     "ref: ${{ job.workflow_sha }}", "fetch-candidate", "assemble", "build-effect",
+                     "token_format: access_token", 'POST_STATE_ID="$RUNNER_TEMP/post-state-identity.json"',
+                     'cmp "$STATE_ID" "$POST_STATE_ID"', '--base-sha "$BASE_SHA"'),
+        "permissions": "permissions:\n  contents: read\n  pull-requests: read\n  id-token: write",
+    },
+    ".github/workflows/terraform-apply-reusable.yml": {
+        "required": ("workflow_call:", f"actions/checkout@{CHECKOUT_SHA}", f"hashicorp/setup-terraform@{SETUP_TERRAFORM_SHA}",
+                     f"google-github-actions/auth@{AUTH_SHA}", "repository: ${{ job.workflow_repository }}",
+                     "ref: ${{ job.workflow_sha }}", "fetch-candidate", "assemble", "compare-effect",
+                     "token_format: access_token", '--base-sha "$BASE_SHA"'),
+        "permissions": "permissions:\n  contents: read\n  pull-requests: read\n  id-token: write",
+    },
 }
 FORBIDDEN_TRIGGERS = ("workflow_dispatch:", "pull_request:", "pull_request_target:", "workflow_run:", "\npush:", "\nschedule:")
 
@@ -90,8 +107,8 @@ def check_reusable_workflows(errors: list[str]) -> None:
                 errors.append(f"{relative} must remain workflow_call-only; found {forbidden.strip()}")
         if "persist-credentials: false" not in text:
             errors.append(f"{relative} must disable persisted checkout credentials")
-        if "permissions:\n  contents: read\n  id-token: write" not in text:
-            errors.append(f"{relative} must declare only contents:read plus id-token:write")
+        if contract["permissions"] not in text:
+            errors.append(f"{relative} does not match its least-privilege permission contract")
         if "${{ secrets." in text:
             errors.append(f"{relative} must not consume long-lived repository/environment secrets")
     federation = ROOT / ".github/workflows/terraform-federation-reusable.yml"
@@ -110,7 +127,8 @@ def check_reusable_workflows(errors: list[str]) -> None:
 
 
 def check_script_contract(errors: list[str]) -> None:
-    paths = [ROOT / "scripts/terraform_control.py", ROOT / "scripts/terraform_control_core.py", ROOT / "scripts/terraform_control_remote.py"]
+    paths = [ROOT / "scripts/terraform_control.py", ROOT / "scripts/terraform_control_core.py",
+             ROOT / "scripts/terraform_control_remote.py"]
     for path in paths + [ROOT / "scripts/validate_terraform_control.py"]:
         if not path.is_file():
             errors.append(f"Terraform control script missing: {path.relative_to(ROOT)}")
@@ -120,7 +138,14 @@ def check_script_contract(errors: list[str]) -> None:
     for forbidden in ("subprocess.run(", "os.system(", "shell=True", "eval(", "exec("):
         if forbidden in text:
             errors.append(f"Terraform control code must not execute candidate-controlled code: {forbidden}")
-    for required in ("object_pairs_hook=_reject_duplicate_pairs", "CANDIDATE_PATH", "SENTINEL_CONFIGURATION_MISMATCH", "MATERIAL_EFFECT_MISMATCH", "ifGenerationMatch"):
+    for required in (
+        "object_pairs_hook=_reject_duplicate_pairs", "CANDIDATE_PATH", "SENTINEL_CONFIGURATION_MISMATCH",
+        "MATERIAL_EFFECT_MISMATCH", "ifGenerationMatch", "PLAN_TOP_LEVEL_KEYS", "PLAN_RESOURCE_DRIFT",
+        "PLAN_DEFERRED_CHANGES", "PLAN_DEFERRED_ACTION_INVOCATIONS", "PLAN_ACTION_INVOCATIONS",
+        "PLAN_TOP_LEVEL_STRUCTURE_UNRECOGNISED", "PLAN_CHANGE_STRUCTURE_UNRECOGNISED",
+        "PLAN_RESOURCE_CLASS_FORBIDDEN", "before_identity", "after_identity", "BACKEND_NAMESPACE",
+        "base_sha", "pr_number",
+    ):
         if required not in text:
             errors.append(f"Terraform control code missing required fail-closed control: {required}")
 
@@ -131,7 +156,8 @@ def check_documentation(errors: list[str]) -> None:
         errors.append("Terraform control model documentation missing")
         return
     text = path.read_text(encoding="utf-8").lower()
-    for required in ("slice a", "workflow_call", "resources.tf.json", "job.workflow_sha", "private", "foundation/default.tfstate", "no cloud authority"):
+    for required in ("slice a", "workflow_call", "resources.tf.json", "job.workflow_sha", "private",
+                     "foundation/default.tfstate", "no cloud authority"):
         if required not in text:
             errors.append(f"Terraform control model documentation missing required concept: {required}")
 

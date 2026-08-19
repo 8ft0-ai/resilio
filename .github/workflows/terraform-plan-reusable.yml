@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
   id-token: write
 
 jobs:
@@ -75,6 +76,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
           TRUSTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
@@ -84,6 +86,9 @@ jobs:
           STATE_META="$RUNNER_TEMP/state-meta.json"
           STATE_JSON="$RUNNER_TEMP/state.json"
           STATE_ID="$RUNNER_TEMP/state-identity.json"
+          POST_STATE_META="$RUNNER_TEMP/post-state-meta.json"
+          POST_STATE_JSON="$RUNNER_TEMP/post-state.json"
+          POST_STATE_ID="$RUNNER_TEMP/post-state-identity.json"
           PLAN_FILE="$RUNNER_TEMP/foundation.tfplan"
           PLAN_JSON="$RUNNER_TEMP/plan.json"
           PRIVATE_EFFECT="$RUNNER_TEMP/private-effect.json"
@@ -104,6 +109,16 @@ jobs:
           terraform -chdir="$WORK" plan -input=false -out="$PLAN_FILE" >/dev/null
           terraform -chdir="$WORK" show -json "$PLAN_FILE" > "$PLAN_JSON"
 
+          terraform -chdir="$WORK" state pull > "$POST_STATE_JSON"
+          python3 scripts/terraform_control.py gcs-metadata \
+            --object foundation/default.tfstate > "$POST_STATE_META"
+          POST_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$POST_STATE_META")"
+          python3 scripts/terraform_control.py state-identity \
+            --state-json "$POST_STATE_JSON" \
+            --generation "$POST_GENERATION" \
+            --output "$POST_STATE_ID"
+          cmp "$STATE_ID" "$POST_STATE_ID"
+
           CANDIDATE_DIGEST="$(sha256sum "$RUNNER_TEMP/resources.tf.json" | cut -d' ' -f1)"
           LOCK_DIGEST="$(sha256sum "$WORK/.terraform.lock.hcl" | cut -d' ' -f1)"
           TREE_DIGEST="$(cat "$WORK/backend.tf" "$WORK/versions.tf" "$WORK/provider.tf" "$WORK/.terraform.lock.hcl" | sha256sum | cut -d' ' -f1)"
@@ -111,12 +126,13 @@ jobs:
           python3 scripts/terraform_control.py build-effect \
             --plan-json "$PLAN_JSON" \
             --state-identity "$STATE_ID" \
+            --pr-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" \
             --candidate-sha "$CANDIDATE_SHA" \
             --candidate-digest "$CANDIDATE_DIGEST" \
             --trusted-workflow-sha "$TRUSTED_WORKFLOW_SHA" \
             --trusted-tree-digest "$TREE_DIGEST" \
             --provider-lock-digest "$LOCK_DIGEST" \
-            --pr-number "$PR_NUMBER" \
             --workflow-run-id "$GITHUB_RUN_ID" \
             --evidence-object "$EVIDENCE_OBJECT" \
             --private-output "$PRIVATE_EFFECT" \
