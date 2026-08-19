@@ -78,6 +78,23 @@ def main()->int:
     planner=read(WF[0],errors)
     for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','"control_seed_sha"','"backend_namespace":"foundation/default.tfstate"'):
         if token not in planner: errors.append(f"reusable planner evidence identity missing: {token}")
+    planner_sequence=(
+        'state pull >"$RUNNER_TEMP/pre-state.json"',
+        'plan -input=false -lock-timeout=60s -out="$RUNNER_TEMP/plan"',
+        'state pull >"$RUNNER_TEMP/post-state.json"',
+        'Terraform state generation changed while planning',
+        '--state-json "$RUNNER_TEMP/pre-state.json"',
+        '--state-generation "$PRE_G"',
+    )
+    positions=[planner.find(token) for token in planner_sequence]
+    if any(pos < 0 for pos in positions) or positions != sorted(positions):
+        errors.append("reusable planner must bind evidence to a pre-plan state identity and prove unchanged post-plan state")
+    for token in (
+        "Terraform state lineage changed while planning",
+        "Terraform state serial changed while planning",
+        "Terraform state generation changed while planning",
+    ):
+        if token not in planner: errors.append(f"reusable planner missing state-stability guard: {token}")
     applier=read(WF[1],errors)
     for token in ('CONTROL_SEED_SHA: ${{ job.workflow_sha }}','--control-seed-sha "$CONTROL_SEED_SHA"'):
         if token not in applier: errors.append(f"reusable applier reviewed-control guard missing: {token}")
