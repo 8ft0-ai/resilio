@@ -119,7 +119,7 @@ jobs:
 
           CANDIDATE_DIGEST="$(sha256sum "$RUNNER_TEMP/resources.tf.json" | cut -d' ' -f1)"
           LOCK_DIGEST="$(sha256sum "$WORK/.terraform.lock.hcl" | cut -d' ' -f1)"
-          python3 scripts/terraform_control.py build-drift \
+          python3 scripts/terraform_drift.py \
             --plan-json "$PLAN_JSON" \
             --state-identity "$STATE_ID" \
             --main-sha "$EXPECTED_MAIN_SHA" \
