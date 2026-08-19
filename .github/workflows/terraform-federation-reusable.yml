@@ -1,0 +1,64 @@
+name: Terraform federation authentication
+
+on:
+  workflow_call:
+    inputs:
+      service_account:
+        description: Exact approved service account to impersonate.
+        required: true
+        type: string
+      token_lifetime:
+        description: Short-lived access-token lifetime.
+        required: false
+        default: 300s
+        type: string
+    outputs:
+      access_token:
+        description: Short-lived token for the trusted caller job only.
+        value: ${{ jobs.authenticate.outputs.access_token }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  authenticate:
+    name: trusted-reusable-auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      access_token: ${{ steps.auth.outputs.access_token }}
+    steps:
+      - name: Check out immutable reusable-workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Require an explicitly approved identity
+        env:
+          SERVICE_ACCOUNT: ${{ inputs.service_account }}
+        run: |
+          set -euo pipefail
+          case "$SERVICE_ACCOUNT" in
+            github-federation-probe@resilio-control-e882d4.iam.gserviceaccount.com|github-foundation-planner@resilio-control-e882d4.iam.gserviceaccount.com|github-foundation-applier@resilio-control-e882d4.iam.gserviceaccount.com) ;;
+            *) echo "unapproved service account" >&2; exit 1 ;;
+          esac
+
+      - name: Authenticate through the existing WIF provider
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: ${{ inputs.service_account }}
+          token_format: access_token
+          access_token_lifetime: ${{ inputs.token_lifetime }}
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Require a short-lived token
+        env:
+          ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: test -n "$ACCESS_TOKEN"

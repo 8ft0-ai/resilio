@@ -1,0 +1,148 @@
+name: Terraform trusted planner
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      candidate_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+
+jobs:
+  plan:
+    name: foundation-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out immutable reusable-workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Validate exact PR and acquire candidate as data before authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/terraform_control.py verify-pr \
+            --pr-number "$PR_NUMBER" \
+            --head-sha "$CANDIDATE_SHA" \
+            --base-sha "$BASE_SHA" \
+            --require-open \
+            --allowed-file infra/foundation/resources.tf.json
+          python3 scripts/terraform_control.py fetch-candidate \
+            --sha "$CANDIDATE_SHA" \
+            --output "$RUNNER_TEMP/resources.tf.json"
+          test "$(cat "$RUNNER_TEMP/resources.tf.json")" != '{}'
+          python3 scripts/terraform_control.py assemble \
+            --trusted-root "$GITHUB_WORKSPACE" \
+            --candidate "$RUNNER_TEMP/resources.tf.json" \
+            --output "$RUNNER_TEMP/foundation"
+
+      - name: Authenticate as the dedicated read-only planner
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-foundation-planner@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 900s
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Produce private full-effect evidence and public sanitised manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TRUSTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/foundation"
+          STATE_META="$RUNNER_TEMP/state-meta.json"
+          STATE_JSON="$RUNNER_TEMP/state.json"
+          STATE_ID="$RUNNER_TEMP/state-identity.json"
+          POST_STATE_META="$RUNNER_TEMP/post-state-meta.json"
+          POST_STATE_JSON="$RUNNER_TEMP/post-state.json"
+          POST_STATE_ID="$RUNNER_TEMP/post-state-identity.json"
+          PLAN_FILE="$RUNNER_TEMP/foundation.tfplan"
+          PLAN_JSON="$RUNNER_TEMP/plan.json"
+          PRIVATE_EFFECT="$RUNNER_TEMP/private-effect.json"
+          PUBLIC_MANIFEST="$RUNNER_TEMP/public-manifest.json"
+          EVIDENCE_OBJECT="plan-evidence/foundation/pr-${PR_NUMBER}-${CANDIDATE_SHA}.json"
+
+          python3 scripts/terraform_control.py gcs-metadata \
+            --object foundation/default.tfstate > "$STATE_META"
+          GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$STATE_META")"
+
+          terraform -chdir="$WORK" init -input=false -lockfile=readonly >/dev/null
+          terraform -chdir="$WORK" state pull > "$STATE_JSON"
+          python3 scripts/terraform_control.py state-identity \
+            --state-json "$STATE_JSON" \
+            --generation "$GENERATION" \
+            --output "$STATE_ID"
+
+          terraform -chdir="$WORK" plan -input=false -out="$PLAN_FILE" >/dev/null
+          terraform -chdir="$WORK" show -json "$PLAN_FILE" > "$PLAN_JSON"
+
+          terraform -chdir="$WORK" state pull > "$POST_STATE_JSON"
+          python3 scripts/terraform_control.py gcs-metadata \
+            --object foundation/default.tfstate > "$POST_STATE_META"
+          POST_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$POST_STATE_META")"
+          python3 scripts/terraform_control.py state-identity \
+            --state-json "$POST_STATE_JSON" \
+            --generation "$POST_GENERATION" \
+            --output "$POST_STATE_ID"
+          cmp "$STATE_ID" "$POST_STATE_ID"
+
+          CANDIDATE_DIGEST="$(sha256sum "$RUNNER_TEMP/resources.tf.json" | cut -d' ' -f1)"
+          LOCK_DIGEST="$(sha256sum "$WORK/.terraform.lock.hcl" | cut -d' ' -f1)"
+          TREE_DIGEST="$(cat "$WORK/backend.tf" "$WORK/versions.tf" "$WORK/provider.tf" "$WORK/.terraform.lock.hcl" | sha256sum | cut -d' ' -f1)"
+
+          python3 scripts/terraform_control.py build-effect \
+            --plan-json "$PLAN_JSON" \
+            --state-identity "$STATE_ID" \
+            --pr-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --candidate-digest "$CANDIDATE_DIGEST" \
+            --trusted-workflow-sha "$TRUSTED_WORKFLOW_SHA" \
+            --trusted-tree-digest "$TREE_DIGEST" \
+            --provider-lock-digest "$LOCK_DIGEST" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --evidence-object "$EVIDENCE_OBJECT" \
+            --private-output "$PRIVATE_EFFECT" \
+            --public-output "$PUBLIC_MANIFEST"
+
+          python3 scripts/terraform_control.py gcs-upload \
+            --object "$EVIDENCE_OBJECT" \
+            --file "$PRIVATE_EFFECT" >/dev/null
+          cat "$PUBLIC_MANIFEST"
+
+      - name: Remove generated WIF credential material
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE"/gha-creds-*.json "$RUNNER_TEMP"/gha-creds-*.json
