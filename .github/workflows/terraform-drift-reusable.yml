@@ -1,0 +1,140 @@
+name: Terraform trusted drift detector
+
+on:
+  workflow_call:
+    inputs:
+      expected_main_sha:
+        required: true
+        type: string
+    outputs:
+      drift_status:
+        description: Sanitised foundation drift status.
+        value: ${{ jobs.drift.outputs.drift_status }}
+      drift_fingerprint:
+        description: Deterministic sanitised drift fingerprint.
+        value: ${{ jobs.drift.outputs.drift_fingerprint }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  drift:
+    name: foundation-drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      drift_status: ${{ steps.drift.outputs.drift_status }}
+      drift_fingerprint: ${{ steps.drift.outputs.drift_fingerprint }}
+    steps:
+      - name: Check out immutable reusable-workflow source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Validate exact main and assemble trusted foundation before authentication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/terraform_control.py verify-main --sha "$EXPECTED_MAIN_SHA"
+          python3 scripts/terraform_control.py fetch-candidate \
+            --sha "$EXPECTED_MAIN_SHA" \
+            --output "$RUNNER_TEMP/resources.tf.json"
+          python3 scripts/terraform_control.py assemble \
+            --trusted-root "$GITHUB_WORKSPACE" \
+            --candidate "$RUNNER_TEMP/resources.tf.json" \
+            --output "$RUNNER_TEMP/foundation"
+
+      - name: Authenticate as the dedicated read-only planner
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-foundation-planner@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 900s
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Produce read-only sanitised drift evidence
+        id: drift
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          TRUSTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/foundation"
+          STATE_META="$RUNNER_TEMP/state-meta.json"
+          STATE_JSON="$RUNNER_TEMP/state.json"
+          STATE_ID="$RUNNER_TEMP/state-identity.json"
+          POST_STATE_META="$RUNNER_TEMP/post-state-meta.json"
+          POST_STATE_JSON="$RUNNER_TEMP/post-state.json"
+          POST_STATE_ID="$RUNNER_TEMP/post-state-identity.json"
+          PLAN_FILE="$RUNNER_TEMP/foundation-drift.tfplan"
+          PLAN_JSON="$RUNNER_TEMP/drift-plan.json"
+          PUBLIC_MANIFEST="$RUNNER_TEMP/drift-manifest.json"
+
+          python3 scripts/terraform_control.py gcs-metadata \
+            --object foundation/default.tfstate > "$STATE_META"
+          GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$STATE_META")"
+
+          terraform -chdir="$WORK" init -input=false -lockfile=readonly >/dev/null
+          terraform -chdir="$WORK" state pull > "$STATE_JSON"
+          python3 scripts/terraform_control.py state-identity \
+            --state-json "$STATE_JSON" \
+            --generation "$GENERATION" \
+            --output "$STATE_ID"
+
+          set +e
+          terraform -chdir="$WORK" plan -input=false -detailed-exitcode -out="$PLAN_FILE" >/dev/null
+          PLAN_RC=$?
+          set -e
+          if [ "$PLAN_RC" -ne 0 ] && [ "$PLAN_RC" -ne 2 ]; then
+            echo "drift plan failed" >&2
+            exit "$PLAN_RC"
+          fi
+          terraform -chdir="$WORK" show -json "$PLAN_FILE" > "$PLAN_JSON"
+
+          terraform -chdir="$WORK" state pull > "$POST_STATE_JSON"
+          python3 scripts/terraform_control.py gcs-metadata \
+            --object foundation/default.tfstate > "$POST_STATE_META"
+          POST_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$POST_STATE_META")"
+          python3 scripts/terraform_control.py state-identity \
+            --state-json "$POST_STATE_JSON" \
+            --generation "$POST_GENERATION" \
+            --output "$POST_STATE_ID"
+          cmp "$STATE_ID" "$POST_STATE_ID"
+
+          CANDIDATE_DIGEST="$(sha256sum "$RUNNER_TEMP/resources.tf.json" | cut -d' ' -f1)"
+          LOCK_DIGEST="$(sha256sum "$WORK/.terraform.lock.hcl" | cut -d' ' -f1)"
+          python3 scripts/terraform_control.py build-drift \
+            --plan-json "$PLAN_JSON" \
+            --state-identity "$STATE_ID" \
+            --main-sha "$EXPECTED_MAIN_SHA" \
+            --candidate-digest "$CANDIDATE_DIGEST" \
+            --trusted-workflow-sha "$TRUSTED_WORKFLOW_SHA" \
+            --provider-lock-digest "$LOCK_DIGEST" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --public-output "$PUBLIC_MANIFEST"
+
+          DRIFT_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$PUBLIC_MANIFEST")"
+          DRIFT_FINGERPRINT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["drift_fingerprint"])' "$PUBLIC_MANIFEST")"
+          printf 'drift_status=%s\n' "$DRIFT_STATUS" >> "$GITHUB_OUTPUT"
+          printf 'drift_fingerprint=%s\n' "$DRIFT_FINGERPRINT" >> "$GITHUB_OUTPUT"
+          cat "$PUBLIC_MANIFEST"
+
+      - name: Remove generated WIF credential material
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE"/gha-creds-*.json "$RUNNER_TEMP"/gha-creds-*.json
