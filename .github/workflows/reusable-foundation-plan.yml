@@ -124,12 +124,29 @@ jobs:
           set -euo pipefail
           W="$RUNNER_TEMP/foundation"
           terraform -chdir="$W" init -input=false -lockfile=readonly >/dev/null
+
+          terraform -chdir="$W" state pull >"$RUNNER_TEMP/pre-state.json"
+          python3 scripts/terraform_control.py gcs-metadata >"$RUNNER_TEMP/pre-state-meta.json"
+          PRE_G="$(python3 -c 'import json;print(json.load(open("'"$RUNNER_TEMP/pre-state-meta.json"'"))["generation"])')"
+
           terraform -chdir="$W" plan -input=false -lock-timeout=60s -out="$RUNNER_TEMP/plan" >/dev/null
           terraform -chdir="$W" show -json "$RUNNER_TEMP/plan" >"$RUNNER_TEMP/plan.json"
-          terraform -chdir="$W" state pull >"$RUNNER_TEMP/state.json"
-          python3 scripts/terraform_control.py gcs-metadata >"$RUNNER_TEMP/state-meta.json"
-          G="$(python3 -c 'import json;print(json.load(open("'"$RUNNER_TEMP/state-meta.json"'"))["generation"])')"
-          python3 scripts/terraform_control.py build-evidence --plan-json "$RUNNER_TEMP/plan.json" --state-json "$RUNNER_TEMP/state.json" --state-generation "$G" --metadata-json "$RUNNER_TEMP/meta.json" --private-output "$RUNNER_TEMP/private.json" --public-output "$RUNNER_TEMP/public.json"
+
+          terraform -chdir="$W" state pull >"$RUNNER_TEMP/post-state.json"
+          python3 scripts/terraform_control.py gcs-metadata >"$RUNNER_TEMP/post-state-meta.json"
+          python3 - "$RUNNER_TEMP/pre-state.json" "$RUNNER_TEMP/pre-state-meta.json" "$RUNNER_TEMP/post-state.json" "$RUNNER_TEMP/post-state-meta.json" <<'PY'
+          import json,sys
+          pre_state=json.load(open(sys.argv[1])); pre_meta=json.load(open(sys.argv[2]))
+          post_state=json.load(open(sys.argv[3])); post_meta=json.load(open(sys.argv[4]))
+          if pre_state.get("lineage") != post_state.get("lineage"):
+              raise SystemExit("Terraform state lineage changed while planning")
+          if pre_state.get("serial") != post_state.get("serial"):
+              raise SystemExit("Terraform state serial changed while planning")
+          if str(pre_meta.get("generation", "")) != str(post_meta.get("generation", "")):
+              raise SystemExit("Terraform state generation changed while planning")
+          PY
+
+          python3 scripts/terraform_control.py build-evidence --plan-json "$RUNNER_TEMP/plan.json" --state-json "$RUNNER_TEMP/pre-state.json" --state-generation "$PRE_G" --metadata-json "$RUNNER_TEMP/meta.json" --private-output "$RUNNER_TEMP/private.json" --public-output "$RUNNER_TEMP/public.json"
 
       - name: Publish bounded evidence identity
         id: out
