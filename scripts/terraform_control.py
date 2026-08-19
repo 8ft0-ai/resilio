@@ -22,6 +22,7 @@ SENTINEL_BODY = {
     "display_name": "Phase 3 Terraform sentinel",
     "description": "Non-privileged Phase 3 Terraform control-path sentinel.",
     "project": "resilio-reference-e882d4",
+    "deletion_policy": "PREVENT",
     "lifecycle": {"prevent_destroy": True},
 }
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
