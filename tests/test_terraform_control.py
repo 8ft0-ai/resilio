@@ -134,6 +134,20 @@ class MaterialEffectTests(unittest.TestCase):
             with self.subTest(actions=actions), self.assertRaisesRegex(control.ControlError, "PLAN_DESTRUCTIVE_ACTION_FORBIDDEN"):
                 self._effect(plan)
 
+    def test_forget_and_unsupported_actions_fail_closed(self) -> None:
+        for actions in (["forget"], ["create", "forget"], ["read"], ["update"], ["future-action"]):
+            plan = json.loads(json.dumps(self.plan))
+            plan["resource_changes"][0]["change"]["actions"] = actions
+            with self.subTest(actions=actions), self.assertRaisesRegex(control.ControlError, "PLAN_ACTION_SEQUENCE_FORBIDDEN"):
+                self._effect(plan)
+
+    def test_only_proof_action_sequences_are_allowed(self) -> None:
+        for actions in (["create"], ["no-op"]):
+            plan = json.loads(json.dumps(self.plan))
+            plan["resource_changes"][0]["change"]["actions"] = actions
+            with self.subTest(actions=actions):
+                self.assertEqual(self._effect(plan)["effect"]["resource_changes"][0]["change"]["actions"], actions)
+
     def test_unrecognised_plan_or_change_structure_fails_closed(self) -> None:
         plan = json.loads(json.dumps(self.plan))
         plan["future_effect"] = {}
