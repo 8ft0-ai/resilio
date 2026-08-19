@@ -28,9 +28,9 @@ HEX40 = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 PLAN_TOP_LEVEL_KEYS = {
     "format_version", "terraform_version", "variables", "planned_values",
-    "resource_drift", "resource_changes", "deferred_changes", "complete",
+    "resource_drift", "resource_changes", "deferred_changes", "deferred_action_invocations",
     "output_changes", "prior_state", "configuration", "relevant_attributes",
-    "checks", "timestamp", "action_invocations",
+    "checks", "timestamp", "action_invocations", "applyable", "complete", "errored",
 }
 
 
@@ -97,9 +97,15 @@ def plan_effect(plan: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(plan) - PLAN_TOP_LEVEL_KEYS)
     if unknown:
         raise ContractError(f"unrecognised Terraform plan structure: {', '.join(unknown)}")
+    if not isinstance(plan.get("applyable"), bool):
+        raise ContractError("Terraform plan applyability is missing or invalid")
     if plan.get("complete") is not True:
         raise ContractError("Terraform plan is incomplete or does not prove completeness")
-    for field in ("resource_drift", "deferred_changes", "action_invocations"):
+    if plan.get("errored") is not False:
+        raise ContractError("Terraform plan is errored or does not prove successful planning")
+    for field in (
+        "resource_drift", "deferred_changes", "deferred_action_invocations", "action_invocations"
+    ):
         if plan.get(field):
             raise ContractError(f"Terraform plan contains unsupported effect-bearing structure: {field}")
 
@@ -132,7 +138,13 @@ def plan_effect(plan: dict[str, Any]) -> dict[str, Any]:
         raise ContractError("Terraform output_changes must be an object")
     if outputs:
         raise ContractError("Terraform plan contains outputs outside the initial Phase 3 candidate grammar")
-    return {"resource_changes": changes, "output_changes": copy.deepcopy(outputs)}
+    return {
+        "applyable": plan["applyable"],
+        "complete": True,
+        "errored": False,
+        "resource_changes": changes,
+        "output_changes": copy.deepcopy(outputs),
+    }
 
 
 def state_identity(state: dict[str, Any], generation: str) -> dict[str, Any]:
