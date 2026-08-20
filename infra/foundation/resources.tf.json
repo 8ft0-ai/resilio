@@ -1,1 +1,1 @@
-{}
+{"resource":{"google_service_account":{"phase3_terraform_sentinel":{"account_id":"phase3-terraform-sentinel","deletion_policy":"PREVENT","description":"Non-privileged Resilio Phase 3 Terraform control-path sentinel.","display_name":"Phase 3 Terraform sentinel","project":"resilio-reference-e882d4"}}}}
