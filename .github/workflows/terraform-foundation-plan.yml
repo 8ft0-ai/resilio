@@ -1,0 +1,107 @@
+name: Terraform foundation PR plan
+
+on:
+  workflow_run:
+    workflows:
+      - Validate repository
+    types:
+      - completed
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: terraform-foundation
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  select:
+    name: select-exact-foundation-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.select.outputs.eligible }}
+      pr_number: ${{ steps.select.outputs.pr_number }}
+      candidate_sha: ${{ steps.select.outputs.candidate_sha }}
+      base_sha: ${{ steps.select.outputs.base_sha }}
+    steps:
+      - name: Select exact same-repository foundation candidate
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          TRIGGER_HEAD_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+          TRIGGER_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+          deny() { printf 'eligible=false\n' >> "$GITHUB_OUTPUT"; exit 0; }
+
+          test "$TRIGGER_EVENT" = "pull_request" || deny
+          test "$TRIGGER_CONCLUSION" = "success" || deny
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || deny
+          [[ "$TRIGGER_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+          [[ "$TRIGGER_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+
+          PR_JSON="$RUNNER_TEMP/pr.json"
+          FILES_JSON="$RUNNER_TEMP/files.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$PR_JSON"
+
+          read -r STATE BASE_REF HEAD_REPO_ID HEAD_SHA BASE_SHA CHANGED_FILES < <(
+            python3 - "$PR_JSON" <<'PY'
+          import json, sys
+          pr = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(
+              pr.get("state", ""),
+              ((pr.get("base") or {}).get("ref") or ""),
+              (((pr.get("head") or {}).get("repo") or {}).get("id") or ""),
+              ((pr.get("head") or {}).get("sha") or ""),
+              ((pr.get("base") or {}).get("sha") or ""),
+              pr.get("changed_files", ""),
+          )
+          PY
+          )
+
+          test "$STATE" = "open" || deny
+          test "$BASE_REF" = "main" || deny
+          test "$HEAD_REPO_ID" = "1335801159" || deny
+          test "$HEAD_SHA" = "$TRIGGER_HEAD_SHA" || deny
+          test "$BASE_SHA" = "$TRIGGER_BASE_SHA" || deny
+          test "$CHANGED_FILES" = "1" || deny
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || deny
+
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" > "$FILES_JSON"
+          read -r FILE_COUNT FILE_NAME < <(
+            python3 - "$FILES_JSON" <<'PY'
+          import json, sys
+          rows = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(len(rows), rows[0].get("filename", "") if len(rows) == 1 else "")
+          PY
+          )
+          test "$FILE_COUNT" = "1" || deny
+          test "$FILE_NAME" = "infra/foundation/resources.tf.json" || deny
+
+          {
+            printf 'eligible=true\n'
+            printf 'pr_number=%s\n' "$PR_NUMBER"
+            printf 'candidate_sha=%s\n' "$HEAD_SHA"
+            printf 'base_sha=%s\n' "$BASE_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: trusted-foundation-plan
+    needs: select
+    if: needs.select.outputs.eligible == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04
+    with:
+      pr_number: ${{ fromJSON(needs.select.outputs.pr_number) }}
+      candidate_sha: ${{ needs.select.outputs.candidate_sha }}
+      base_sha: ${{ needs.select.outputs.base_sha }}

@@ -1,0 +1,102 @@
+name: Terraform foundation drift
+
+on:
+  schedule:
+    - cron: '19 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-foundation
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  require-main:
+    name: require-trusted-main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require trusted main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+  drift:
+    name: trusted-foundation-drift
+    needs: require-main
+    permissions:
+      contents: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@2acbc425f688383375f724da7a4d80025dd9cc23
+    with:
+      expected_main_sha: ${{ github.sha }}
+
+  report:
+    name: report-foundation-drift
+    needs: drift
+    if: needs.drift.result == 'success' && needs.drift.outputs.drift_status == 'DRIFT'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Create or update deterministic drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT_FINGERPRINT: ${{ needs.drift.outputs.drift_fingerprint }}
+          MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DRIFT_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          RUN_URL="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          ISSUES_JSON="$RUNNER_TEMP/open-issues.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" > "$ISSUES_JSON"
+          mapfile -t MATCHES < <(
+            python3 - "$ISSUES_JSON" "$DRIFT_FINGERPRINT" <<'PY'
+          import json, sys
+          pages = json.load(open(sys.argv[1], encoding="utf-8"))
+          marker = f"<!-- resilio-foundation-drift:{sys.argv[2]} -->"
+          for page in pages:
+              for issue in page:
+                  if "pull_request" not in issue and marker in (issue.get("body") or ""):
+                      print(issue["number"])
+          PY
+          )
+
+          if [ "${#MATCHES[@]}" -gt 1 ]; then
+            echo "multiple open issues match the deterministic drift fingerprint" >&2
+            exit 1
+          fi
+
+          if [ "${#MATCHES[@]}" -eq 1 ]; then
+            BODY=$(cat <<EOF
+          Read-only foundation drift was observed again.
+
+          - fingerprint: \`$DRIFT_FINGERPRINT\`
+          - main: \`$MAIN_SHA\`
+          - workflow evidence: $RUN_URL
+
+          This workflow does not apply or reconcile drift.
+          EOF
+          )
+            gh api "repos/$GITHUB_REPOSITORY/issues/${MATCHES[0]}/comments" -f body="$BODY" >/dev/null
+          else
+            TITLE="Terraform foundation drift detected"
+            BODY=$(cat <<EOF
+          <!-- resilio-foundation-drift:$DRIFT_FINGERPRINT -->
+          Read-only Terraform reconciliation detected foundation drift.
+
+          - fingerprint: \`$DRIFT_FINGERPRINT\`
+          - main: \`$MAIN_SHA\`
+          - workflow evidence: $RUN_URL
+
+          The linked workflow run contains the sanitised drift manifest. This automation never applies drift. Reconciliation requires the normal governed change path.
+          EOF
+          )
+            gh api "repos/$GITHUB_REPOSITORY/issues" -f title="$TITLE" -f body="$BODY" >/dev/null
+          fi
