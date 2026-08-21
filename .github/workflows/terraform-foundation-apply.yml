@@ -117,7 +117,7 @@ jobs:
       contents: read
       pull-requests: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04
+    uses: 8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac
     with:
       mode: plan-apply
       pr_number: ${{ fromJSON(needs.select.outputs.pr_number) }}
