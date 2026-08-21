@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free validation for the Phase 3 normal Terraform caller contract."""
+"""Credential-free validation for the normal Terraform caller contract."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_CALLER_BLOBS = {
-    ".github/workflows/terraform-foundation-plan.yml": "56b20b101e6327c5e65fb2f9a8a8757dd3edb5b5",
-    ".github/workflows/terraform-foundation-apply.yml": "a020ab83ae29b4f6bb71c8105311d77a723eea75",
-    ".github/workflows/terraform-foundation-drift.yml": "32fb20a6eba97aea2fc3d9a546f061a5bb378d83",
+    ".github/workflows/terraform-foundation-plan.yml": "00194171b7fff6388ce11e19aca02b1de2c48ae5",
+    ".github/workflows/terraform-foundation-apply.yml": "725cd32228001a670331dfe88ae1c30fa1b4980b",
+    ".github/workflows/terraform-foundation-drift.yml": "f214b8e1b507ddf2284aa3993a9afb0dba7207a9",
 }
 
 RETIRED_SETUP_PATHS = (
