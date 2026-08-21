@@ -1,0 +1,164 @@
+name: Phase 4 exact-digest deploy reusable
+
+on:
+  workflow_call:
+    inputs:
+      evidence_object:
+        required: true
+        type: string
+    outputs:
+      revision:
+        value: ${{ jobs.verify.outputs.revision }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy-authorised-digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      source_sha: ${{ steps.deploy.outputs.source_sha }}
+      image: ${{ steps.deploy.outputs.image }}
+    steps:
+      - name: Check out immutable trusted control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Authenticate as bounded deployer
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-deployer@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Read immutable PASS evidence and deploy exact digest
+        id: deploy
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          OBJECT: ${{ inputs.evidence_object }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$OBJECT" =~ ^transitions/[0-9a-f-]{8,64}\.json$ ]]
+          ENCODED="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$OBJECT")"
+          MANIFEST="$RUNNER_TEMP/transition.json"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/storage/v1/b/resilio-control-e882d4-phase4-evidence/o/$ENCODED?alt=media" > "$MANIFEST"
+          python3 scripts/phase4_supply_chain.py validate-transition --manifest "$MANIFEST"
+          SOURCE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$MANIFEST")"
+          IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$MANIFEST")"
+          CURRENT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          test "$CURRENT" = "$SOURCE_SHA"
+
+          SERVICE="projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          BODY="$RUNNER_TEMP/service.json"
+          python3 scripts/phase4_supply_chain.py service-request --image "$IMAGE" --source-sha "$SOURCE_SHA" --output "$BODY"
+          OP="$RUNNER_TEMP/op.json"
+          curl --fail-with-body --silent --show-error -X PATCH \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary "@$BODY" \
+            "https://run.googleapis.com/v2/$SERVICE?allowMissing=true&updateMask=template,ingress,invokerIamDisabled" > "$OP"
+          OP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$OP")"
+          for _ in $(seq 1 60); do
+            curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+              "https://run.googleapis.com/v2/$OP_NAME" > "$OP"
+            DONE="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("done",False)).lower())' "$OP")"
+            test "$DONE" = true && break
+            sleep 5
+          done
+          python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); assert v.get("done") is True and "error" not in v, v' "$OP"
+          printf 'source_sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'image=%s\n' "$IMAGE" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: independent-readback-and-probe
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      revision: ${{ steps.readback.outputs.revision }}
+    steps:
+      - name: Check out immutable trusted control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Authenticate verifier for readback
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Verify provider state
+        id: readback
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          EXPECTED_IMAGE: ${{ needs.deploy.outputs.image }}
+          EXPECTED_SOURCE: ${{ needs.deploy.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SERVICE="projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          POLICY_JSON="$RUNNER_TEMP/policy.json"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+            "https://run.googleapis.com/v2/$SERVICE" > "$SERVICE_JSON"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+            "https://run.googleapis.com/v2/$SERVICE:getIamPolicy" > "$POLICY_JSON"
+          READBACK="$RUNNER_TEMP/readback.json"
+          python3 scripts/phase4_supply_chain.py verify-service \
+            --service-json "$SERVICE_JSON" --policy-json "$POLICY_JSON" \
+            --expected-image "$EXPECTED_IMAGE" --expected-source "$EXPECTED_SOURCE" > "$READBACK"
+          REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$READBACK")"
+          URI="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uri"])' "$READBACK")"
+          REVISION_JSON="$RUNNER_TEMP/revision.json"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+            "https://run.googleapis.com/v2/$REVISION" > "$REVISION_JSON"
+          python3 scripts/phase4_supply_chain.py verify-revision --revision-json "$REVISION_JSON" --expected-image "$EXPECTED_IMAGE"
+          printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
+          printf 'uri=%s\n' "$URI" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate verifier for private service invocation
+        id: idauth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: id_token
+          id_token_audience: ${{ steps.readback.outputs.uri }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Probe authenticated health endpoint
+        env:
+          ID_TOKEN: ${{ steps.idauth.outputs.id_token }}
+          URI: ${{ steps.readback.outputs.uri }}
+          EXPECTED_SOURCE: ${{ needs.deploy.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          RESPONSE="$RUNNER_TEMP/health.json"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $ID_TOKEN" "$URI/healthz" > "$RESPONSE"
+          python3 scripts/phase4_supply_chain.py verify-health --response-json "$RESPONSE" --expected-source "$EXPECTED_SOURCE"

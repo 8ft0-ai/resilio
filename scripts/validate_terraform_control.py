@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free structural validation for the Resilio Phase 3 Terraform control seed."""
+"""Credential-free structural validation for the Resilio Phase 3/4 Terraform control seed."""
 
 from __future__ import annotations
 
@@ -183,12 +183,13 @@ def check_script_contract(errors: list[str]) -> None:
             errors.append(f"Terraform control code must not execute candidate-controlled code: {forbidden}")
     for required in (
         "object_pairs_hook=_reject_duplicate_pairs", "CANDIDATE_PATH", "SENTINEL_CONFIGURATION_MISMATCH",
-        "MATERIAL_EFFECT_MISMATCH", "ifGenerationMatch", "PLAN_TOP_LEVEL_KEYS", "PLAN_RESOURCE_DRIFT",
-        "PLAN_DEFERRED_CHANGES", "PLAN_DEFERRED_ACTION_INVOCATIONS", "PLAN_ACTION_INVOCATIONS",
+        "CANDIDATE_TOP_LEVEL_FORBIDDEN", "MATERIAL_EFFECT_MISMATCH", "ifGenerationMatch", "PLAN_TOP_LEVEL_KEYS",
+        "PLAN_RESOURCE_DRIFT", "PLAN_DEFERRED_CHANGES", "PLAN_DEFERRED_ACTION_INVOCATIONS", "PLAN_ACTION_INVOCATIONS",
         "PLAN_TOP_LEVEL_STRUCTURE_UNRECOGNISED", "PLAN_CHANGE_STRUCTURE_UNRECOGNISED",
         "PLAN_RESOURCE_CLASS_FORBIDDEN", "PLAN_ACTION_SEQUENCE_INVALID", "PLAN_DESTRUCTIVE_ACTION_FORBIDDEN",
         "SAFE_SENTINEL_ACTION_SEQUENCES", "PLAN_ACTION_SEQUENCE_FORBIDDEN", "PLAN_PROOF_CHANGE_COUNT_INVALID",
         "before_identity", "after_identity", "BACKEND_NAMESPACE", "base_sha", "pr_number",
+        "PHASE4_FOUNDATION_RESOURCE", "PHASE4_CREATE_ADDRESSES", "PHASE4_FOUNDATION_CONFIGURATION_MISMATCH",
         "DRIFT_CONTRACT", "DRIFT_FINGERPRINT_CONTRACT", "SAFE_DRIFT_ACTION_SEQUENCES", "DRIFT_OUTPUT_CHANGES_FORBIDDEN",
         "DRIFT_PLAN_STRUCTURE_UNRECOGNISED", "drift_fingerprint",
     ):
@@ -203,7 +204,7 @@ def check_documentation(errors: list[str]) -> None:
         return
     text = path.read_text(encoding="utf-8").lower()
     for required in ("slice a", "workflow_call", "resources.tf.json", "job.workflow_sha", "private",
-                     "foundation/default.tfstate", "no cloud authority"):
+                     "foundation/default.tfstate", "no cloud authority", "phase 4", "artifact registry", "evidence bucket"):
         if required not in text:
             errors.append(f"Terraform control model documentation missing required concept: {required}")
 

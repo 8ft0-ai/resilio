@@ -38,6 +38,87 @@ SENTINEL_RESOURCE = {
 }
 SAFE_SENTINEL_ACTION_SEQUENCES = {("create",)}
 
+PHASE4_CONTROL_SERVICES = {
+    "control_cloudbuild": "cloudbuild.googleapis.com",
+    "control_artifactregistry": "artifactregistry.googleapis.com",
+    "control_containeranalysis": "containeranalysis.googleapis.com",
+    "control_containerscanning": "containerscanning.googleapis.com",
+    "control_logging": "logging.googleapis.com",
+}
+PHASE4_REFERENCE_SERVICES = {"reference_run": "run.googleapis.com"}
+PHASE4_SERVICE_RESOURCES = {
+    **{name: {"project": CONTROL_PROJECT, "service": service, "disable_on_destroy": False}
+       for name, service in PHASE4_CONTROL_SERVICES.items()},
+    **{name: {"project": REFERENCE_PROJECT, "service": service, "disable_on_destroy": False}
+       for name, service in PHASE4_REFERENCE_SERVICES.items()},
+}
+PHASE4_REPOSITORY_RESOURCE = {
+    "project": CONTROL_PROJECT,
+    "location": "us-central1",
+    "repository_id": "resilio-phase4",
+    "description": "Resilio Phase 4 trusted supply-chain proof images.",
+    "format": "DOCKER",
+    "cleanup_policy_dry_run": False,
+    "cleanup_policies": [
+        {
+            "id": "keep-recent-proof",
+            "action": "KEEP",
+            "most_recent_versions": [{
+                "package_name_prefixes": ["phase4-proof"],
+                "keep_count": 3,
+            }],
+        },
+        {
+            "id": "delete-old-proof",
+            "action": "DELETE",
+            "condition": [{
+                "tag_state": "ANY",
+                "package_name_prefixes": ["phase4-proof"],
+                "older_than": "30d",
+            }],
+        },
+    ],
+    "deletion_policy": "PREVENT",
+    "depends_on": ["google_project_service.control_artifactregistry"],
+}
+PHASE4_EVIDENCE_BUCKET_RESOURCE = {
+    "project": CONTROL_PROJECT,
+    "name": "resilio-control-e882d4-phase4-evidence",
+    "location": "us-central1",
+    "storage_class": "STANDARD",
+    "uniform_bucket_level_access": True,
+    "public_access_prevention": "enforced",
+    "force_destroy": False,
+    "versioning": [{"enabled": True}],
+    "soft_delete_policy": [{"retention_duration_seconds": 0}],
+    "lifecycle_rule": [{
+        "action": [{"type": "Delete"}],
+        "condition": [{"age": 365, "with_state": "ANY"}],
+    }],
+    "deletion_policy": "PREVENT",
+}
+PHASE4_FOUNDATION_RESOURCE = {
+    "resource": {
+        "google_service_account": {
+            "phase3_terraform_sentinel": dict(SENTINEL_RESOURCE),
+        },
+        "google_project_service": PHASE4_SERVICE_RESOURCES,
+        "google_artifact_registry_repository": {
+            "phase4": PHASE4_REPOSITORY_RESOURCE,
+        },
+        "google_storage_bucket": {
+            "phase4_evidence": PHASE4_EVIDENCE_BUCKET_RESOURCE,
+        },
+    }
+}
+PHASE4_CREATE_ADDRESSES = {
+    **{f"google_project_service.{name}": ("google_project_service", name)
+       for name in PHASE4_SERVICE_RESOURCES},
+    "google_artifact_registry_repository.phase4": ("google_artifact_registry_repository", "phase4"),
+    "google_storage_bucket.phase4_evidence": ("google_storage_bucket", "phase4_evidence"),
+}
+PHASE4_EFFECT_ADDRESSES = {SENTINEL_ADDRESS, *PHASE4_CREATE_ADDRESSES}
+
 # Terraform v1.15.8 internal/command/jsonplan.plan exact top-level JSON fields.
 PLAN_TOP_LEVEL_KEYS = {
     "format_version", "terraform_version", "variables", "planned_values",
@@ -123,18 +204,24 @@ def validate_candidate_document(document: Any) -> dict[str, Any]:
     _literal_tree(document)
     if document == {}:
         return document
+    sentinel_only = {"resource": {"google_service_account": {"phase3_terraform_sentinel": dict(SENTINEL_RESOURCE)}}}
+    if document == sentinel_only or document == PHASE4_FOUNDATION_RESOURCE:
+        return document
     if set(document) != {"resource"}:
         raise ControlError("CANDIDATE_TOP_LEVEL_FORBIDDEN")
     resources = document["resource"]
-    if not isinstance(resources, dict) or set(resources) != {"google_service_account"}:
+    if not isinstance(resources, dict):
         raise ControlError("RESOURCE_TYPE_FORBIDDEN")
-    accounts = resources["google_service_account"]
-    if not isinstance(accounts, dict) or set(accounts) != {"phase3_terraform_sentinel"}:
-        raise ControlError("RESOURCE_NAME_FORBIDDEN")
-    sentinel = accounts["phase3_terraform_sentinel"]
-    if not isinstance(sentinel, dict) or sentinel != SENTINEL_RESOURCE:
-        raise ControlError("SENTINEL_CONFIGURATION_MISMATCH")
-    return document
+    if set(resources) == {"google_service_account"}:
+        accounts = resources["google_service_account"]
+        if not isinstance(accounts, dict) or set(accounts) != {"phase3_terraform_sentinel"}:
+            raise ControlError("RESOURCE_NAME_FORBIDDEN")
+        sentinel = accounts["phase3_terraform_sentinel"]
+        if not isinstance(sentinel, dict) or sentinel != SENTINEL_RESOURCE:
+            raise ControlError("SENTINEL_CONFIGURATION_MISMATCH")
+    if "google_service_account" not in resources:
+        raise ControlError("RESOURCE_TYPE_FORBIDDEN")
+    raise ControlError("PHASE4_FOUNDATION_CONFIGURATION_MISMATCH")
 
 
 def validate_candidate_file(path: Path) -> dict[str, Any]:
@@ -185,6 +272,20 @@ def _normalise_change(change: Any) -> dict[str, Any]:
     return {key: change.get(key) for key in sorted(PLAN_CHANGE_KEYS)}
 
 
+def _resource_identity(row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("previous_address") not in (None, "") or row.get("module_address") not in (None, ""):
+        raise ControlError("PLAN_RESOURCE_MOVE_OR_MODULE_FORBIDDEN")
+    if row.get("index") is not None or row.get("index_unknown") not in (None, False) or row.get("deposed") not in (None, ""):
+        raise ControlError("PLAN_RESOURCE_INSTANCE_SHAPE_FORBIDDEN")
+    unknown_row = set(row) - PLAN_RESOURCE_CHANGE_KEYS
+    if unknown_row:
+        raise ControlError("PLAN_RESOURCE_CHANGE_STRUCTURE_UNRECOGNISED:" + ",".join(sorted(unknown_row)))
+    return {key: row.get(key) for key in (
+        "address", "previous_address", "module_address", "mode", "type", "name",
+        "index", "index_unknown", "provider_name", "deposed", "action_reason",
+    )}
+
+
 def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(plan, dict):
         raise ControlError("PLAN_INVALID")
@@ -203,36 +304,44 @@ def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
     rows = plan.get("resource_changes") or []
     if not isinstance(rows, list):
         raise ControlError("PLAN_RESOURCE_CHANGES_INVALID")
-    if len(rows) != 1:
+    addresses = {row.get("address") for row in rows if isinstance(row, dict)}
+    historical_sentinel_create = addresses == {SENTINEL_ADDRESS} and len(rows) == 1
+    phase4_create = addresses == PHASE4_EFFECT_ADDRESSES and len(rows) == len(PHASE4_EFFECT_ADDRESSES)
+    if not historical_sentinel_create and not phase4_create:
         raise ControlError("PLAN_PROOF_CHANGE_COUNT_INVALID")
+
     changes: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             raise ControlError("PLAN_RESOURCE_CHANGE_INVALID")
-        unknown_row = set(row) - PLAN_RESOURCE_CHANGE_KEYS
-        if unknown_row:
-            raise ControlError("PLAN_RESOURCE_CHANGE_STRUCTURE_UNRECOGNISED:" + ",".join(sorted(unknown_row)))
-        if (row.get("address") != SENTINEL_ADDRESS or row.get("mode") != "managed"
-                or row.get("type") != "google_service_account"
-                or row.get("name") != "phase3_terraform_sentinel"
-                or row.get("provider_name") != "registry.terraform.io/hashicorp/google"):
+        identity = _resource_identity(row)
+        address = row.get("address")
+        if row.get("mode") != "managed" or row.get("provider_name") != "registry.terraform.io/hashicorp/google":
             raise ControlError("PLAN_RESOURCE_CLASS_FORBIDDEN")
-        if row.get("previous_address") not in (None, "") or row.get("module_address") not in (None, ""):
-            raise ControlError("PLAN_RESOURCE_MOVE_OR_MODULE_FORBIDDEN")
-        if row.get("index") is not None or row.get("index_unknown") not in (None, False) or row.get("deposed") not in (None, ""):
-            raise ControlError("PLAN_RESOURCE_INSTANCE_SHAPE_FORBIDDEN")
-        identity = {key: row.get(key) for key in (
-            "address", "previous_address", "module_address", "mode", "type", "name",
-            "index", "index_unknown", "provider_name", "deposed", "action_reason",
-        )}
         change = _normalise_change(row.get("change"))
         actions = change.get("actions")
         if not isinstance(actions, list) or not actions or any(not isinstance(action, str) for action in actions):
             raise ControlError("PLAN_ACTION_SEQUENCE_INVALID")
         if "delete" in actions:
             raise ControlError("PLAN_DESTRUCTIVE_ACTION_FORBIDDEN")
-        if tuple(actions) not in SAFE_SENTINEL_ACTION_SEQUENCES:
-            raise ControlError("PLAN_ACTION_SEQUENCE_FORBIDDEN")
+        if historical_sentinel_create:
+            if (address != SENTINEL_ADDRESS or row.get("type") != "google_service_account"
+                    or row.get("name") != "phase3_terraform_sentinel"):
+                raise ControlError("PLAN_RESOURCE_CLASS_FORBIDDEN")
+            if tuple(actions) not in SAFE_SENTINEL_ACTION_SEQUENCES:
+                raise ControlError("PLAN_ACTION_SEQUENCE_FORBIDDEN")
+        else:
+            if address == SENTINEL_ADDRESS:
+                if row.get("type") != "google_service_account" or row.get("name") != "phase3_terraform_sentinel":
+                    raise ControlError("PLAN_RESOURCE_CLASS_FORBIDDEN")
+                if tuple(actions) != ("no-op",):
+                    raise ControlError("PLAN_ACTION_SEQUENCE_FORBIDDEN")
+            else:
+                expected = PHASE4_CREATE_ADDRESSES.get(str(address))
+                if expected is None or (row.get("type"), row.get("name")) != expected:
+                    raise ControlError("PLAN_RESOURCE_CLASS_FORBIDDEN")
+                if tuple(actions) != ("create",):
+                    raise ControlError("PLAN_ACTION_SEQUENCE_FORBIDDEN")
         identity["change"] = change
         changes.append(identity)
     changes.sort(key=canonical_json_bytes)

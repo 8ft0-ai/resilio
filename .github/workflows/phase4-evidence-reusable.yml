@@ -1,0 +1,183 @@
+name: Phase 4 evidence reusable
+
+on:
+  workflow_call:
+    inputs:
+      build_id:
+        required: true
+        type: string
+    outputs:
+      evidence_object:
+        value: ${{ jobs.evidence.outputs.evidence_object }}
+      image:
+        value: ${{ jobs.evidence.outputs.image }}
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    name: adjudicate-exact-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    outputs:
+      evidence_object: ${{ steps.result.outputs.evidence_object }}
+      image: ${{ steps.result.outputs.image }}
+    steps:
+      - name: Check out immutable trusted control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Authenticate as evidence adjudicator
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-evidence@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Adjudicate build, scan, provenance and SBOM
+        id: result
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          BUILD_ID: ${{ inputs.build_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_ID" =~ ^[0-9a-f-]{8,64}$ ]]
+
+          collect_occurrences() {
+            local FILTER="$1"
+            local PREFIX="$2"
+            local OUT="$3"
+            local NEXT=""
+            local PAGE_FILE=""
+            local PAGES="$RUNNER_TEMP/$PREFIX-pages.json"
+            rm -f "$RUNNER_TEMP"/"$PREFIX"-page-*.json
+            for PAGE in $(seq 1 100); do
+              printf -v PAGE_FILE '%s/%s-page-%03d.json' "$RUNNER_TEMP" "$PREFIX" "$PAGE"
+              if test -n "$NEXT"; then
+                curl --fail-with-body --silent --show-error -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  --data-urlencode "filter=$FILTER" \
+                  --data-urlencode "pageSize=1000" \
+                  --data-urlencode "pageToken=$NEXT" \
+                  "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/occurrences" > "$PAGE_FILE"
+              else
+                curl --fail-with-body --silent --show-error -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  --data-urlencode "filter=$FILTER" \
+                  --data-urlencode "pageSize=1000" \
+                  "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/occurrences" > "$PAGE_FILE"
+              fi
+              NEXT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("nextPageToken", ""))' "$PAGE_FILE")"
+              test -z "$NEXT" && break
+            done
+            test -z "$NEXT"
+            python3 -c 'import glob,json,sys; pages=[json.load(open(p)) for p in sorted(glob.glob(sys.argv[1]))]; json.dump(pages,open(sys.argv[2],"w"),separators=(",",":"))' \
+              "$RUNNER_TEMP/$PREFIX-page-*.json" "$PAGES"
+            python3 scripts/phase4_supply_chain.py merge-pages --pages-json "$PAGES" --items-key occurrences > "$OUT"
+          }
+
+          BUILD="$RUNNER_TEMP/build.json"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+            "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds/$BUILD_ID" > "$BUILD"
+
+          IDENTITY="$RUNNER_TEMP/identity.json"
+          python3 scripts/phase4_supply_chain.py build-identity --build-json "$BUILD" > "$IDENTITY"
+          SOURCE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$IDENTITY")"
+          WORKFLOW_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["workflow_sha"])' "$IDENTITY")"
+          CURRENT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          test "$CURRENT" = "$SOURCE_SHA"
+          SOURCE_TREE_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SOURCE_SHA" --jq .tree.sha)"
+          [[ "$SOURCE_TREE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          RESULT="$RUNNER_TEMP/build-result.json"
+          python3 scripts/phase4_supply_chain.py validate-build --build-json "$BUILD" --source-sha "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA" > "$RESULT"
+          IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$RESULT")"
+          RESOURCE_URL="https://$IMAGE"
+          ENCODED="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$RESOURCE_URL")"
+
+          DISC="$RUNNER_TEMP/discovery.json"
+          VULN="$RUNNER_TEMP/vulnerabilities.json"
+          DISP=""
+          for _ in $(seq 1 30); do
+            collect_occurrences "(kind=\"DISCOVERY\" AND resourceUrl=\"$RESOURCE_URL\")" discovery "$DISC"
+            collect_occurrences "(kind=\"VULNERABILITY\" AND resourceUrl=\"$RESOURCE_URL\")" vulnerability "$VULN"
+            if DISP="$(python3 scripts/phase4_supply_chain.py scan-disposition --discovery-json "$DISC" --vulnerability-json "$VULN" 2>/dev/null)"; then break; fi
+            sleep 10
+          done
+          test -n "$DISP"
+          test "$DISP" != "FAIL_CRITICAL"
+          if test "$DISP" = "HIGH_REVIEW_REQUIRED"; then
+            COMMENTS="$RUNNER_TEMP/high-comments.json"
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS"
+            python3 scripts/phase4_supply_chain.py check-high-acceptance --comments-json "$COMMENTS" --image "$IMAGE"
+            DISP=PASS
+          fi
+          test "$DISP" = "PASS"
+
+          PROV="$RUNNER_TEMP/provenance.json"
+          collect_occurrences "(kind=\"BUILD\" AND resourceUrl=\"$RESOURCE_URL\")" provenance "$PROV"
+          PROV_OCC="$(python3 scripts/phase4_supply_chain.py provenance-occurrence --occurrences-json "$PROV" --build-id "$BUILD_ID")"
+
+          EXPORT="$RUNNER_TEMP/export.json"
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data '{"cloudStorageLocation":{}}' \
+            "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/resources/$ENCODED:exportSBOM" > "$EXPORT"
+          SBOM_DISC="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("discoveryOccurrence",""))' "$EXPORT")"
+          test -n "$SBOM_DISC"
+
+          SBOM_REF_RESPONSE="$RUNNER_TEMP/sbom-ref-response.json"
+          SBOM="$RUNNER_TEMP/sbom.json"
+          rm -f "$SBOM"
+          for _ in $(seq 1 30); do
+            collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference "$SBOM_REF_RESPONSE"
+            if python3 scripts/phase4_supply_chain.py sbom-reference --occurrences-json "$SBOM_REF_RESPONSE" > "$SBOM" 2>/dev/null; then break; fi
+            rm -f "$SBOM"
+            sleep 10
+          done
+          test -s "$SBOM"
+
+          SBOM_BUCKET="$(python3 -c 'import json,sys; from urllib.parse import urlparse; p=urlparse(json.load(open(sys.argv[1]))["location"]); assert p.scheme == "gs" and p.netloc; print(p.netloc)' "$SBOM")"
+          SBOM_OBJECT="$(python3 -c 'import json,sys; from urllib.parse import urlparse; p=urlparse(json.load(open(sys.argv[1]))["location"]); value=p.path.lstrip("/"); assert value; print(value)' "$SBOM")"
+          ENCODED_SBOM_OBJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$SBOM_OBJECT")"
+          SBOM_METADATA="$RUNNER_TEMP/sbom-metadata.json"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/storage/v1/b/$SBOM_BUCKET/o/$ENCODED_SBOM_OBJECT" > "$SBOM_METADATA"
+          SBOM_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("generation", ""))' "$SBOM_METADATA")"
+          [[ "$SBOM_GENERATION" =~ ^[1-9][0-9]*$ ]]
+          SBOM_CONTENT="$RUNNER_TEMP/sbom-content"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/storage/v1/b/$SBOM_BUCKET/o/$ENCODED_SBOM_OBJECT?alt=media&generation=$SBOM_GENERATION" > "$SBOM_CONTENT"
+          BOUND_SBOM="$RUNNER_TEMP/bound-sbom.json"
+          python3 scripts/phase4_supply_chain.py bind-sbom \
+            --sbom-json "$SBOM" --metadata-json "$SBOM_METADATA" --content-file "$SBOM_CONTENT" > "$BOUND_SBOM"
+
+          MANIFEST="$RUNNER_TEMP/transition.json"
+          python3 scripts/phase4_supply_chain.py make-transition \
+            --build-result "$RESULT" --source-tree-sha "$SOURCE_TREE_SHA" \
+            --provenance-occurrence "$PROV_OCC" --sbom-json "$BOUND_SBOM" --output "$MANIFEST"
+          python3 scripts/phase4_supply_chain.py validate-transition --manifest "$MANIFEST"
+
+          OBJECT="transitions/$BUILD_ID.json"
+          ENCODED_OBJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$OBJECT")"
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary "@$MANIFEST" \
+            "https://storage.googleapis.com/upload/storage/v1/b/resilio-control-e882d4-phase4-evidence/o?uploadType=media&name=$ENCODED_OBJECT&ifGenerationMatch=0" > "$RUNNER_TEMP/upload.json"
+          printf 'evidence_object=%s\n' "$OBJECT" >> "$GITHUB_OUTPUT"
+          printf 'image=%s\n' "$IMAGE" >> "$GITHUB_OUTPUT"

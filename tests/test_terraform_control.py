@@ -19,6 +19,16 @@ class CandidateContractTests(unittest.TestCase):
         document = {"resource": {"google_service_account": {"phase3_terraform_sentinel": dict(control.SENTINEL_RESOURCE)}}}
         self.assertEqual(control.validate_candidate_document(document), document)
 
+    def test_exact_phase4_foundation_payload_is_valid(self) -> None:
+        document = json.loads(json.dumps(control.PHASE4_FOUNDATION_RESOURCE))
+        self.assertEqual(control.validate_candidate_document(document), control.PHASE4_FOUNDATION_RESOURCE)
+
+    def test_phase4_foundation_payload_cannot_be_broadened(self) -> None:
+        document = json.loads(json.dumps(control.PHASE4_FOUNDATION_RESOURCE))
+        document["resource"]["google_storage_bucket"]["unexpected"] = {"name": "unexpected"}
+        with self.assertRaisesRegex(control.ControlError, "PHASE4_FOUNDATION_CONFIGURATION_MISMATCH"):
+            control.validate_candidate_document(document)
+
     def test_duplicate_keys_fail_closed(self) -> None:
         with self.assertRaisesRegex(control.ControlError, "DUPLICATE_JSON_KEY"):
             control.load_json_strict_bytes(b'{"resource":{},"resource":{}}')
