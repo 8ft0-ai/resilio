@@ -21,6 +21,7 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(request["options"]["requestedVerifyOption"], "VERIFIED")
         self.assertEqual(request["options"]["machineType"], "E2_STANDARD_2")
         self.assertEqual(request["options"]["substitutionOption"], "MUST_MATCH")
+        self.assertEqual(request["queueTtl"], "600s")
         self.assertEqual(request["images"], [p4.image_tag(source)])
         for step in request["steps"]:
             self.assertRegex(step["name"], r"@sha256:[0-9a-f]{64}$")
@@ -61,10 +62,26 @@ class BuildContractTests(unittest.TestCase):
             ("serviceAccount", "projects/x/serviceAccounts/wide@example.iam.gserviceaccount.com"),
             ("images", ["latest"]),
             ("timeout", "3600s"),
+            ("queueTtl", "3600s"),
         ):
             build = self._build()
             build[key] = value
             with self.subTest(key=key), self.assertRaises(p4.SupplyChainError):
+                p4.validate_build(build, "a" * 40, "b" * 40)
+
+    def test_build_rejects_unapproved_behaviour_fields(self) -> None:
+        mutations = (
+            ("top-level substitutions", lambda b: b.__setitem__("substitutions", {"_X": "attacker"})),
+            ("top-level availableSecrets", lambda b: b.__setitem__("availableSecrets", {"secretManager": []})),
+            ("top-level dependencies", lambda b: b.__setitem__("dependencies", [{"gitSource": {"repository": {"url": "https://example.invalid/repo"}}}])),
+            ("options env", lambda b: b["options"].__setitem__("env", ["X=1"])),
+            ("options pool", lambda b: b["options"].__setitem__("pool", {"name": "projects/p/locations/l/workerPools/w"})),
+            ("step allowFailure", lambda b: b["steps"][0].__setitem__("allowFailure", True)),
+        )
+        for label, mutate in mutations:
+            build = self._build()
+            mutate(build)
+            with self.subTest(label=label), self.assertRaises(p4.SupplyChainError):
                 p4.validate_build(build, "a" * 40, "b" * 40)
 
     def test_reuse_is_exact_and_ambiguous_reuse_fails(self) -> None:
@@ -83,11 +100,40 @@ class BuildContractTests(unittest.TestCase):
         with self.assertRaisesRegex(p4.SupplyChainError, "VULNERABILITY_SCAN_UNAVAILABLE"):
             p4.scan_disposition({"occurrences": []}, {"occurrences": []})
 
+    def test_pagination_exhausts_later_pages_and_fails_incomplete(self) -> None:
+        discovery_pages = [
+            {"occurrences": [{"discovered": {"analysisStatus": "FINISHED_SUCCESS", "analysisCompleted": {"analysisType": ["VULNERABILITY"]}}}], "nextPageToken": "next"},
+            {"occurrences": []},
+        ]
+        vulnerability_pages = [
+            {"occurrences": [], "nextPageToken": "next"},
+            {"occurrences": [{"vulnerability": {"effectiveSeverity": "CRITICAL"}}]},
+        ]
+        discovery = p4.merge_paged_responses(discovery_pages, "occurrences")
+        vulnerabilities = p4.merge_paged_responses(vulnerability_pages, "occurrences")
+        self.assertEqual(p4.scan_disposition(discovery, vulnerabilities), "FAIL_CRITICAL")
+        with self.assertRaisesRegex(p4.SupplyChainError, "PAGINATION_INCOMPLETE"):
+            p4.merge_paged_responses([{"occurrences": [], "nextPageToken": "not-consumed"}], "occurrences")
+        with self.assertRaisesRegex(p4.SupplyChainError, "PAGINATION_UNREACHABLE"):
+            p4.merge_paged_responses([{"occurrences": [], "unreachable": ["us-central1"]}], "occurrences")
+
+    def test_high_acceptance_requires_exact_owner_identity(self) -> None:
+        image = p4.IMAGE_PREFIX + "@sha256:" + "d" * 64
+        body = f"PHASE4_HIGH_ACCEPTED image={image}"
+        non_owner = [{"body": body, "user": {"login": "someone-else", "id": p4.OWNER_ID}}]
+        with self.assertRaisesRegex(p4.SupplyChainError, "HIGH_ACCEPTANCE_OWNER_DISPOSITION_INVALID"):
+            p4.owner_high_acceptance(non_owner, image)
+        owner = [{"body": body, "user": {"login": p4.OWNER_LOGIN, "id": p4.OWNER_ID}}]
+        p4.owner_high_acceptance(owner, image)
+        with self.assertRaisesRegex(p4.SupplyChainError, "HIGH_ACCEPTANCE_OWNER_DISPOSITION_INVALID"):
+            p4.owner_high_acceptance(owner + copy.deepcopy(owner), image)
+
     def test_provider_evidence_and_runtime_readback_helpers_fail_closed(self) -> None:
         provenance = {"occurrences": [{"name": "projects/p/occurrences/x", "build": {"provenance": {"id": "build/12345678-abcd"}}}]}
         self.assertEqual(p4.provenance_occurrence(provenance, "12345678-abcd"), "projects/p/occurrences/x")
         sbom_response = {"occurrences": [{"name": "projects/p/occurrences/s", "sbomReference": {"payload": {"predicate": {"location": "gs://bucket/object", "digest": {"sha256": "e" * 64}}}}}]}
         sbom = p4.sbom_reference(sbom_response)
+        sbom = p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "object", "generation": "123"})
         image = p4.IMAGE_PREFIX + "@sha256:" + "d" * 64
         request = p4.cloud_run_service_request(image, "a" * 40)
         service = copy.deepcopy(request)
@@ -100,23 +146,41 @@ class BuildContractTests(unittest.TestCase):
         with self.assertRaisesRegex(p4.SupplyChainError, "RUN_PUBLIC_PRINCIPAL_FORBIDDEN"):
             p4.verify_cloud_run_service(service, {"bindings": [{"members": ["allUsers"]}]}, image, "a" * 40)
         self.assertEqual(sbom["sha256"], "e" * 64)
+        self.assertEqual(sbom["generation"], "123")
+
+    def test_sbom_storage_binding_requires_exact_generation(self) -> None:
+        sbom = {"occurrence": "projects/p/occurrences/s", "location": "gs://bucket/path/object", "sha256": "e" * 64}
+        bound = p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "path/object", "generation": "456"})
+        self.assertEqual(bound["generation"], "456")
+        with self.assertRaisesRegex(p4.SupplyChainError, "SBOM_STORAGE_OBJECT_MISMATCH"):
+            p4.bind_sbom_storage(sbom, {"bucket": "other", "name": "path/object", "generation": "456"})
+        with self.assertRaisesRegex(p4.SupplyChainError, "SBOM_STORAGE_GENERATION_INVALID"):
+            p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "path/object", "generation": "0"})
 
     def test_transition_must_be_digest_bound_and_passed(self) -> None:
+        source, workflow = "a" * 40, "b" * 40
         manifest = {
             "contract": "resilio-phase4-transition/v1",
             "build_id": "12345678-abcd",
-            "source_sha": "a" * 40,
-            "workflow_sha": "b" * 40,
-            "build_request_sha256": "c" * 64,
+            "source_sha": source,
+            "source_tree_sha": "f" * 40,
+            "workflow_sha": workflow,
+            "build_request_sha256": p4.build_request_digest(source, workflow),
             "image": p4.IMAGE_PREFIX + "@sha256:" + "d" * 64,
             "provenance": {"occurrence": "projects/p/occurrences/build"},
             "vulnerability": {"result": "PASS"},
-            "sbom": {"occurrence": "projects/p/occurrences/sbom", "location": "gs://bucket/object", "sha256": "e" * 64},
+            "sbom": {"occurrence": "projects/p/occurrences/sbom", "location": "gs://bucket/object", "sha256": "e" * 64, "generation": "123"},
             "adjudication": "PASS",
         }
         self.assertEqual(p4.validate_transition_manifest(manifest), manifest)
         bad = copy.deepcopy(manifest); bad["image"] = p4.IMAGE_PREFIX + ":latest"
         with self.assertRaisesRegex(p4.SupplyChainError, "TRANSITION_IMAGE_INVALID"):
+            p4.validate_transition_manifest(bad)
+        bad = copy.deepcopy(manifest); bad["build_request_sha256"] = "0" * 64
+        with self.assertRaisesRegex(p4.SupplyChainError, "TRANSITION_BUILD_REQUEST_DIGEST_MISMATCH"):
+            p4.validate_transition_manifest(bad)
+        bad = copy.deepcopy(manifest); del bad["sbom"]["generation"]
+        with self.assertRaisesRegex(p4.SupplyChainError, "TRANSITION_SBOM_INVALID"):
             p4.validate_transition_manifest(bad)
 
 

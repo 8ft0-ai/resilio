@@ -78,9 +78,30 @@ jobs:
           test "$CURRENT" = "$SOURCE_SHA"
 
           LIST="$RUNNER_TEMP/builds.json"
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $TOKEN" \
-            "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds?pageSize=100" > "$LIST"
+          PAGES="$RUNNER_TEMP/build-pages.json"
+          NEXT=""
+          rm -f "$RUNNER_TEMP"/build-page-*.json
+          for PAGE in $(seq 1 100); do
+            printf -v PAGE_FILE '%s/build-page-%03d.json' "$RUNNER_TEMP" "$PAGE"
+            if test -n "$NEXT"; then
+              curl --fail-with-body --silent --show-error -G \
+                -H "Authorization: Bearer $TOKEN" \
+                --data-urlencode "pageSize=100" \
+                --data-urlencode "pageToken=$NEXT" \
+                "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds" > "$PAGE_FILE"
+            else
+              curl --fail-with-body --silent --show-error -G \
+                -H "Authorization: Bearer $TOKEN" \
+                --data-urlencode "pageSize=100" \
+                "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds" > "$PAGE_FILE"
+            fi
+            NEXT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("nextPageToken", ""))' "$PAGE_FILE")"
+            test -z "$NEXT" && break
+          done
+          test -z "$NEXT"
+          python3 -c 'import glob,json,sys; pages=[json.load(open(p)) for p in sorted(glob.glob(sys.argv[1]))]; json.dump(pages,open(sys.argv[2],"w"),separators=(",",":"))' \
+            "$RUNNER_TEMP/build-page-*.json" "$PAGES"
+          python3 scripts/phase4_supply_chain.py merge-pages --pages-json "$PAGES" --items-key builds > "$LIST"
           EXISTING="$(python3 scripts/phase4_supply_chain.py select-build --builds-json "$LIST" --source-sha "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA")"
 
           BUILD_JSON="$RUNNER_TEMP/build.json"
