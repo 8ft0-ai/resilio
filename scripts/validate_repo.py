@@ -18,15 +18,18 @@ REQUIRED_PATHS = (
     "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "README.md", "SECURITY.md", ".gitignore", ".terraform-version",
     ".github/ISSUE_TEMPLATE/change.md", ".github/pull_request_template.md", ".github/workflows/validate.yml",
     ".github/workflows/terraform-federation-reusable.yml", ".github/workflows/terraform-plan-reusable.yml",
-    ".github/workflows/terraform-apply-reusable.yml", "docs/adr/README.md", "docs/architecture.md", "docs/cost-model.md",
-    "docs/engineering-model.md", "docs/gcp-bootstrap.md", "docs/repository-governance.md", "docs/roadmap.md",
-    "docs/security-and-private-state.md", "docs/terraform-control-model.md", "docs/vision.md",
-    "infra/bootstrap/.terraform.lock.hcl", "infra/bootstrap/main.tf", "infra/bootstrap/outputs.tf",
-    "infra/bootstrap/phase3_authority.tf", "infra/bootstrap/variables.tf", "infra/bootstrap/versions.tf",
-    "infra/foundation/.terraform.lock.hcl", "infra/foundation/backend.tf", "infra/foundation/provider.tf",
-    "infra/foundation/resources.tf.json", "infra/foundation/versions.tf", "scripts/terraform_control.py",
-    "scripts/terraform_control_core.py", "scripts/terraform_control_remote.py", "scripts/validate_terraform_control.py",
-    "tests/test_terraform_control.py",
+    ".github/workflows/terraform-apply-reusable.yml", ".github/workflows/phase4-build-reusable.yml",
+    ".github/workflows/phase4-evidence-reusable.yml", ".github/workflows/phase4-deploy-reusable.yml",
+    "docs/adr/README.md", "docs/architecture.md", "docs/cost-model.md", "docs/engineering-model.md",
+    "docs/gcp-bootstrap.md", "docs/repository-governance.md", "docs/roadmap.md", "docs/security-and-private-state.md",
+    "docs/terraform-control-model.md", "docs/vision.md", "infra/bootstrap/.terraform.lock.hcl", "infra/bootstrap/main.tf",
+    "infra/bootstrap/outputs.tf", "infra/bootstrap/phase3_authority.tf", "infra/bootstrap/variables.tf",
+    "infra/bootstrap/versions.tf", "infra/foundation/.terraform.lock.hcl", "infra/foundation/backend.tf",
+    "infra/foundation/provider.tf", "infra/foundation/resources.tf.json", "infra/foundation/versions.tf",
+    "scripts/terraform_control.py", "scripts/terraform_control_core.py", "scripts/terraform_control_remote.py",
+    "scripts/phase4_supply_chain.py", "scripts/validate_phase4_supply_chain.py", "scripts/validate_terraform_control.py",
+    "services/phase4-proof/app.py", "services/phase4-proof/test_app.py", "services/phase4-proof/Dockerfile",
+    "tests/test_phase4_supply_chain.py", "tests/test_terraform_control.py",
 )
 FORBIDDEN_TRACKED_NAMES = {".env", ".env.local", ".env.production", "application_default_credentials.json",
                            "terraform.tfstate", "terraform.tfstate.backup", "terraform.tfvars"}
@@ -112,7 +115,8 @@ def check_baseline_workflow(errors: list[str]) -> None:
     if f"hashicorp/setup-terraform@{SETUP_TERRAFORM_SHA}" not in text:
         errors.append("Terraform setup action must be pinned to the approved immutable commit")
     for command in (
-        "python3 scripts/validate_terraform_control.py", "python3 -m unittest discover -s tests -v",
+        "python3 scripts/validate_terraform_control.py", "python3 scripts/validate_phase4_supply_chain.py",
+        "python3 -m unittest discover -s tests -v", "python3 services/phase4-proof/test_app.py",
         "terraform -chdir=infra/bootstrap fmt -check -recursive",
         "terraform -chdir=infra/bootstrap init -backend=false -input=false -lockfile=readonly",
         "terraform -chdir=infra/bootstrap validate", "terraform -chdir=infra/foundation fmt -check -recursive",
