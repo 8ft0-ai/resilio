@@ -32,11 +32,17 @@ jobs:
       - name: Validate Terraform control seed
         run: python3 scripts/validate_terraform_control.py
 
+      - name: Validate Phase 4 inert control seed
+        run: python3 scripts/validate_phase4_supply_chain.py
+
       - name: Validate normal Terraform callers
         run: python3 scripts/validate_terraform_callers.py
 
-      - name: Run Terraform control unit tests
+      - name: Run repository unit tests
         run: python3 -m unittest discover -s tests -v
+
+      - name: Run Phase 4 proof-service tests
+        run: python3 services/phase4-proof/test_app.py
 
       - name: Check bootstrap Terraform formatting
         run: terraform -chdir=infra/bootstrap fmt -check -recursive
