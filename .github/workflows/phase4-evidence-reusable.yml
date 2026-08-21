@@ -157,8 +157,15 @@ jobs:
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $TOKEN" \
             "https://storage.googleapis.com/storage/v1/b/$SBOM_BUCKET/o/$ENCODED_SBOM_OBJECT" > "$SBOM_METADATA"
+          SBOM_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("generation", ""))' "$SBOM_METADATA")"
+          [[ "$SBOM_GENERATION" =~ ^[1-9][0-9]*$ ]]
+          SBOM_CONTENT="$RUNNER_TEMP/sbom-content"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/storage/v1/b/$SBOM_BUCKET/o/$ENCODED_SBOM_OBJECT?alt=media&generation=$SBOM_GENERATION" > "$SBOM_CONTENT"
           BOUND_SBOM="$RUNNER_TEMP/bound-sbom.json"
-          python3 scripts/phase4_supply_chain.py bind-sbom --sbom-json "$SBOM" --metadata-json "$SBOM_METADATA" > "$BOUND_SBOM"
+          python3 scripts/phase4_supply_chain.py bind-sbom \
+            --sbom-json "$SBOM" --metadata-json "$SBOM_METADATA" --content-file "$SBOM_CONTENT" > "$BOUND_SBOM"
 
           MANIFEST="$RUNNER_TEMP/transition.json"
           python3 scripts/phase4_supply_chain.py make-transition \

@@ -131,9 +131,10 @@ class BuildContractTests(unittest.TestCase):
     def test_provider_evidence_and_runtime_readback_helpers_fail_closed(self) -> None:
         provenance = {"occurrences": [{"name": "projects/p/occurrences/x", "build": {"provenance": {"id": "build/12345678-abcd"}}}]}
         self.assertEqual(p4.provenance_occurrence(provenance, "12345678-abcd"), "projects/p/occurrences/x")
-        sbom_response = {"occurrences": [{"name": "projects/p/occurrences/s", "sbomReference": {"payload": {"predicate": {"location": "gs://bucket/object", "digest": {"sha256": "e" * 64}}}}}]}
+        sbom_bytes = b"sbom-bytes"
+        sbom_response = {"occurrences": [{"name": "projects/p/occurrences/s", "sbomReference": {"payload": {"predicate": {"location": "gs://bucket/object", "digest": {"sha256": p4.sha256_bytes(sbom_bytes)}}}}}]}
         sbom = p4.sbom_reference(sbom_response)
-        sbom = p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "object", "generation": "123"})
+        sbom = p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "object", "generation": "123"}, sbom_bytes)
         image = p4.IMAGE_PREFIX + "@sha256:" + "d" * 64
         request = p4.cloud_run_service_request(image, "a" * 40)
         service = copy.deepcopy(request)
@@ -145,17 +146,21 @@ class BuildContractTests(unittest.TestCase):
         p4.verify_health_response({"status": "ok", "source_sha": "a" * 40}, "a" * 40)
         with self.assertRaisesRegex(p4.SupplyChainError, "RUN_PUBLIC_PRINCIPAL_FORBIDDEN"):
             p4.verify_cloud_run_service(service, {"bindings": [{"members": ["allUsers"]}]}, image, "a" * 40)
-        self.assertEqual(sbom["sha256"], "e" * 64)
+        self.assertEqual(sbom["sha256"], p4.sha256_bytes(sbom_bytes))
         self.assertEqual(sbom["generation"], "123")
 
-    def test_sbom_storage_binding_requires_exact_generation(self) -> None:
-        sbom = {"occurrence": "projects/p/occurrences/s", "location": "gs://bucket/path/object", "sha256": "e" * 64}
-        bound = p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "path/object", "generation": "456"})
+    def test_sbom_storage_binding_requires_exact_generation_and_content_digest(self) -> None:
+        content = b"sbom-bytes"
+        sbom = {"occurrence": "projects/p/occurrences/s", "location": "gs://bucket/path/object", "sha256": p4.sha256_bytes(content)}
+        metadata = {"bucket": "bucket", "name": "path/object", "generation": "456"}
+        bound = p4.bind_sbom_storage(sbom, metadata, content)
         self.assertEqual(bound["generation"], "456")
         with self.assertRaisesRegex(p4.SupplyChainError, "SBOM_STORAGE_OBJECT_MISMATCH"):
-            p4.bind_sbom_storage(sbom, {"bucket": "other", "name": "path/object", "generation": "456"})
+            p4.bind_sbom_storage(sbom, {"bucket": "other", "name": "path/object", "generation": "456"}, content)
         with self.assertRaisesRegex(p4.SupplyChainError, "SBOM_STORAGE_GENERATION_INVALID"):
-            p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "path/object", "generation": "0"})
+            p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "path/object", "generation": "0"}, content)
+        with self.assertRaisesRegex(p4.SupplyChainError, "SBOM_STORAGE_DIGEST_MISMATCH"):
+            p4.bind_sbom_storage(sbom, metadata, b"different-sbom-bytes")
 
     def test_transition_must_be_digest_bound_and_passed(self) -> None:
         source, workflow = "a" * 40, "b" * 40

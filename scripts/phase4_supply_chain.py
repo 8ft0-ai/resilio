@@ -433,16 +433,21 @@ def _parse_gs_location(location: str) -> tuple[str, str]:
     return parsed.netloc, object_name
 
 
-def bind_sbom_storage(sbom: dict[str, Any], metadata: dict[str, Any]) -> dict[str, str]:
-    if not isinstance(sbom, dict) or not isinstance(metadata, dict):
+def bind_sbom_storage(sbom: dict[str, Any], metadata: dict[str, Any], content: bytes) -> dict[str, str]:
+    if not isinstance(sbom, dict) or not isinstance(metadata, dict) or not isinstance(content, bytes):
         raise SupplyChainError("SBOM_STORAGE_METADATA_INVALID")
     location = str(sbom.get("location") or "")
     bucket, object_name = _parse_gs_location(location)
     generation = str(metadata.get("generation") or "")
+    expected_digest = str(sbom.get("sha256") or "")
     if metadata.get("bucket") != bucket or metadata.get("name") != object_name:
         raise SupplyChainError("SBOM_STORAGE_OBJECT_MISMATCH")
     if not generation.isdigit() or int(generation) <= 0:
         raise SupplyChainError("SBOM_STORAGE_GENERATION_INVALID")
+    if not SHA256_HEX.fullmatch(expected_digest):
+        raise SupplyChainError("SBOM_STORAGE_DIGEST_INVALID")
+    if sha256_bytes(content) != expected_digest:
+        raise SupplyChainError("SBOM_STORAGE_DIGEST_MISMATCH")
     bound = dict(sbom)
     bound["generation"] = generation
     return bound
@@ -636,7 +641,7 @@ def main() -> int:
     p = commands.add_parser("check-high-acceptance"); p.add_argument("--comments-json", required=True); p.add_argument("--image", required=True)
     p = commands.add_parser("provenance-occurrence"); p.add_argument("--occurrences-json", required=True); p.add_argument("--build-id", required=True)
     p = commands.add_parser("sbom-reference"); p.add_argument("--occurrences-json", required=True)
-    p = commands.add_parser("bind-sbom"); p.add_argument("--sbom-json", required=True); p.add_argument("--metadata-json", required=True)
+    p = commands.add_parser("bind-sbom"); p.add_argument("--sbom-json", required=True); p.add_argument("--metadata-json", required=True); p.add_argument("--content-file", required=True)
     p = commands.add_parser("make-transition"); p.add_argument("--build-result", required=True); p.add_argument("--source-tree-sha", required=True); p.add_argument("--provenance-occurrence", required=True); p.add_argument("--sbom-json", required=True); p.add_argument("--output", required=True)
     p = commands.add_parser("validate-transition"); p.add_argument("--manifest", required=True)
     p = commands.add_parser("service-request"); p.add_argument("--image", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--output", required=True)
@@ -666,7 +671,7 @@ def main() -> int:
         elif args.command == "sbom-reference":
             print(json.dumps(sbom_reference(_load_json(args.occurrences_json)), sort_keys=True, separators=(",", ":")))
         elif args.command == "bind-sbom":
-            print(json.dumps(bind_sbom_storage(_load_json(args.sbom_json), _load_json(args.metadata_json)), sort_keys=True, separators=(",", ":")))
+            print(json.dumps(bind_sbom_storage(_load_json(args.sbom_json), _load_json(args.metadata_json), Path(args.content_file).read_bytes()), sort_keys=True, separators=(",", ":")))
         elif args.command == "make-transition":
             result = _load_json(args.build_result)
             sbom = _load_json(args.sbom_json)
