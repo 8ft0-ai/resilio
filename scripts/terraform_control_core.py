@@ -1,4 +1,4 @@
-"Pure, credential-free Terraform control contract primitives."
+"""Pure, credential-free Terraform control contract primitives."""
 from __future__ import annotations
 
 import hashlib
@@ -139,7 +139,7 @@ PLAN_RESOURCE_CHANGE_KEYS = {
 
 
 class ControlError(RuntimeError):
-    "Fail-closed control contract violation."
+    """Fail-closed control contract violation."""
 
 
 def _reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -207,14 +207,20 @@ def validate_candidate_document(document: Any) -> dict[str, Any]:
     sentinel_only = {"resource": {"google_service_account": {"phase3_terraform_sentinel": dict(SENTINEL_RESOURCE)}}}
     if document == sentinel_only or document == PHASE4_FOUNDATION_RESOURCE:
         return document
-    # Retain precise historical sentinel error for existing negative evidence.
-    try:
-        sentinel = document["resource"]["google_service_account"]["phase3_terraform_sentinel"]
-    except (KeyError, TypeError):
-        raise ControlError("PHASE4_FOUNDATION_CONFIGURATION_MISMATCH")
-    if isinstance(sentinel, dict) and set(document) == {"resource"} and set(document["resource"]) == {"google_service_account"}:
-        if sentinel != SENTINEL_RESOURCE:
+    if set(document) != {"resource"}:
+        raise ControlError("CANDIDATE_TOP_LEVEL_FORBIDDEN")
+    resources = document["resource"]
+    if not isinstance(resources, dict):
+        raise ControlError("RESOURCE_TYPE_FORBIDDEN")
+    if set(resources) == {"google_service_account"}:
+        accounts = resources["google_service_account"]
+        if not isinstance(accounts, dict) or set(accounts) != {"phase3_terraform_sentinel"}:
+            raise ControlError("RESOURCE_NAME_FORBIDDEN")
+        sentinel = accounts["phase3_terraform_sentinel"]
+        if not isinstance(sentinel, dict) or sentinel != SENTINEL_RESOURCE:
             raise ControlError("SENTINEL_CONFIGURATION_MISMATCH")
+    if "google_service_account" not in resources:
+        raise ControlError("RESOURCE_TYPE_FORBIDDEN")
     raise ControlError("PHASE4_FOUNDATION_CONFIGURATION_MISMATCH")
 
 
@@ -320,12 +326,15 @@ def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
             raise ControlError("PLAN_DESTRUCTIVE_ACTION_FORBIDDEN")
         if historical_sentinel_create:
             if (address != SENTINEL_ADDRESS or row.get("type") != "google_service_account"
-                    or row.get("name") != "phase3_terraform_sentinel"
-                    or tuple(actions) not in SAFE_SENTINEL_ACTION_SEQUENCES):
+                    or row.get("name") != "phase3_terraform_sentinel"):
+                raise ControlError("PLAN_RESOURCE_CLASS_FORBIDDEN")
+            if tuple(actions) not in SAFE_SENTINEL_ACTION_SEQUENCES:
                 raise ControlError("PLAN_ACTION_SEQUENCE_FORBIDDEN")
         else:
             if address == SENTINEL_ADDRESS:
-                if row.get("type") != "google_service_account" or row.get("name") != "phase3_terraform_sentinel" or tuple(actions) != ("no-op",):
+                if row.get("type") != "google_service_account" or row.get("name") != "phase3_terraform_sentinel":
+                    raise ControlError("PLAN_RESOURCE_CLASS_FORBIDDEN")
+                if tuple(actions) != ("no-op",):
                     raise ControlError("PLAN_ACTION_SEQUENCE_FORBIDDEN")
             else:
                 expected = PHASE4_CREATE_ADDRESSES.get(str(address))
@@ -341,6 +350,7 @@ def material_effect(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(outputs, dict):
         raise ControlError("PLAN_OUTPUT_CHANGES_INVALID")
     normal_outputs = {name: _normalise_change(change) for name, change in sorted(outputs.items())}
+
     return {
         "format_version": plan["format_version"],
         "terraform_version": plan["terraform_version"],
