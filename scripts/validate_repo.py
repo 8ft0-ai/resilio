@@ -23,13 +23,13 @@ REQUIRED_PATHS = (
     "docs/adr/README.md", "docs/architecture.md", "docs/cost-model.md", "docs/engineering-model.md",
     "docs/gcp-bootstrap.md", "docs/repository-governance.md", "docs/roadmap.md", "docs/security-and-private-state.md",
     "docs/terraform-control-model.md", "docs/vision.md", "infra/bootstrap/.terraform.lock.hcl", "infra/bootstrap/main.tf",
-    "infra/bootstrap/outputs.tf", "infra/bootstrap/phase3_authority.tf", "infra/bootstrap/variables.tf",
-    "infra/bootstrap/versions.tf", "infra/foundation/.terraform.lock.hcl", "infra/foundation/backend.tf",
-    "infra/foundation/provider.tf", "infra/foundation/resources.tf.json", "infra/foundation/versions.tf",
-    "scripts/terraform_control.py", "scripts/terraform_control_core.py", "scripts/terraform_control_remote.py",
-    "scripts/phase4_supply_chain.py", "scripts/validate_phase4_supply_chain.py", "scripts/validate_terraform_control.py",
-    "services/phase4-proof/app.py", "services/phase4-proof/test_app.py", "services/phase4-proof/Dockerfile",
-    "tests/test_phase4_supply_chain.py", "tests/test_terraform_control.py",
+    "infra/bootstrap/outputs.tf", "infra/bootstrap/phase3_authority.tf", "infra/bootstrap/phase4_authority.tf",
+    "infra/bootstrap/variables.tf", "infra/bootstrap/versions.tf", "infra/foundation/.terraform.lock.hcl",
+    "infra/foundation/backend.tf", "infra/foundation/provider.tf", "infra/foundation/resources.tf.json",
+    "infra/foundation/versions.tf", "scripts/terraform_control.py", "scripts/terraform_control_core.py",
+    "scripts/terraform_control_remote.py", "scripts/phase4_supply_chain.py", "scripts/validate_phase4_supply_chain.py",
+    "scripts/validate_terraform_control.py", "services/phase4-proof/app.py", "services/phase4-proof/test_app.py",
+    "services/phase4-proof/Dockerfile", "tests/test_phase4_supply_chain.py", "tests/test_terraform_control.py",
 )
 FORBIDDEN_TRACKED_NAMES = {".env", ".env.local", ".env.production", "application_default_credentials.json",
                            "terraform.tfstate", "terraform.tfstate.backup", "terraform.tfvars"}
@@ -143,10 +143,14 @@ def check_terraform_contract(errors: list[str]) -> None:
         if lock_file.is_file():
             text = lock_file.read_text(encoding="utf-8")
             if f'version     = "{GOOGLE_PROVIDER_VERSION}"' not in text:
-                errors.append(f"{root_name} Terraform lock file does not select the approved Google provider")
+                errors.append(f"{root_name} Terraform lock file does not select the approved provider")
             if "h1:" not in text or "zh:" not in text:
                 errors.append(f"{root_name} Terraform lock file must contain provider integrity hashes")
-    bootstrap_files = (ROOT / "infra/bootstrap/main.tf", ROOT / "infra/bootstrap/phase3_authority.tf")
+    bootstrap_files = (
+        ROOT / "infra/bootstrap/main.tf",
+        ROOT / "infra/bootstrap/phase3_authority.tf",
+        ROOT / "infra/bootstrap/phase4_authority.tf",
+    )
     bootstrap_text = "\n".join(path.read_text(encoding="utf-8") for path in bootstrap_files if path.is_file())
     if bootstrap_text:
         lowered = bootstrap_text.lower()

@@ -13,12 +13,17 @@ BOOTSTRAP_DIR = ROOT / "infra/bootstrap"
 BACKEND = BOOTSTRAP_DIR / "backend.tf"
 BOOTSTRAP_MAIN = BOOTSTRAP_DIR / "main.tf"
 AUTHORITY = BOOTSTRAP_DIR / "phase3_authority.tf"
+PHASE4_AUTHORITY = BOOTSTRAP_DIR / "phase4_authority.tf"
 OUTPUTS = BOOTSTRAP_DIR / "outputs.tf"
 SMOKE = ROOT / ".github/workflows/federation-smoke.yml"
+FOUNDATION_PLAN = ROOT / ".github/workflows/terraform-foundation-plan.yml"
+FOUNDATION_APPLY = ROOT / ".github/workflows/terraform-foundation-apply.yml"
+FOUNDATION_DRIFT = ROOT / ".github/workflows/terraform-foundation-drift.yml"
 EVIDENCE = ROOT / "docs/gcp-bootstrap-evidence.md"
 
-CONTROL_SEED_SHA = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
-DRIFT_WORKFLOW_SHA = "2acbc425f688383375f724da7a4d80025dd9cc23"
+PHASE3_CONTROL_SEED_SHA = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
+PHASE3_DRIFT_WORKFLOW_SHA = "2acbc425f688383375f724da7a4d80025dd9cc23"
+PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -43,26 +48,23 @@ GITHUB_SUBJECT = (
 )
 PLANNER_WORKFLOW_REF = (
     "8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@"
-    + CONTROL_SEED_SHA
+    + PHASE4_CONTROL_SEED_SHA
 )
 APPLIER_WORKFLOW_REF = (
     "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@"
-    + CONTROL_SEED_SHA
+    + PHASE4_CONTROL_SEED_SHA
 )
 DRIFT_WORKFLOW_REF = (
     "8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@"
-    + DRIFT_WORKFLOW_SHA
+    + PHASE4_CONTROL_SEED_SHA
 )
 
-# These are Git blob identities for the complete reviewed bootstrap Terraform
-# configuration. Any Terraform configuration drift must therefore update this
-# validator and pass a new substantive review rather than silently widening the
-# authority envelope while retaining the same required tokens.
 EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
-    "outputs.tf": "68691c38ea5e4b34729448b43b469e42ef3f5acc",
-    "phase3_authority.tf": "4020e190ea0816d962b5b3ffe1b1e74f828aea4b",
+    "outputs.tf": "4ed8a34015b7f7c02cc3d27645143ed1891e2fdc",
+    "phase3_authority.tf": "3fd9219be57a35654a4143f0a93dcc16fbe98f0d",
+    "phase4_authority.tf": "ae61686fb147bfb390476abc354cd2fb02587504",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -101,7 +103,7 @@ EXPECTED_SMOKE = (
     "    permissions:\n"
     "      contents: read\n"
     "      id-token: write\n"
-    f"    uses: 8ft0-ai/resilio/.github/workflows/terraform-federation-reusable.yml@{CONTROL_SEED_SHA}\n"
+    f"    uses: 8ft0-ai/resilio/.github/workflows/terraform-federation-reusable.yml@{PHASE3_CONTROL_SEED_SHA}\n"
     "    with:\n"
     f"      service_account: {PROBE_SERVICE_ACCOUNT}\n"
     "      token_lifetime: 300s\n"
@@ -245,13 +247,13 @@ def check_phase3_authority(errors: list[str]) -> None:
         errors.append("WIF provider must preserve the GitHub Actions OIDC issuer")
 
     required_authority = (
-        f'phase3_control_seed_sha             = "{CONTROL_SEED_SHA}"',
-        f'phase3_drift_workflow_sha           = "{DRIFT_WORKFLOW_SHA}"',
+        f'phase3_control_seed_sha             = "{PHASE3_CONTROL_SEED_SHA}"',
+        f'phase3_drift_workflow_sha           = "{PHASE3_DRIFT_WORKFLOW_SHA}"',
         'account_id   = "github-foundation-planner"',
         'account_id   = "github-foundation-applier"',
-        '"8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase3_control_seed_sha}"',
-        '"8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@${local.phase3_control_seed_sha}"',
-        '"8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@${local.phase3_drift_workflow_sha}"',
+        '"8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase4_control_seed_sha}"',
+        '"8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@${local.phase4_control_seed_sha}"',
+        '"8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@${local.phase4_control_seed_sha}"',
         'role               = "roles/iam.workloadIdentityUser"',
         'attribute.job_workflow_ref/${local.foundation_plan_workflow_ref}',
         'attribute.job_workflow_ref/${local.foundation_apply_workflow_ref}',
@@ -332,6 +334,7 @@ def check_phase3_authority(errors: list[str]) -> None:
         "foundation_applier_service_account",
         "foundation_plan_workflow_ref",
         "foundation_apply_workflow_ref",
+        "foundation_drift_workflow_ref",
     ):
         if f'output "{output_name}"' not in outputs_text:
             errors.append(f"bootstrap outputs must expose non-sensitive Phase 3 identity: {output_name}")
@@ -348,6 +351,194 @@ def check_phase3_authority(errors: list[str]) -> None:
         errors.append("foundation drift binding must remain tied to the approved reusable workflow path")
 
 
+def check_phase4_authority(errors: list[str]) -> None:
+    text = require_file(PHASE4_AUTHORITY, errors)
+    outputs_text = require_file(OUTPUTS, errors)
+    if not text or not outputs_text:
+        return
+
+    if f'phase4_control_seed_sha = "{PHASE4_CONTROL_SEED_SHA}"' not in text:
+        errors.append("Phase 4 authority must bind to the exact reviewed Slice A merge seed")
+
+    expected_accounts = (
+        "github-p4-build",
+        "cloudbuild-p4-builder",
+        "github-p4-evidence",
+        "github-p4-deployer",
+        "p4-proof-runtime",
+        "github-p4-verifier",
+    )
+    if text.count('resource "google_service_account"') != len(expected_accounts):
+        errors.append("Phase 4 Slice B must declare exactly six delivery/runtime service accounts")
+    for account_id in expected_accounts:
+        if text.count(f'account_id   = "{account_id}"') != 1:
+            errors.append(f"Phase 4 authority must declare service account exactly once: {account_id}")
+
+    expected_roles = {
+        "phase4_foundation_control_reader": (
+            "artifactregistry.locations.get",
+            "artifactregistry.locations.list",
+            "artifactregistry.repositories.get",
+            "artifactregistry.repositories.list",
+            "resourcemanager.projects.get",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+            "storage.buckets.get",
+            "storage.buckets.list",
+        ),
+        "phase4_foundation_control_applier": (
+            "artifactregistry.locations.get",
+            "artifactregistry.locations.list",
+            "artifactregistry.repositories.create",
+            "artifactregistry.repositories.get",
+            "artifactregistry.repositories.list",
+            "artifactregistry.repositories.update",
+            "resourcemanager.projects.get",
+            "serviceusage.services.enable",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+            "storage.buckets.create",
+            "storage.buckets.get",
+            "storage.buckets.list",
+            "storage.buckets.update",
+        ),
+        "phase4_foundation_reference_reader": (
+            "resourcemanager.projects.get",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+        ),
+        "phase4_foundation_reference_applier": (
+            "resourcemanager.projects.get",
+            "serviceusage.services.enable",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+        ),
+        "phase4_build_initiator": (
+            "cloudbuild.builds.create",
+            "cloudbuild.builds.get",
+            "cloudbuild.builds.list",
+        ),
+        "phase4_builder_logging": (
+            "logging.logEntries.create",
+            "logging.logEntries.route",
+        ),
+        "phase4_builder_registry": (
+            "artifactregistry.dockerimages.get",
+            "artifactregistry.dockerimages.list",
+            "artifactregistry.files.download",
+            "artifactregistry.files.get",
+            "artifactregistry.files.list",
+            "artifactregistry.files.update",
+            "artifactregistry.files.upload",
+            "artifactregistry.packages.get",
+            "artifactregistry.packages.list",
+            "artifactregistry.packages.update",
+            "artifactregistry.repositories.downloadArtifacts",
+            "artifactregistry.repositories.get",
+            "artifactregistry.repositories.uploadArtifacts",
+            "artifactregistry.tags.create",
+            "artifactregistry.tags.get",
+            "artifactregistry.tags.list",
+            "artifactregistry.tags.update",
+            "artifactregistry.versions.get",
+            "artifactregistry.versions.list",
+        ),
+        "phase4_evidence_analysis": (
+            "cloudbuild.builds.get",
+            "containeranalysis.occurrences.list",
+        ),
+        "phase4_deployer": (
+            "run.operations.get",
+            "run.services.create",
+            "run.services.get",
+            "run.services.update",
+        ),
+        "phase4_verifier": (
+            "run.revisions.get",
+            "run.routes.invoke",
+            "run.services.get",
+            "run.services.getIamPolicy",
+        ),
+        "phase4_evidence_object_creator": ("storage.objects.create",),
+        "phase4_evidence_object_reader": ("storage.objects.get",),
+    }
+    for role_name, expected in expected_roles.items():
+        actual = custom_role_permissions(text, role_name)
+        if actual != expected:
+            errors.append(
+                f"Phase 4 custom role {role_name} permissions must exactly match {expected}; found {actual}"
+            )
+
+    required_foundation_bindings = (
+        'resource "google_project_iam_member" "foundation_planner_phase4_control"',
+        'role    = google_project_iam_custom_role.phase4_foundation_control_reader.name',
+        'member  = "serviceAccount:${google_service_account.foundation_planner.email}"',
+        'resource "google_project_iam_member" "foundation_applier_phase4_control"',
+        'role    = google_project_iam_custom_role.phase4_foundation_control_applier.name',
+        'member  = "serviceAccount:${google_service_account.foundation_applier.email}"',
+        'resource "google_project_iam_member" "foundation_planner_phase4_reference"',
+        'role    = google_project_iam_custom_role.phase4_foundation_reference_reader.name',
+        'resource "google_project_iam_member" "foundation_applier_phase4_reference"',
+        'role    = google_project_iam_custom_role.phase4_foundation_reference_applier.name',
+    )
+    for token in required_foundation_bindings:
+        if token not in text:
+            errors.append(f"Phase 4 foundation authority is missing exact bounded binding: {token}")
+    if text.count('resource "google_project_iam_member"') != 4:
+        errors.append("Phase 4 Slice B must contain exactly four project IAM bindings, all for foundation read/apply")
+
+    forbidden_activation = (
+        'resource "google_service_account_iam_member"',
+        'roles/iam.workloadIdentityUser',
+        'principalSet://iam.googleapis.com/',
+        'resource "google_artifact_registry_repository_iam_',
+        'resource "google_storage_bucket_iam_',
+        'iam.serviceAccounts.actAs',
+        'iam.serviceAccounts.getAccessToken',
+        'iam.serviceAccounts.getOpenIdToken',
+        'iam.serviceAccounts.setIamPolicy',
+        'resourcemanager.projects.setIamPolicy',
+        'artifactregistry.repositories.setIamPolicy',
+        'storage.buckets.setIamPolicy',
+        'artifactregistry.repositories.delete',
+        'storage.buckets.delete',
+        'run.services.delete',
+        'cloudbuild.builds.update',
+    )
+    for token in forbidden_activation:
+        if token in text:
+            errors.append(f"Phase 4 Slice B contains deferred or forbidden authority: {token}")
+
+    for output_name in (
+        "phase4_control_seed_sha",
+        "phase4_build_initiator_service_account",
+        "phase4_builder_service_account",
+        "phase4_evidence_service_account",
+        "phase4_deployer_service_account",
+        "phase4_runtime_service_account",
+        "phase4_verifier_service_account",
+    ):
+        if f'output "{output_name}"' not in outputs_text:
+            errors.append(f"bootstrap outputs must expose non-sensitive Phase 4 identity: {output_name}")
+
+
+def check_foundation_callers(errors: list[str]) -> None:
+    expected = {
+        FOUNDATION_PLAN: PLANNER_WORKFLOW_REF,
+        FOUNDATION_APPLY: APPLIER_WORKFLOW_REF,
+        FOUNDATION_DRIFT: DRIFT_WORKFLOW_REF,
+    }
+    for path, workflow_ref in expected.items():
+        text = require_file(path, errors)
+        if not text:
+            continue
+        if f"uses: {workflow_ref}" not in text:
+            errors.append(f"{path.relative_to(ROOT)} must call the exact Phase 4 control seed")
+        for stale_sha in (PHASE3_CONTROL_SEED_SHA, PHASE3_DRIFT_WORKFLOW_SHA):
+            if f"@{stale_sha}" in text:
+                errors.append(f"{path.relative_to(ROOT)} still references stale foundation workflow seed {stale_sha}")
+
+
 def main() -> int:
     errors: list[str] = []
     check_bootstrap_terraform_identity(errors)
@@ -355,6 +546,8 @@ def main() -> int:
     check_smoke(errors)
     check_evidence(errors)
     check_phase3_authority(errors)
+    check_phase4_authority(errors)
+    check_foundation_callers(errors)
 
     validate_workflow = ROOT / ".github/workflows/validate.yml"
     validate_text = require_file(validate_workflow, errors)

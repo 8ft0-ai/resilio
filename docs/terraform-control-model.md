@@ -8,7 +8,9 @@ Slice C declares the bootstrap-owned planner/applier authority envelope in Terra
 
 The governing Phase 3 architecture is issue #14 Gate 1 as amended and freshly approved at Gate 2. Its accepted Gate 3 plan deliberately separates immutable trusted workflow code, bootstrap-owned maximum authority, operational state initialisation and later active orchestration.
 
-Issue #28 extends the same authority/evidence pattern for Phase 4 software delivery. Its approved Gate 3 Slice A is an **inert control seed only**: it adds trusted reusable build/evidence/deploy workflow code, a tiny proof service and a closed future foundation-resource grammar, but creates no WIF binding, cloud identity, API enablement, build, registry object, SBOM or Cloud Run service merely by landing the repository change.
+Issue #28 extends the same authority/evidence pattern for Phase 4 software delivery. Phase 4 Slice A is merged at immutable commit `10e7a938046e2d2d28ffa08a470bf9dfeda40dac`; its tree is the freshly reviewed inert software-supply-chain control seed. Slice A creates no Phase 4 cloud authority merely by existing in Git.
+
+Phase 4 Slice B is the next bounded bootstrap-authority candidate. It re-pins the existing foundation planner/apply/drift trust path to the immutable Slice A seed, declares six future Phase 4 service accounts and narrow custom-role envelopes, and grants only the existing foundation planner/applier the operational read/apply envelopes required for the later Slice C resources. **Slice B does not activate the Phase 4 build/evidence/deploy/verifier identities:** it contains no Phase 4 `workloadIdentityUser` binding, no delivery-identity role grant, no Artifact Registry or evidence-bucket IAM binding, and no runtime project role. A separately reviewed owner-local bootstrap plan/apply is required after Slice B review and merge before any of its declared bootstrap state exists in Google Cloud.
 
 ## State and authority domains
 
@@ -18,7 +20,18 @@ Issue #28 extends the same authority/evidence pattern for Phase 4 software deliv
 
 The ordinary root cannot create or broaden the identity that authorises itself. Bootstrap owns distinct `github-foundation-planner` and `github-foundation-applier` identities and their maximum IAM/state authority. The existing `github-federation-probe` remains an authentication proof identity only.
 
-Phase 4 preserves that split. Bootstrap remains the future owner of the Phase 4 identities, exact reusable-workflow WIF bindings and consequential IAM/custom-role envelopes. Foundation may later own only the bounded operational prerequisites already accepted for Phase 4 after bootstrap separately grants that authority; Slice A itself activates none of it.
+Phase 4 preserves that split. Bootstrap owns the future Phase 4 principals, custom permission envelopes, exact reusable-workflow WIF trust and consequential IAM. Foundation may own only pre-authorised non-IAM operational resources. Slice B gives the foundation identities no custom-role administration, project IAM administration, service-account policy administration, token creation or service-account-key authority.
+
+The six Phase 4 identities declared by Slice B are:
+
+- `github-p4-build@resilio-control-e882d4.iam.gserviceaccount.com` — future trusted build initiator;
+- `cloudbuild-p4-builder@resilio-control-e882d4.iam.gserviceaccount.com` — future Cloud Build execution identity;
+- `github-p4-evidence@resilio-control-e882d4.iam.gserviceaccount.com` — future evidence adjudicator;
+- `github-p4-deployer@resilio-reference-e882d4.iam.gserviceaccount.com` — future exact-digest deployer;
+- `p4-proof-runtime@resilio-reference-e882d4.iam.gserviceaccount.com` — future proof-service runtime identity; and
+- `github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com` — future independent verifier.
+
+The runtime identity receives zero project roles in Slice B. The five delivery/control identities also receive no delivery-role or GitHub-WIF binding in this slice; those grants are deliberately deferred until the accepted later activation slice after the operational resources exist.
 
 ## Candidate boundary
 
@@ -26,17 +39,19 @@ Normal candidate-controlled Terraform is data, not trusted privileged code. The 
 
 Before authentication, trusted Python code parses it using duplicate-key rejection. The historical empty and exact `google_service_account.phase3_terraform_sentinel` payloads remain accepted under their closed Phase 3 contract. Phase 4 Slice A additionally defines one exact future foundation document containing the existing sentinel plus the accepted Phase 4 operational APIs, one `us-central1` Artifact Registry repository and one bounded evidence bucket. That document contains no IAM resources, role grants, service-account creation, modules, provider/backend blocks, executable helpers or interpolation. Any extra resource, changed literal, destructive action or unrecognised effect fails closed.
 
-Slice A does **not** replace the current `infra/foundation/resources.tf.json` with the Phase 4 document. The exact future payload is only a reviewed grammar/effect contract for the later separately governed foundation-resource slice.
+Slice B does **not** replace the current `infra/foundation/resources.tf.json` with the Phase 4 document. The exact future payload remains a reviewed grammar/effect contract for the later separately governed foundation-resource slice.
 
 The privileged working directory is assembled from trusted `backend.tf`, `versions.tf`, `provider.tf` and `.terraform.lock.hcl` checked out from the reusable workflow's own immutable source at `job.workflow_sha`. The exact candidate JSON is fetched by candidate SHA as data and canonicalised before it is copied into that trusted directory. A privileged Terraform workflow never executes an untrusted PR checkout, action, script, provider configuration, backend configuration or module.
 
 ## Reusable workflow trust
 
-The Phase 3 control seed contains exactly three Terraform reusable workflows: `terraform-federation-reusable.yml`, `terraform-plan-reusable.yml` and `terraform-apply-reusable.yml`; the later drift path follows the same immutable-workflow trust model. They remain `workflow_call`-only entry points. Their presence in Git creates **no cloud authority**; cloud capability exists only after a separately governed WIF/IAM binding is activated. Credential-bearing callers invoke the workflows by an immutable control-seed SHA. Each reusable job checks out security-critical repository code from `${{ job.workflow_repository }}` at `${{ job.workflow_sha }}` with persisted checkout credentials disabled.
+The Phase 3 control seed contains exactly three original Terraform reusable workflows: `terraform-federation-reusable.yml`, `terraform-plan-reusable.yml` and `terraform-apply-reusable.yml`; the later drift path follows the same immutable-workflow trust model. They remain `workflow_call`-only entry points. Their presence in Git creates **no cloud authority**; cloud capability exists only after a separately governed WIF/IAM binding is activated. Each reusable job checks out security-critical repository code from `${{ job.workflow_repository }}` at `${{ job.workflow_sha }}` with persisted checkout credentials disabled.
 
-Phase 4 Slice A adds three separate `workflow_call`-only reusable workflows: `phase4-build-reusable.yml`, `phase4-evidence-reusable.yml` and `phase4-deploy-reusable.yml`. They likewise execute reviewed helper code from their own immutable `job.workflow_sha`, use pinned third-party action identities, expose no ordinary PR/push/manual trigger and consume no long-lived repository secret. Until a later bootstrap slice creates the exact WIF bindings and later caller slices are reviewed and merged, these files are inert code with **no cloud authority**.
+Phase 4 Slice A adds three separate `workflow_call`-only reusable workflows: `phase4-build-reusable.yml`, `phase4-evidence-reusable.yml` and `phase4-deploy-reusable.yml`. They likewise execute reviewed helper code from their own immutable `job.workflow_sha`, use pinned third-party action identities, expose no ordinary PR/push/manual trigger and consume no long-lived repository secret.
 
-Slice B proved the Phase 3 binding operationally: the manual `federation-smoke.yml` on protected `main` called `terraform-federation-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04`, used the unchanged `github-federation-probe` service account and obtained the intended 300-second token without resource mutation.
+Slice B re-pins the current foundation planner, applier and drift reusable-workflow identities to the immutable Slice A merge seed `10e7a938046e2d2d28ffa08a470bf9dfeda40dac`. The three repository callers are re-pinned to that same seed. This causes future foundation operations, after the separately governed bootstrap authority update, to execute the reviewed Phase 4-aware Terraform control helper while preserving the existing candidate-data boundary.
+
+The historical manual federation smoke deliberately remains on `terraform-federation-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04`, using the unchanged `github-federation-probe` identity. Slice B does not broaden or replace that proof authority.
 
 ## Phase 4 inert software-supply-chain seed
 
@@ -58,35 +73,38 @@ The shared GitHub WIF provider continues to require the immutable Resilio `refs/
 repo:8ft0-ai@130460431/resilio@1335801159:ref:refs/heads/main
 ```
 
-Slice C desired state preserves `google.subject = assertion.sub` and adds mappings for `assertion.job_workflow_ref` and `assertion.job_workflow_sha`. It does not create a duplicate provider or broaden the provider's subject condition.
+The provider preserves `google.subject = assertion.sub` and mappings for `assertion.job_workflow_ref` and `assertion.job_workflow_sha`. Slice B does not create a duplicate provider or broaden the provider's subject condition.
 
-The existing probe binding remains unchanged in authority. Planner/applier bindings are narrower: each service account may be impersonated only through a `principalSet` whose `attribute.job_workflow_ref` equals its corresponding reusable workflow at the immutable Phase 3 control-seed SHA:
+The existing probe binding remains unchanged in authority. The current planner/applier/drift bindings remain exact reusable-workflow bindings, but Slice B changes their desired immutable workflow identity to the Slice A merge seed:
 
-- `github-foundation-planner` → `terraform-plan-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04`;
-- `github-foundation-applier` → `terraform-apply-reusable.yml@cbfe9821ec07ca6c0c869ebe75100bc500c92a04`.
+- `github-foundation-planner` → `terraform-plan-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac`;
+- `github-foundation-applier` → `terraform-apply-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac`; and
+- `github-foundation-planner` drift path → `terraform-drift-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac`.
 
 The provider-level repository/main condition still applies independently. Candidate-controlled code therefore cannot mint planner/applier authority merely by naming these identities.
 
-Phase 4 Slice A does not add build/evidence/deployer/verifier WIF bindings. Those are explicitly deferred to the later bootstrap authority slice after this inert seed has been freshly reviewed and merged to an immutable control-seed SHA.
+Slice B deliberately contains no WIF binding for `github-p4-build`, `github-p4-evidence`, `github-p4-deployer` or `github-p4-verifier`. Their exact reusable-workflow bindings are deferred to the later Phase 4 activation slice. The builder and runtime identities are provider-execution identities and are not GitHub WIF principals.
 
 ## Planner and applier resource authority
 
-The planner's reference-project custom role contains only:
+The historical planner reference-project custom role remains limited to:
 
 - `iam.serviceAccounts.get`;
 - `iam.serviceAccountKeys.list`;
 - `iam.serviceAccounts.getIamPolicy`; and
 - `resourcemanager.projects.getIamPolicy`.
 
-This is read/verification authority for the initial service-account proof only. The planner cannot mutate the sentinel or project IAM.
-
-The applier's reference-project custom role contains only:
+The historical applier reference-project custom role remains limited to:
 
 - `iam.serviceAccounts.create`;
 - `iam.serviceAccounts.get`; and
 - `iam.serviceAccounts.update`.
 
-It excludes service-account deletion, key operations, `setIamPolicy`, `actAs`, token creation and project IAM mutation. No Owner/Editor/admin role is used.
+Slice B adds separate Phase 4 operational envelopes rather than widening those historical roles. The new foundation **reader** envelopes permit only provider readback for Service Usage and, in the control project, the accepted Artifact Registry repository and Cloud Storage bucket resource classes. The new foundation **applier** envelopes add only API enablement plus create/update of the accepted Artifact Registry repository and evidence bucket classes. The reference-project Phase 4 envelope is limited to Service Usage read/enable for the future Cloud Run API.
+
+These envelopes intentionally exclude `setIamPolicy`, service-account administration, custom-role administration, artifact/bucket deletion, object-data authority, service-account impersonation/token creation, Owner/Editor and broad predefined admin roles. If the later exact provider operation cannot complete under the accepted non-IAM envelope, the operation must stop and return to the governed design rather than silently widening foundation authority.
+
+Slice B also declares narrow future role definitions for Cloud Build create/read, builder logging and registry content, evidence read/export, Cloud Run deploy, independent verification and evidence-object create/read. Declaring these custom roles is not a grant: none is bound to a Phase 4 delivery identity in Slice B.
 
 ## Foundation state and private evidence authority
 
@@ -100,7 +118,7 @@ Only the applier receives state-write authority for `foundation/default.tfstate`
 
 Private reviewed-plan evidence is separate again. The planner receives `storage.objects.create` only, conditioned to `plan-evidence/foundation/`; trusted code uses `ifGenerationMatch=0`, so an existing evidence object cannot be overwritten. The applier receives only `storage.objects.get` on that prefix. Neither identity receives bootstrap-state content access or broad Storage administrative roles.
 
-The planned Phase 4 evidence bucket is a separate operational evidence surface, not a replacement for Terraform state/effect evidence. Slice A only fixes its future literal resource shape (uniform bucket-level access, public-access prevention, versioning, bounded lifecycle, `force_destroy = false` and deletion prevention); it grants no object permissions.
+The planned Phase 4 evidence bucket is a separate operational evidence surface, not a replacement for Terraform state/effect evidence. Slice B declares only future object create/read custom-role envelopes; it does not bind them to the bucket because the bucket does not yet exist. Resource-scoped evidence IAM is deferred to the later activation slice after Slice C creates the bucket.
 
 ## Plan evidence and apply interlock
 
@@ -110,13 +128,18 @@ The private representation includes before/after semantics, unknown-value struct
 
 For apply, the trusted workflow proves current protected `main`, the merged PR and reviewed head, fetches both reviewed-head and merged-main `resources.tf.json`, and requires their canonical bytes to match. It then creates a **fresh plan from the merged-main configuration** and current remote state. The current private effect must match the reviewed private effect exactly, including state lineage/serial/object generation and every material plan field. Any mismatch is fail-closed; only the fresh saved plan generated in that same trusted job may be applied.
 
-## Slice C activation boundary
+## Bootstrap activation boundaries
 
-The repository declaration of planner/applier identities and IAM grants is not itself cloud evidence. After Slice C receives exact-candidate validation, fresh review and merge, one owner-local bootstrap operation activates the envelope because the Phase 2 control plane deliberately lacks an automation identity allowed to broaden its own authority.
+Repository declarations are not cloud evidence. Phase 3 established that bootstrap-owned identity/IAM changes require a separately governed owner-local operation because the normal operational path must not broaden its own authority.
 
-That operation must use the existing remote `bootstrap` state, produce a full reviewed-main plan, reject any effect outside the expected WIF claim mapping/service accounts/custom roles/bindings, apply without `-target`, record sanitised resulting-state evidence and prove a subsequent no-change plan. The existing federation smoke is then rerun immediately. A smoke regression stops the Phase 3 sequence before foundation state is created.
+The same rule governs Phase 4 Slice B. After exact candidate CI, a genuinely fresh substantive repository review and merge, one separately governed owner-local bootstrap plan must reconstruct the existing remote `bootstrap` state and show only:
 
-The same non-self-expansion rule governs Phase 4. Future software-delivery identities and WIF/IAM grants are bootstrap-owned and require their separately reviewed owner-local bootstrap plan/apply boundary; the ordinary foundation root cannot grant them to itself.
+- the three exact foundation reusable-workflow trust re-pins to `10e7a938046e2d2d28ffa08a470bf9dfeda40dac`;
+- the six Phase 4 service accounts;
+- the accepted custom-role definitions; and
+- the four bounded foundation planner/applier Phase 4 project-role bindings.
+
+Any project replacement, state-bucket change, budget change, federation-probe change, Phase 4 WIF activation, delivery-identity role binding, resource-specific Artifact Registry/Storage IAM or unrelated IAM effect invalidates the Slice B plan. The reviewed plan must precede the owner-local apply; apply is without `-target`, followed by a no-change bootstrap plan and regression federation smoke. Slice C cannot begin until that resulting state is reconciled.
 
 ## Initial state hand-off
 
@@ -126,7 +149,7 @@ A read-only planner must not create the first state object. A later, separately 
 
 For the initial Phase 3 proof, the strict candidate grammar is also the minimum policy surface: unknown resources and unknown cost classes cannot pass. The sentinel is classified `known-negligible/control-plane`; this does not weaken Resilio's normal US$5/month target or US$10/month engineering ceiling.
 
-Phase 4 keeps the same fail-closed principle. The future exact foundation document is a fixed known resource class rather than an open-ended Terraform surface; supply-chain build/evidence/deploy transitions likewise fail on unrecognised identities, mutable image authority or incomplete evidence. Live Phase 4 cost/pricing evidence is refreshed again before the later slices that actually enable APIs, build or deploy.
+Phase 4 keeps the same fail-closed principle. The future exact foundation document is a fixed known resource class rather than an open-ended Terraform surface; supply-chain build/evidence/deploy transitions likewise fail on unrecognised identities, mutable image authority or incomplete evidence. Slice B itself creates only identities/custom-role definitions and foundation authority envelopes when separately applied; it enables no Phase 4 service and therefore has no build, registry, scanning or Cloud Run usage cost. Live Phase 4 pricing evidence is refreshed again before the later slices that actually enable APIs, build or deploy.
 
 Later active Terraform callers use root-scoped non-cancelling, lossless queueing plus backend locking and freshness guards. Weekly/manual drift uses planner authority, never calls `apply`, and produces deduplicated evidence for governed reconciliation rather than silently overwriting unexpected state.
 
@@ -138,6 +161,10 @@ Later active Terraform callers use root-scoped non-cancelling, lossless queueing
 - no planner state/resource mutation authority beyond the exact ephemeral lock and create-only private evidence object contract;
 - no planner ability to impersonate the applier;
 - no applier authority to administer project IAM, create service-account keys or delete the protected sentinel;
+- no Phase 4 delivery identity is WIF-invokable in Slice B;
+- no Phase 4 delivery custom role is granted to a Phase 4 identity in Slice B;
+- the Phase 4 runtime identity has zero project roles in Slice B;
+- Artifact Registry/evidence-bucket resource IAM is deferred until those resources exist;
 - generated WIF credential files are ephemeral and removed;
 - private effect evidence is write-once by exact PR/head object identity;
 - stale PR, current-main, configuration, state or effect identity stops before apply;
@@ -151,6 +178,8 @@ Later active Terraform callers use root-scoped non-cancelling, lossless queueing
 
 Repository validation remains credential-free. It verifies the closed foundation contract, immutable action/workflow pins, strict candidate grammar, canonical effect logic, secret/state filename exclusions, exact bootstrap/WIF authority-envelope constraints, forbidden broad roles/permissions and Terraform formatting/init-without-backend/validation for both roots.
 
-Phase 4 Slice A extends that credential-free validation with structural checks for the three inert reusable workflows, immutable build/base-image references, absence of unauthorised triggers/secrets, the closed future foundation-resource grammar, supply-chain helper negative paths and the tiny proof-service tests.
+Phase 4 Slice A added structural checks for the three inert reusable workflows, immutable build/base-image references, absence of unauthorised triggers/secrets, the closed future foundation-resource grammar, supply-chain helper negative paths and the tiny proof-service tests.
+
+Slice B extends bootstrap validation to the exact seven-file bootstrap Terraform configuration, exact six Phase 4 service-account declarations, exact custom-role permission sets, exact four foundation Phase 4 project-role grants, the three foundation caller re-pins, and explicit absence of Phase 4 WIF activation, delivery-role grants, resource IAM, token/`actAs` permission and destructive authority.
 
 No repository validation job performs WIF authentication, live-state planning, Cloud Build execution, Artifact Registry/SBOM writes, Cloud Run deployment or any other cloud mutation.

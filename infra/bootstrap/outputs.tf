@@ -57,3 +57,43 @@ output "foundation_apply_workflow_ref" {
   value       = local.foundation_apply_workflow_ref
   description = "Exact immutable reusable-workflow identity authorised to impersonate the foundation applier."
 }
+
+output "foundation_drift_workflow_ref" {
+  value       = local.foundation_drift_workflow_ref
+  description = "Exact immutable reusable-workflow identity authorised to impersonate the foundation drift planner."
+}
+
+output "phase4_control_seed_sha" {
+  value       = local.phase4_control_seed_sha
+  description = "Immutable reviewed Phase 4 reusable-workflow/control seed."
+}
+
+output "phase4_build_initiator_service_account" {
+  value       = google_service_account.phase4_build_initiator.email
+  description = "Phase 4 build-initiation identity; no GitHub WIF binding exists in Slice B."
+}
+
+output "phase4_builder_service_account" {
+  value       = google_service_account.phase4_builder.email
+  description = "Phase 4 Cloud Build execution identity; delivery bindings are deferred."
+}
+
+output "phase4_evidence_service_account" {
+  value       = google_service_account.phase4_evidence.email
+  description = "Phase 4 evidence adjudication identity; no GitHub WIF binding exists in Slice B."
+}
+
+output "phase4_deployer_service_account" {
+  value       = google_service_account.phase4_deployer.email
+  description = "Phase 4 Cloud Run deployer identity; no GitHub WIF binding exists in Slice B."
+}
+
+output "phase4_runtime_service_account" {
+  value       = google_service_account.phase4_runtime.email
+  description = "Phase 4 proof runtime identity; it receives no project role in Slice B."
+}
+
+output "phase4_verifier_service_account" {
+  value       = google_service_account.phase4_verifier.email
+  description = "Phase 4 verifier identity; no GitHub WIF binding exists in Slice B."
+}
