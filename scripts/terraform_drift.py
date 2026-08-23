@@ -48,12 +48,13 @@ def _safe_address(value: Any) -> str:
     return value
 
 
-def _summarise_rows(rows: Any, source: str, *, ignore_exact_noop: bool) -> list[dict[str, Any]]:
+def _normalise_rows(rows: Any) -> list[dict[str, Any]]:
     if rows in (None, []):
         return []
     if not isinstance(rows, list):
         raise control.ControlError("DRIFT_RESOURCE_ROWS_INVALID")
-    findings: list[dict[str, Any]] = []
+    normalised: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
             raise control.ControlError("DRIFT_RESOURCE_ROW_INVALID")
@@ -61,6 +62,9 @@ def _summarise_rows(rows: Any, source: str, *, ignore_exact_noop: bool) -> list[
         if unknown:
             raise control.ControlError("DRIFT_RESOURCE_STRUCTURE_UNRECOGNISED:" + ",".join(sorted(unknown)))
         address = _safe_address(row.get("address"))
+        if address in seen:
+            raise control.ControlError("DRIFT_RESOURCE_ADDRESS_DUPLICATE:" + address)
+        seen.add(address)
         change = _normalise_change(row.get("change"))
         actions = list(change["actions"])
         exact_sentinel = (
@@ -75,15 +79,21 @@ def _summarise_rows(rows: Any, source: str, *, ignore_exact_noop: bool) -> list[
             and row.get("index_unknown") in (None, False)
             and row.get("deposed") in (None, "")
         )
-        if ignore_exact_noop and exact_sentinel and actions == ["no-op"]:
-            continue
-        findings.append({
-            "source": source,
+        normalised.append({
             "address": address,
             "actions": actions,
             "classification": "sentinel" if exact_sentinel else "unexpected-resource",
         })
-    return findings
+    return normalised
+
+
+def _finding(row: dict[str, Any], source: str) -> dict[str, Any]:
+    return {
+        "source": source,
+        "address": row["address"],
+        "actions": row["actions"],
+        "classification": row["classification"],
+    }
 
 
 def _validate_plan(plan: Any) -> list[dict[str, Any]]:
@@ -109,8 +119,27 @@ def _validate_plan(plan: Any) -> list[dict[str, Any]]:
     if outputs:
         raise control.ControlError("DRIFT_OUTPUT_CHANGES_FORBIDDEN")
 
-    findings = _summarise_rows(plan.get("resource_drift"), "resource_drift", ignore_exact_noop=False)
-    findings.extend(_summarise_rows(plan.get("resource_changes"), "planned_change", ignore_exact_noop=True))
+    planned = _normalise_rows(plan.get("resource_changes"))
+    planned_actions = {row["address"]: row["actions"] for row in planned}
+
+    findings = [
+        _finding(row, "planned_change")
+        for row in planned
+        if row["actions"] != ["no-op"]
+    ]
+
+    # `resource_drift` is refresh evidence about the provider's prior stored
+    # representation, while `resource_changes` is Terraform's reconciled
+    # desired-state action after refresh. Provider-computed timestamps, etags
+    # and other service metadata may legitimately appear in resource_drift
+    # even when Terraform requires no configuration change. Suppress only the
+    # exact addresses for which the same complete plan proves a no-op action.
+    # A drift address absent from the planned resource set remains fail-closed.
+    for row in _normalise_rows(plan.get("resource_drift")):
+        if planned_actions.get(row["address"]) == ["no-op"]:
+            continue
+        findings.append(_finding(row, "resource_drift"))
+
     unique = {control.canonical_json_bytes(item): item for item in findings}
     return [unique[key] for key in sorted(unique)]
 
