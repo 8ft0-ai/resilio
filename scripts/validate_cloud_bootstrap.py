@@ -82,7 +82,7 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
     "phase3_authority.tf": "3fd9219be57a35654a4143f0a93dcc16fbe98f0d",
-    "phase4_authority.tf": "943abfbee588780f10bf2b38ed3b0307ea41967e",
+    "phase4_authority.tf": "e3ee49b5ac83fb35c7a7a90adc7f43051e2ba0fc",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -393,10 +393,10 @@ def check_phase4_authority(errors: list[str]) -> None:
         return
 
     exact_locals = (
-        f'phase4_control_seed_sha = "{PHASE4_CONTROL_SEED_SHA}"',
-        'phase4_build_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_control_seed_sha}"',
-        'phase4_evidence_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_control_seed_sha}"',
-        'phase4_deploy_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@${local.phase4_control_seed_sha}"',
+        f'phase4_control_seed_sha                   = "{PHASE4_CONTROL_SEED_SHA}"',
+        'phase4_build_workflow_ref                 = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_control_seed_sha}"',
+        'phase4_evidence_workflow_ref              = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_control_seed_sha}"',
+        'phase4_deploy_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@${local.phase4_control_seed_sha}"',
         f'phase4_transition_object_resource_prefix = "{PHASE4_TRANSITION_PREFIX}"',
     )
     for token in exact_locals:
