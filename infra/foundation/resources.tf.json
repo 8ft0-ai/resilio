@@ -1,1 +1,123 @@
-{"resource":{"google_service_account":{"phase3_terraform_sentinel":{"account_id":"phase3-terraform-sentinel","deletion_policy":"PREVENT","description":"Non-privileged Resilio Phase 3 Terraform control-path sentinel.","display_name":"Phase 3 Terraform sentinel","project":"resilio-reference-e882d4"}}}}
+{
+  "resource": {
+    "google_service_account": {
+      "phase3_terraform_sentinel": {
+        "account_id": "phase3-terraform-sentinel",
+        "deletion_policy": "PREVENT",
+        "description": "Non-privileged Resilio Phase 3 Terraform control-path sentinel.",
+        "display_name": "Phase 3 Terraform sentinel",
+        "project": "resilio-reference-e882d4"
+      }
+    },
+    "google_project_service": {
+      "phase4_cloudbuild": {
+        "project": "resilio-control-e882d4",
+        "service": "cloudbuild.googleapis.com",
+        "disable_on_destroy": false
+      },
+      "phase4_artifactregistry": {
+        "project": "resilio-control-e882d4",
+        "service": "artifactregistry.googleapis.com",
+        "disable_on_destroy": false
+      },
+      "phase4_containeranalysis": {
+        "project": "resilio-control-e882d4",
+        "service": "containeranalysis.googleapis.com",
+        "disable_on_destroy": false
+      },
+      "phase4_containerscanning": {
+        "project": "resilio-control-e882d4",
+        "service": "containerscanning.googleapis.com",
+        "disable_on_destroy": false
+      },
+      "phase4_logging": {
+        "project": "resilio-control-e882d4",
+        "service": "logging.googleapis.com",
+        "disable_on_destroy": false
+      },
+      "phase4_run": {
+        "project": "resilio-reference-e882d4",
+        "service": "run.googleapis.com",
+        "disable_on_destroy": false
+      }
+    },
+    "google_artifact_registry_repository": {
+      "phase4": {
+        "project": "resilio-control-e882d4",
+        "location": "us-central1",
+        "repository_id": "resilio-phase4",
+        "description": "Resilio Phase 4 trusted supply-chain proof images.",
+        "format": "DOCKER",
+        "mode": "STANDARD_REPOSITORY",
+        "docker_config": {
+          "immutable_tags": false
+        },
+        "cleanup_policy_dry_run": false,
+        "cleanup_policies": [
+          {
+            "id": "delete-old-proof-images",
+            "action": "DELETE",
+            "condition": {
+              "tag_state": "ANY",
+              "package_name_prefixes": [
+                "phase4-proof"
+              ],
+              "older_than": "168h"
+            }
+          },
+          {
+            "id": "keep-recent-proof-images",
+            "action": "KEEP",
+            "most_recent_versions": {
+              "package_name_prefixes": [
+                "phase4-proof"
+              ],
+              "keep_count": 3
+            }
+          }
+        ],
+        "deletion_policy": "PREVENT",
+        "depends_on": [
+          "google_project_service.phase4_artifactregistry"
+        ]
+      }
+    },
+    "google_storage_bucket": {
+      "phase4_evidence": {
+        "project": "resilio-control-e882d4",
+        "name": "resilio-control-e882d4-phase4-evidence",
+        "location": "us-central1",
+        "storage_class": "STANDARD",
+        "uniform_bucket_level_access": true,
+        "public_access_prevention": "enforced",
+        "force_destroy": false,
+        "versioning": {
+          "enabled": true
+        },
+        "lifecycle_rule": [
+          {
+            "action": {
+              "type": "Delete"
+            },
+            "condition": {
+              "age": 90,
+              "with_state": "LIVE"
+            }
+          },
+          {
+            "action": {
+              "type": "Delete"
+            },
+            "condition": {
+              "age": 30,
+              "with_state": "ARCHIVED"
+            }
+          }
+        ],
+        "lifecycle": {
+          "prevent_destroy": true
+        }
+      }
+    }
+  }
+}
