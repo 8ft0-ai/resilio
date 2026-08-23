@@ -82,7 +82,7 @@ def main() -> int:
             errors.append(f"evidence reusable missing fail-closed evidence control: {token}")
 
     deploy = (ROOT / ".github/workflows/phase4-deploy-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reusable.yml").is_file() else ""
-    for forbidden in ("setIamPolicy", "allUsers", "allAuthenticatedUsers", "docker build", "cloudbuild.googleapis.com"):
+    for forbidden in ("setIamPolicy", "invokerIamDisabled", "allUsers", "allAuthenticatedUsers", "docker build", "cloudbuild.googleapis.com"):
         if forbidden == "allUsers" or forbidden == "allAuthenticatedUsers":
             # The verifier must explicitly reject these strings, so their presence is required.
             continue

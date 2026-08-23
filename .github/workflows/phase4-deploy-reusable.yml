@@ -70,7 +70,7 @@ jobs:
           curl --fail-with-body --silent --show-error -X PATCH \
             -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
             --data-binary "@$BODY" \
-            "https://run.googleapis.com/v2/$SERVICE?allowMissing=true&updateMask=template,ingress,invokerIamDisabled" > "$OP"
+            "https://run.googleapis.com/v2/$SERVICE?allowMissing=true&updateMask=template,ingress" > "$OP"
           OP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$OP")"
           for _ in $(seq 1 60); do
             curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
