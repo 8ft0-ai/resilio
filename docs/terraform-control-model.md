@@ -14,7 +14,7 @@ Phase 4 Slice B is merged and reconciled. It re-pinned the existing foundation p
 
 Phase 4 Slice C is also complete. Protected `main` at `b680cd045b336da05c7d36aefae151b624f69995` contains the reviewed operational foundation configuration; the trusted protected-main apply created only the accepted Phase 4 APIs, Artifact Registry repository `resilio-phase4` and evidence bucket `resilio-control-e882d4-phase4-evidence`, then an immediate trusted plan proved no change.
 
-Phase 4 Slice D is the bounded authority-activation change. Its Git candidate adds only the accepted delivery-role bindings, exact reusable-workflow WIF bindings and resource-scoped Artifact Registry/evidence-bucket access required by the already-reviewed Slice A workflows. **A merged Slice D declaration is still not cloud evidence or authority by itself.** Before live activation, the exact candidate and one owner-local bootstrap plan require fresh substantive review; only the reviewed plan may then be applied, followed by a full no-change plan and regression federation/foundation checks. Slice E must not begin until that resulting state is reconciled.
+Phase 4 Slice D is the bounded authority-activation change. Its Git candidate adds only the accepted delivery-role bindings, exact reusable-workflow WIF bindings and resource-scoped Artifact Registry/evidence-bucket access required by the reviewed Phase 4 trusted workflows. **A merged Slice D declaration is still not cloud evidence or authority by itself.** Before live activation, the exact candidate and one owner-local bootstrap plan require fresh substantive review; only the reviewed plan may then be applied, followed by a full no-change plan and regression federation/foundation checks. Slice E must not begin until that resulting state is reconciled.
 
 ## State and authority domains
 
@@ -65,7 +65,7 @@ The build contract is source- and control-bound. It accepts an exact 40-characte
 
 The evidence contract is deliberately separate from build and deployment authority. It validates the exact successful build/source/resulting digest, requires completed vulnerability analysis, treats CRITICAL findings as failure and HIGH findings as a separate reviewed disposition, requires an exact-digest native SBOM reference, and constructs a compact transition manifest only when the accepted evidence set is complete. Evidence retry is not rebuild authority.
 
-The deployment contract accepts only a previously adjudicated PASS transition manifest. It derives the exact `@sha256:` image itself, fixes the reference project/region/service/runtime identity and scale bounds, and never builds or pushes an image. Independent readback rejects public principals, verifies the service/revision image digest and runtime posture, and treats the application health response as supplemental evidence rather than proof of the serving digest.
+The deployment contract accepts only a previously adjudicated PASS transition manifest. It derives the exact `@sha256:` image itself, fixes the reference project/region/service/runtime identity and scale bounds, and never builds or pushes an image. The deploy request updates only the service template and ingress; it does not write `invokerIamDisabled` or mutate Cloud Run IAM. The provider-default enforced Invoker IAM check is therefore preserved, while independent readback rejects `invokerIamDisabled=true` or public principals, verifies the service/revision image digest and runtime posture, and treats the application health response as supplemental evidence rather than proof of the serving digest.
 
 The proof service itself is deliberately trivial Python standard-library HTTP code with no application dependency or secret. `/healthz` exposes only non-sensitive health/source metadata supplied through the deployment contract. This remains Phase 4 proof infrastructure and does not introduce Phase 5 product semantics.
 
@@ -89,8 +89,8 @@ Slice D declares exactly four additional GitHub WIF bindings, each still subject
 
 - `github-p4-build` → `phase4-build-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac`;
 - `github-p4-evidence` → `phase4-evidence-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac`;
-- `github-p4-deployer` → `phase4-deploy-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac`; and
-- `github-p4-verifier` → that same immutable deploy reusable workflow, where verification is a separate job and identity.
+- `github-p4-deployer` → `phase4-deploy-reusable.yml@c70afa19c487f6f8d18720028db8e6379fbeed44`; and
+- `github-p4-verifier` → that same corrected immutable deploy reusable workflow, where verification is a separate job and identity.
 
 The builder and runtime identities are provider-execution identities and are not GitHub WIF principals. A caller cannot gain delivery authority by merely naming one of the service accounts; the WIF `principalSet` also requires the exact immutable `job_workflow_ref`.
 
@@ -164,7 +164,7 @@ For Slice D, after exact candidate CI and merge sequencing required by the gover
 - no changes to the two projects, billing budget, state bucket, WIF pool/provider condition, federation probe, foundation state/effect authority or existing service-account identities;
 - the existing narrow custom-role definitions remain permission-identical;
 - five delivery/control identities receive only their accepted project-scoped custom roles while the runtime identity receives zero project role;
-- exactly four Phase 4 WIF `workloadIdentityUser` bindings to the immutable Slice A reusable workflows;
+- exactly four Phase 4 WIF `workloadIdentityUser` bindings: build/evidence to the immutable Slice A seed and deployer/verifier to corrected deploy seed `c70afa19c487f6f8d18720028db8e6379fbeed44`;
 - `roles/iam.serviceAccountUser` only from build initiator to builder and from deployer to runtime;
 - exactly four Artifact Registry repository-local bindings: builder content role, evidence reader, deployer reader and the reference-project Cloud Run service-agent reader;
 - exactly three evidence-bucket bindings, all conditionally restricted to `transitions/`: evidence create/read and deployer read; and
@@ -201,6 +201,7 @@ Active Terraform callers use root-scoped non-cancelling, lossless queueing plus 
 - private Terraform effect evidence is write-once by exact PR/head object identity;
 - stale PR, current-main, configuration, state or effect identity stops before apply;
 - Phase 4 build/evidence/deploy capabilities remain distinct and exact-digest bound;
+- the deploy request does not write `invokerIamDisabled` or call `setIamPolicy`; independent readback rejects a disabled Invoker IAM check or public principals;
 - mutable tags are never deployment authority;
 - missing/malformed provenance, vulnerability or SBOM evidence is not a PASS;
 - public unauthenticated Cloud Run principals are forbidden by the proof contract;
@@ -214,6 +215,6 @@ Phase 4 Slice A added structural checks for the three inert reusable workflows, 
 
 Slice B extended bootstrap validation to the exact seven-file bootstrap Terraform configuration, exact six Phase 4 service-account declarations, exact custom-role permission sets, exact four foundation Phase 4 project-role grants and the three foundation caller re-pins while explicitly forbidding delivery activation.
 
-Slice D advances that closed bootstrap grammar rather than opening it. Validation pins the exact modified Terraform blobs and requires exactly nine Phase 4 project IAM bindings, four immutable-workflow WIF bindings, two narrowly scoped service-account-user bindings, four repository-local Artifact Registry bindings and three transition-prefix evidence-bucket bindings. It also proves the runtime has no project role and rejects broad predefined roles, destructive permissions, token/key administration and any unrecognised authority expansion.
+Slice D advances that closed bootstrap grammar rather than opening it. Validation pins the exact modified Terraform blobs and requires exactly nine Phase 4 project IAM bindings, four immutable-workflow WIF bindings, two narrowly scoped service-account-user bindings, four repository-local Artifact Registry bindings and three transition-prefix evidence-bucket bindings. It also proves the runtime has no project role, rejects broad predefined roles, destructive permissions, token/key administration and any unrecognised authority expansion, and rejects any deploy-workflow attempt to write `invokerIamDisabled`.
 
 No repository validation job performs WIF authentication, live-state planning, Cloud Build execution, Artifact Registry/SBOM writes, Cloud Run deployment or any other cloud mutation.
