@@ -83,7 +83,7 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
     "phase3_authority.tf": "3fd9219be57a35654a4143f0a93dcc16fbe98f0d",
-    "phase4_authority.tf": "0035fb59d8f1ac0d426af99489c7d7023f6bc2b4",
+    "phase4_authority.tf": "f6edf6edb995f34a7873a844957f6fd5ede4febb",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
