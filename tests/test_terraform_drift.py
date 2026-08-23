@@ -63,6 +63,16 @@ class DriftManifestTests(unittest.TestCase):
             },
         }
 
+    def _resource_row(self, address: str, resource_type: str, name: str,
+                      actions: list[str], *, after: dict | None = None) -> dict:
+        row = self._sentinel_row(actions, after=after)
+        row.update({
+            "address": address,
+            "type": resource_type,
+            "name": name,
+        })
+        return row
+
     def test_empty_root_no_drift_is_sanitised(self) -> None:
         manifest = self._manifest()
         self.assertEqual(manifest["status"], "NO_DRIFT")
@@ -78,6 +88,20 @@ class DriftManifestTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "NO_DRIFT")
         self.assertNotIn("secret@example.invalid", json.dumps(manifest, sort_keys=True))
 
+    def test_expected_non_sentinel_noop_is_not_drift(self) -> None:
+        plan = json.loads(json.dumps(self.plan))
+        plan["resource_changes"] = [self._resource_row(
+            "google_storage_bucket.phase4_evidence",
+            "google_storage_bucket",
+            "phase4_evidence",
+            ["no-op"],
+            after={"name": "secret-bucket-value"},
+        )]
+        manifest = self._manifest(plan)
+        self.assertEqual(manifest["status"], "NO_DRIFT")
+        self.assertEqual(manifest["findings"], [])
+        self.assertNotIn("secret-bucket-value", json.dumps(manifest, sort_keys=True))
+
     def test_planned_sentinel_change_is_drift_without_values(self) -> None:
         plan = json.loads(json.dumps(self.plan))
         plan["applyable"] = True
@@ -92,29 +116,79 @@ class DriftManifestTests(unittest.TestCase):
         }])
         self.assertNotIn("sensitive-value", json.dumps(manifest, sort_keys=True))
 
-    def test_resource_drift_is_reported_even_with_noop_plan(self) -> None:
+    def test_refresh_observation_with_noop_plan_is_not_actionable_drift(self) -> None:
         plan = json.loads(json.dumps(self.plan))
-        plan["resource_drift"] = [self._sentinel_row(["update"], after={"display_name": "changed-live"})]
-        plan["resource_changes"] = [self._sentinel_row(["no-op"])]
+        plan["resource_drift"] = [self._resource_row(
+            "google_artifact_registry_repository.phase4",
+            "google_artifact_registry_repository",
+            "phase4",
+            ["update"],
+            after={"update_time": "secret-provider-metadata"},
+        )]
+        plan["resource_changes"] = [self._resource_row(
+            "google_artifact_registry_repository.phase4",
+            "google_artifact_registry_repository",
+            "phase4",
+            ["no-op"],
+        )]
+        manifest = self._manifest(plan)
+        self.assertEqual(manifest["status"], "NO_DRIFT")
+        self.assertEqual(manifest["findings"], [])
+        self.assertNotIn("secret-provider-metadata", json.dumps(manifest, sort_keys=True))
+
+    def test_resource_drift_without_planned_row_remains_drift(self) -> None:
+        plan = json.loads(json.dumps(self.plan))
+        plan["resource_drift"] = [self._resource_row(
+            "google_storage_bucket.unexpected",
+            "google_storage_bucket",
+            "unexpected",
+            ["update"],
+            after={"updated": "secret-provider-metadata"},
+        )]
         manifest = self._manifest(plan)
         self.assertEqual(manifest["status"], "DRIFT")
-        self.assertEqual(manifest["findings"][0]["source"], "resource_drift")
+        self.assertEqual(manifest["findings"], [{
+            "source": "resource_drift",
+            "address": "google_storage_bucket.unexpected",
+            "actions": ["update"],
+            "classification": "unexpected-resource",
+        }])
+        self.assertNotIn("secret-provider-metadata", json.dumps(manifest, sort_keys=True))
+
+    def test_resource_drift_with_planned_update_remains_drift(self) -> None:
+        plan = json.loads(json.dumps(self.plan))
+        plan["applyable"] = True
+        plan["resource_drift"] = [self._sentinel_row(["update"], after={"display_name": "changed-live"})]
+        plan["resource_changes"] = [self._sentinel_row(["update"], after={"display_name": "changed-live"})]
+        manifest = self._manifest(plan)
+        self.assertEqual(manifest["status"], "DRIFT")
+        self.assertEqual({finding["source"] for finding in manifest["findings"]}, {"resource_drift", "planned_change"})
         self.assertNotIn("changed-live", json.dumps(manifest, sort_keys=True))
 
     def test_unexpected_resource_is_classified_without_attributes(self) -> None:
         plan = json.loads(json.dumps(self.plan))
         plan["applyable"] = True
-        row = self._sentinel_row(["delete"], after={"secret": "do-not-publish"})
-        row.update({
-            "address": "google_storage_bucket.unexpected",
-            "type": "google_storage_bucket",
-            "name": "unexpected",
-        })
+        row = self._resource_row(
+            "google_storage_bucket.unexpected",
+            "google_storage_bucket",
+            "unexpected",
+            ["delete"],
+            after={"secret": "do-not-publish"},
+        )
         plan["resource_changes"] = [row]
         manifest = self._manifest(plan)
         self.assertEqual(manifest["status"], "DRIFT")
         self.assertEqual(manifest["findings"][0]["classification"], "unexpected-resource")
         self.assertNotIn("do-not-publish", json.dumps(manifest, sort_keys=True))
+
+    def test_duplicate_resource_address_fails_closed(self) -> None:
+        plan = json.loads(json.dumps(self.plan))
+        plan["resource_changes"] = [
+            self._sentinel_row(["no-op"]),
+            self._sentinel_row(["no-op"]),
+        ]
+        with self.assertRaisesRegex(control.ControlError, "DRIFT_RESOURCE_ADDRESS_DUPLICATE"):
+            self._manifest(plan)
 
     def test_fingerprint_is_stable_across_state_generation(self) -> None:
         plan = json.loads(json.dumps(self.plan))
