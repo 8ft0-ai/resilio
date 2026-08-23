@@ -68,32 +68,47 @@ output "phase4_control_seed_sha" {
   description = "Immutable reviewed Phase 4 reusable-workflow/control seed."
 }
 
+output "phase4_build_workflow_ref" {
+  value       = local.phase4_build_workflow_ref
+  description = "Exact immutable Phase 4 reusable build-workflow identity authorised for the build initiator."
+}
+
+output "phase4_evidence_workflow_ref" {
+  value       = local.phase4_evidence_workflow_ref
+  description = "Exact immutable Phase 4 reusable evidence-workflow identity authorised for the evidence adjudicator."
+}
+
+output "phase4_deploy_workflow_ref" {
+  value       = local.phase4_deploy_workflow_ref
+  description = "Exact immutable Phase 4 reusable deploy-workflow identity authorised for deployer and verifier federation."
+}
+
 output "phase4_build_initiator_service_account" {
   value       = google_service_account.phase4_build_initiator.email
-  description = "Phase 4 build-initiation identity; no GitHub WIF binding exists in Slice B."
+  description = "Phase 4 build-initiation identity bound only to the immutable trusted build workflow."
 }
 
 output "phase4_builder_service_account" {
   value       = google_service_account.phase4_builder.email
-  description = "Phase 4 Cloud Build execution identity; delivery bindings are deferred."
+  description = "Phase 4 Cloud Build execution identity with bounded logging and repository-content authority."
 }
 
 output "phase4_evidence_service_account" {
   value       = google_service_account.phase4_evidence.email
-  description = "Phase 4 evidence adjudication identity; no GitHub WIF binding exists in Slice B."
+  description = "Phase 4 evidence adjudication identity bound only to the immutable trusted evidence workflow."
 }
 
 output "phase4_deployer_service_account" {
   value       = google_service_account.phase4_deployer.email
-  description = "Phase 4 Cloud Run deployer identity; no GitHub WIF binding exists in Slice B."
+  description = "Phase 4 exact-digest Cloud Run deployer bound only to the immutable trusted deploy workflow."
 }
 
 output "phase4_runtime_service_account" {
   value       = google_service_account.phase4_runtime.email
-  description = "Phase 4 proof runtime identity; it receives no project role in Slice B."
+  description = "Phase 4 proof runtime identity with no project role."
 }
 
 output "phase4_verifier_service_account" {
   value       = google_service_account.phase4_verifier.email
-  description = "Phase 4 verifier identity; no GitHub WIF binding exists in Slice B."
+  description = "Phase 4 independent verifier bound only to the immutable trusted deploy workflow."
 }

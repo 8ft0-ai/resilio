@@ -1,5 +1,9 @@
 locals {
-  phase4_control_seed_sha = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
+  phase4_control_seed_sha                  = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
+  phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_control_seed_sha}"
+  phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_control_seed_sha}"
+  phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@c70afa19c487f6f8d18720028db8e6379fbeed44"
+  phase4_transition_object_resource_prefix = "projects/_/buckets/resilio-control-e882d4-phase4-evidence/objects/transitions/"
 }
 
 resource "google_service_account" "phase4_build_initiator" {
@@ -258,4 +262,154 @@ resource "google_project_iam_member" "foundation_applier_phase4_reference" {
   project = google_project.reference.project_id
   role    = google_project_iam_custom_role.phase4_foundation_reference_applier.name
   member  = "serviceAccount:${google_service_account.foundation_applier.email}"
+}
+
+resource "google_project_iam_member" "phase4_build_initiator" {
+  project = google_project.control.project_id
+  role    = google_project_iam_custom_role.phase4_build_initiator.name
+  member  = "serviceAccount:${google_service_account.phase4_build_initiator.email}"
+}
+
+resource "google_project_iam_member" "phase4_builder_logging" {
+  project = google_project.control.project_id
+  role    = google_project_iam_custom_role.phase4_builder_logging.name
+  member  = "serviceAccount:${google_service_account.phase4_builder.email}"
+}
+
+resource "google_project_iam_member" "phase4_evidence_analysis" {
+  project = google_project.control.project_id
+  role    = google_project_iam_custom_role.phase4_evidence_analysis.name
+  member  = "serviceAccount:${google_service_account.phase4_evidence.email}"
+}
+
+resource "google_project_iam_member" "phase4_deployer" {
+  project = google_project.reference.project_id
+  role    = google_project_iam_custom_role.phase4_deployer.name
+  member  = "serviceAccount:${google_service_account.phase4_deployer.email}"
+}
+
+resource "google_project_iam_member" "phase4_verifier" {
+  project = google_project.reference.project_id
+  role    = google_project_iam_custom_role.phase4_verifier.name
+  member  = "serviceAccount:${google_service_account.phase4_verifier.email}"
+}
+
+resource "google_service_account_iam_member" "github_phase4_build" {
+  service_account_id = google_service_account.phase4_build_initiator.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_build_workflow_ref}"
+
+  depends_on = [
+    google_iam_workload_identity_pool_provider.github,
+  ]
+}
+
+resource "google_service_account_iam_member" "github_phase4_evidence" {
+  service_account_id = google_service_account.phase4_evidence.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_evidence_workflow_ref}"
+
+  depends_on = [
+    google_iam_workload_identity_pool_provider.github,
+  ]
+}
+
+resource "google_service_account_iam_member" "github_phase4_deployer" {
+  service_account_id = google_service_account.phase4_deployer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}"
+
+  depends_on = [
+    google_iam_workload_identity_pool_provider.github,
+  ]
+}
+
+resource "google_service_account_iam_member" "github_phase4_verifier" {
+  service_account_id = google_service_account.phase4_verifier.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}"
+
+  depends_on = [
+    google_iam_workload_identity_pool_provider.github,
+  ]
+}
+
+resource "google_service_account_iam_member" "phase4_build_act_as_builder" {
+  service_account_id = google_service_account.phase4_builder.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.phase4_build_initiator.email}"
+}
+
+resource "google_service_account_iam_member" "phase4_deployer_act_as_runtime" {
+  service_account_id = google_service_account.phase4_runtime.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.phase4_deployer.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "phase4_builder_registry" {
+  project    = "resilio-control-e882d4"
+  location   = "us-central1"
+  repository = "resilio-phase4"
+  role       = google_project_iam_custom_role.phase4_builder_registry.name
+  member     = "serviceAccount:${google_service_account.phase4_builder.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "phase4_evidence_reader" {
+  project    = "resilio-control-e882d4"
+  location   = "us-central1"
+  repository = "resilio-phase4"
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.phase4_evidence.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "phase4_deployer_reader" {
+  project    = "resilio-control-e882d4"
+  location   = "us-central1"
+  repository = "resilio-phase4"
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.phase4_deployer.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "phase4_cloud_run_service_agent_reader" {
+  project    = "resilio-control-e882d4"
+  location   = "us-central1"
+  repository = "resilio-phase4"
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:service-144158187163@serverless-robot-prod.iam.gserviceaccount.com"
+}
+
+resource "google_storage_bucket_iam_member" "phase4_evidence_creator" {
+  bucket = "resilio-control-e882d4-phase4-evidence"
+  role   = google_project_iam_custom_role.phase4_evidence_object_creator.name
+  member = "serviceAccount:${google_service_account.phase4_evidence.email}"
+
+  condition {
+    title       = "phase4-transition-create"
+    description = "Create only immutable Phase 4 transition evidence objects."
+    expression  = "resource.name.startsWith(\"${local.phase4_transition_object_resource_prefix}\")"
+  }
+}
+
+resource "google_storage_bucket_iam_member" "phase4_evidence_reader" {
+  bucket = "resilio-control-e882d4-phase4-evidence"
+  role   = google_project_iam_custom_role.phase4_evidence_object_reader.name
+  member = "serviceAccount:${google_service_account.phase4_evidence.email}"
+
+  condition {
+    title       = "phase4-transition-read"
+    description = "Read only immutable Phase 4 transition evidence objects."
+    expression  = "resource.name.startsWith(\"${local.phase4_transition_object_resource_prefix}\")"
+  }
+}
+
+resource "google_storage_bucket_iam_member" "phase4_deployer_evidence_reader" {
+  bucket = "resilio-control-e882d4-phase4-evidence"
+  role   = google_project_iam_custom_role.phase4_evidence_object_reader.name
+  member = "serviceAccount:${google_service_account.phase4_deployer.email}"
+
+  condition {
+    title       = "phase4-transition-read"
+    description = "Read only immutable Phase 4 transition evidence objects."
+    expression  = "resource.name.startsWith(\"${local.phase4_transition_object_resource_prefix}\")"
+  }
 }

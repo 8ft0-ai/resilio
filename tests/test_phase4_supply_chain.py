@@ -137,6 +137,7 @@ class BuildContractTests(unittest.TestCase):
         sbom = p4.bind_sbom_storage(sbom, {"bucket": "bucket", "name": "object", "generation": "123"}, sbom_bytes)
         image = p4.IMAGE_PREFIX + "@sha256:" + "d" * 64
         request = p4.cloud_run_service_request(image, "a" * 40)
+        self.assertNotIn("invokerIamDisabled", request)
         service = copy.deepcopy(request)
         service["latestReadyRevision"] = "projects/p/locations/l/services/s/revisions/r"
         service["uri"] = "https://example.run.app"
@@ -144,6 +145,10 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(readback["uri"], "https://example.run.app")
         p4.verify_cloud_run_revision({"containers": [{"image": image}]}, image)
         p4.verify_health_response({"status": "ok", "source_sha": "a" * 40}, "a" * 40)
+        disabled = copy.deepcopy(service)
+        disabled["invokerIamDisabled"] = True
+        with self.assertRaisesRegex(p4.SupplyChainError, "RUN_ACCESS_POSTURE_MISMATCH"):
+            p4.verify_cloud_run_service(disabled, {"bindings": []}, image, "a" * 40)
         with self.assertRaisesRegex(p4.SupplyChainError, "RUN_PUBLIC_PRINCIPAL_FORBIDDEN"):
             p4.verify_cloud_run_service(service, {"bindings": [{"members": ["allUsers"]}]}, image, "a" * 40)
         self.assertEqual(sbom["sha256"], p4.sha256_bytes(sbom_bytes))

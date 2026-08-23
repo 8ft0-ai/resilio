@@ -553,7 +553,6 @@ def cloud_run_service_request(image: str, source_sha: str) -> dict[str, Any]:
     return {
         "name": f"projects/{REFERENCE_PROJECT}/locations/{REGION}/services/{CLOUD_RUN_SERVICE}",
         "ingress": "INGRESS_TRAFFIC_ALL",
-        "invokerIamDisabled": False,
         "template": {
             "serviceAccount": RUNTIME,
             "timeout": "10s",
