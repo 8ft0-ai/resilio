@@ -48,6 +48,36 @@ def workflow_events(text: str) -> list[str]:
     return events
 
 
+def indented_block(text: str, header: str, indent: int) -> str | None:
+    lines = text.splitlines()
+    target = " " * indent + header + ":"
+    matches = [index for index, line in enumerate(lines) if line == target]
+    if len(matches) != 1:
+        return None
+    start = matches[0]
+    block = [lines[start]]
+    for line in lines[start + 1:]:
+        if line.strip():
+            current_indent = len(line) - len(line.lstrip(" "))
+            if current_indent <= indent:
+                break
+        block.append(line)
+    return "\n".join(block)
+
+
+def direct_mapping_keys(block: str | None, indent: int) -> list[str] | None:
+    if block is None:
+        return None
+    keys: list[str] = []
+    for line in block.splitlines()[1:]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        current_indent = len(line) - len(line.lstrip(" "))
+        if current_indent == indent + 2 and ":" in line:
+            keys.append(line.strip().split(":", 1)[0])
+    return keys
+
+
 def main() -> int:
     errors: list[str] = []
     for relative in REQUIRED:
@@ -112,9 +142,32 @@ def main() -> int:
     )
     if expected_evidence_use not in evidence_caller:
         errors.append("Phase 4 evidence caller must pin the reviewed immutable evidence reusable workflow")
-    if evidence_caller.count("\n      build_id:\n") != 1:
+
+    dispatch_block = indented_block(evidence_caller, "workflow_dispatch", 2)
+    if direct_mapping_keys(dispatch_block, 2) != ["inputs"]:
+        errors.append("Phase 4 evidence caller workflow_dispatch must expose only the inputs mapping")
+    inputs_block = indented_block(dispatch_block or "", "inputs", 4)
+    if direct_mapping_keys(inputs_block, 4) != ["build_id"]:
         errors.append("Phase 4 evidence caller must expose exactly one build_id input")
-    if "build_id: ${{ inputs.build_id }}" not in evidence_caller:
+    build_id_block = indented_block(inputs_block or "", "build_id", 6)
+    build_id_properties = direct_mapping_keys(build_id_block, 6)
+    if (
+        build_id_properties is None
+        or build_id_properties.count("required") != 1
+        or build_id_properties.count("type") != 1
+        or build_id_properties.count("description") > 1
+        or any(key not in {"description", "required", "type"} for key in build_id_properties)
+    ):
+        errors.append("Phase 4 evidence build_id input may contain only description, required and type properties")
+    if build_id_block is None or "        required: true" not in build_id_block.splitlines():
+        errors.append("Phase 4 evidence build_id input must remain required")
+    if build_id_block is None or "        type: string" not in build_id_block.splitlines():
+        errors.append("Phase 4 evidence build_id input must remain a string")
+
+    with_block = indented_block(evidence_caller, "with", 4)
+    if direct_mapping_keys(with_block, 4) != ["build_id"]:
+        errors.append("Phase 4 evidence reusable call must pass only build_id")
+    if with_block is None or "      build_id: ${{ inputs.build_id }}" not in with_block.splitlines():
         errors.append("Phase 4 evidence caller must pass only the selected existing Build ID")
     for forbidden in ("image_digest:", "source_sha:", "service_account:", "cloudbuild.googleapis.com", "phase4-build-reusable.yml"):
         if forbidden in evidence_caller:
