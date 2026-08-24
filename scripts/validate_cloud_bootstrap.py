@@ -83,7 +83,7 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
-    "phase3_authority.tf": "6df3f8d2f7375503c8af30fab63f48dc783c5486",
+    "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
     "phase4_authority.tf": "f6edf6edb995f34a7873a844957f6fd5ede4febb",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
@@ -284,9 +284,9 @@ def check_phase3_authority(errors: list[str]) -> None:
         errors.append("WIF provider must preserve the GitHub Actions OIDC issuer")
 
     required_authority = (
-        f'phase3_control_seed_sha               = "{PHASE3_CONTROL_SEED_SHA}"',
-        f'phase3_drift_workflow_sha             = "{PHASE3_DRIFT_WORKFLOW_SHA}"',
-        f'foundation_drift_control_seed_sha     = "{FOUNDATION_DRIFT_CONTROL_SEED_SHA}"',
+        f'phase3_control_seed_sha             = "{PHASE3_CONTROL_SEED_SHA}"',
+        f'phase3_drift_workflow_sha           = "{PHASE3_DRIFT_WORKFLOW_SHA}"',
+        f'foundation_drift_control_seed_sha   = "{FOUNDATION_DRIFT_CONTROL_SEED_SHA}"',
         'account_id   = "github-foundation-planner"',
         'account_id   = "github-foundation-applier"',
         '"8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase4_control_seed_sha}"',
