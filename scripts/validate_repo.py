@@ -20,6 +20,7 @@ REQUIRED_PATHS = (
     ".github/workflows/terraform-federation-reusable.yml", ".github/workflows/terraform-plan-reusable.yml",
     ".github/workflows/terraform-apply-reusable.yml", ".github/workflows/phase4-build-reusable.yml",
     ".github/workflows/phase4-evidence-reusable.yml", ".github/workflows/phase4-deploy-reusable.yml",
+    ".github/workflows/phase4-build.yml", ".github/workflows/phase4-evidence.yml",
     "docs/adr/README.md", "docs/architecture.md", "docs/cost-model.md", "docs/engineering-model.md",
     "docs/gcp-bootstrap.md", "docs/repository-governance.md", "docs/roadmap.md", "docs/security-and-private-state.md",
     "docs/terraform-control-model.md", "docs/vision.md", "infra/bootstrap/.terraform.lock.hcl", "infra/bootstrap/main.tf",

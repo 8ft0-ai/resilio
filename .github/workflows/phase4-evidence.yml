@@ -1,0 +1,32 @@
+name: Phase 4 evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Existing trusted Cloud Build ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  require-main:
+    name: require-trusted-main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require trusted main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+  evidence:
+    name: adjudicate-exact-build
+    needs: require-main
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac
+    with:
+      build_id: ${{ inputs.build_id }}

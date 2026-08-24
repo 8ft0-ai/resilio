@@ -1,0 +1,24 @@
+name: Phase 4 trusted build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  require-main:
+    name: require-trusted-main
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require trusted main
+        run: test "$GITHUB_REF" = "refs/heads/main"
+
+  build:
+    name: trusted-build
+    needs: require-main
+    permissions:
+      contents: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac
