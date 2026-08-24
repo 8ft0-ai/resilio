@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free structural validation of the inert Phase 4 control seed."""
+"""Credential-free structural validation of the Phase 4 supply-chain controls."""
 from __future__ import annotations
 
 import re
@@ -9,13 +9,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CHECKOUT_SHA = "11d5960a326750d5838078e36cf38b85af677262"
 AUTH_SHA = "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
+PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
 PYTHON_DIGEST = "ed3a4beb46f8f8baac068743ba1b1f95ea3f793422129cf6dd23967f779b6018"
 DOCKER_BUILDER_DIGEST = "154fcd4d2d65c6a35b06b98053a0829c581e223d530be5719326f5d85d680e8d"
 
-REQUIRED = (
+REUSABLE = (
     ".github/workflows/phase4-build-reusable.yml",
     ".github/workflows/phase4-evidence-reusable.yml",
     ".github/workflows/phase4-deploy-reusable.yml",
+)
+CALLERS = (
+    ".github/workflows/phase4-build.yml",
+    ".github/workflows/phase4-evidence.yml",
+)
+REQUIRED = REUSABLE + CALLERS + (
     "scripts/phase4_supply_chain.py",
     "tests/test_phase4_supply_chain.py",
     "services/phase4-proof/app.py",
@@ -45,9 +52,9 @@ def main() -> int:
     errors: list[str] = []
     for relative in REQUIRED:
         if not (ROOT / relative).is_file():
-            errors.append(f"missing Phase 4 seed path: {relative}")
+            errors.append(f"missing Phase 4 path: {relative}")
 
-    for relative in REQUIRED[:3]:
+    for relative in REUSABLE:
         path = ROOT / relative
         if not path.is_file():
             continue
@@ -66,6 +73,52 @@ def main() -> int:
             errors.append(f"{relative} contains an unauthorised trigger/secret surface")
         if "<<'PY'" in text or '<<"PY"' in text:
             errors.append(f"{relative} must keep embedded decision logic in the reviewed helper, not YAML heredocs")
+
+    caller_text: dict[str, str] = {}
+    for relative in CALLERS:
+        path = ROOT / relative
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        caller_text[relative] = text
+        if workflow_events(text) != ["workflow_dispatch"]:
+            errors.append(f"{relative} must remain workflow_dispatch-only")
+        if 'run: test "$GITHUB_REF" = "refs/heads/main"' not in text:
+            errors.append(f"{relative} must fail closed outside refs/heads/main")
+        if "permissions:\n  contents: read" not in text:
+            errors.append(f"{relative} must declare least-privilege contents: read permissions")
+        if "id-token: write" not in text:
+            errors.append(f"{relative} must grant OIDC only to the trusted reusable-workflow job")
+        if "${{ secrets." in text or "pull_request:" in text or "push:" in text or "schedule:" in text:
+            errors.append(f"{relative} contains an unauthorised trigger/secret surface")
+
+    build_caller = caller_text.get(".github/workflows/phase4-build.yml", "")
+    expected_build_use = (
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@"
+        + PHASE4_CONTROL_SEED_SHA
+    )
+    if expected_build_use not in build_caller:
+        errors.append("Phase 4 build caller must pin the reviewed immutable build reusable workflow")
+    if "inputs:" in build_caller or "with:" in build_caller:
+        errors.append("Phase 4 build caller must expose no caller-controlled build inputs")
+    for forbidden in ("source_sha", "ref:", "service_account", "image", "substitution", "build_id"):
+        if forbidden in build_caller:
+            errors.append(f"Phase 4 build caller contains forbidden decision-critical input surface: {forbidden}")
+
+    evidence_caller = caller_text.get(".github/workflows/phase4-evidence.yml", "")
+    expected_evidence_use = (
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@"
+        + PHASE4_CONTROL_SEED_SHA
+    )
+    if expected_evidence_use not in evidence_caller:
+        errors.append("Phase 4 evidence caller must pin the reviewed immutable evidence reusable workflow")
+    if evidence_caller.count("\n      build_id:\n") != 1:
+        errors.append("Phase 4 evidence caller must expose exactly one build_id input")
+    if "build_id: ${{ inputs.build_id }}" not in evidence_caller:
+        errors.append("Phase 4 evidence caller must pass only the selected existing Build ID")
+    for forbidden in ("image_digest:", "source_sha:", "service_account:", "cloudbuild.googleapis.com", "phase4-build-reusable.yml"):
+        if forbidden in evidence_caller:
+            errors.append(f"Phase 4 evidence caller contains forbidden build/digest authority surface: {forbidden}")
 
     build = (ROOT / ".github/workflows/phase4-build-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-build-reusable.yml").is_file() else ""
     for token in (
@@ -130,7 +183,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Phase 4 inert control-seed validation passed.")
+    print("Phase 4 supply-chain control validation passed.")
     return 0
 
 
