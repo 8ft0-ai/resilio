@@ -28,7 +28,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@10e7a938046e2d2d28ffa08a470bf9dfeda40dac
+    uses: 8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@af6d0fe6765a1eea36d6000f6a3e465bffc32e50
     with:
       expected_main_sha: ${{ github.sha }}
 
