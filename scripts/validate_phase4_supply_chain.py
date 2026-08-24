@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKOUT_SHA = "11d5960a326750d5838078e36cf38b85af677262"
 AUTH_SHA = "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
 PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
+PHASE4_EVIDENCE_WORKFLOW_SHA = "6718021b47ae338478e364a22284a6f561b8fc47"
 PYTHON_DIGEST = "ed3a4beb46f8f8baac068743ba1b1f95ea3f793422129cf6dd23967f779b6018"
 DOCKER_BUILDER_DIGEST = "154fcd4d2d65c6a35b06b98053a0829c581e223d530be5719326f5d85d680e8d"
 
@@ -138,7 +139,7 @@ def main() -> int:
     evidence_caller = caller_text.get(".github/workflows/phase4-evidence.yml", "")
     expected_evidence_use = (
         "uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@"
-        + PHASE4_CONTROL_SEED_SHA
+        + PHASE4_EVIDENCE_WORKFLOW_SHA
     )
     if expected_evidence_use not in evidence_caller:
         errors.append("Phase 4 evidence caller must pin the reviewed immutable evidence reusable workflow")
