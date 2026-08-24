@@ -116,7 +116,7 @@ jobs:
               -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
               --data-binary "@$REQUEST" \
               "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds" > "$BUILD_JSON"
-            BUILD_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$BUILD_JSON")"
+            BUILD_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["metadata"]["build"]["id"])' "$BUILD_JSON")"
             for _ in $(seq 1 60); do
               curl --fail-with-body --silent --show-error \
                 -H "Authorization: Bearer $TOKEN" \
