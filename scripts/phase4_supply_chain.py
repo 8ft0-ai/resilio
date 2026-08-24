@@ -248,6 +248,8 @@ def _validate_build_options(build: dict[str, Any], expected: dict[str, Any]) -> 
     if set(options) - allowed_keys:
         raise SupplyChainError("BUILD_OPTIONS_MISMATCH")
     for key, value in expected["options"].items():
+        if key == "substitutionOption" and value == "MUST_MATCH" and key not in options:
+            continue
         if options.get(key) != value:
             raise SupplyChainError("BUILD_OPTIONS_MISMATCH")
     for key, allowed in OPTION_DEFAULTS.items():
