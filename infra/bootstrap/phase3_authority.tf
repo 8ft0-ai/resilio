@@ -1,13 +1,14 @@
 locals {
-  phase3_control_seed_sha             = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
-  phase3_drift_workflow_sha           = "2acbc425f688383375f724da7a4d80025dd9cc23"
-  foundation_plan_workflow_ref        = "8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase4_control_seed_sha}"
-  foundation_apply_workflow_ref       = "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@${local.phase4_control_seed_sha}"
-  foundation_drift_workflow_ref       = "8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@${local.phase4_control_seed_sha}"
-  state_bucket_object_resource_prefix = "projects/_/buckets/${google_storage_bucket.terraform_state.name}/objects/"
-  foundation_state_resource_name      = "${local.state_bucket_object_resource_prefix}foundation/default.tfstate"
-  foundation_lock_resource_name       = "${local.state_bucket_object_resource_prefix}foundation/default.tflock"
-  foundation_evidence_resource_prefix = "${local.state_bucket_object_resource_prefix}plan-evidence/foundation/"
+  phase3_control_seed_sha               = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
+  phase3_drift_workflow_sha             = "2acbc425f688383375f724da7a4d80025dd9cc23"
+  foundation_drift_control_seed_sha     = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
+  foundation_plan_workflow_ref          = "8ft0-ai/resilio/.github/workflows/terraform-plan-reusable.yml@${local.phase4_control_seed_sha}"
+  foundation_apply_workflow_ref         = "8ft0-ai/resilio/.github/workflows/terraform-apply-reusable.yml@${local.phase4_control_seed_sha}"
+  foundation_drift_workflow_ref         = "8ft0-ai/resilio/.github/workflows/terraform-drift-reusable.yml@${local.foundation_drift_control_seed_sha}"
+  state_bucket_object_resource_prefix   = "projects/_/buckets/${google_storage_bucket.terraform_state.name}/objects/"
+  foundation_state_resource_name        = "${local.state_bucket_object_resource_prefix}foundation/default.tfstate"
+  foundation_lock_resource_name         = "${local.state_bucket_object_resource_prefix}foundation/default.tflock"
+  foundation_evidence_resource_prefix   = "${local.state_bucket_object_resource_prefix}plan-evidence/foundation/"
 }
 
 resource "google_service_account" "foundation_planner" {
