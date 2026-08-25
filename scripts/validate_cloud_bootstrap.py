@@ -24,6 +24,7 @@ EVIDENCE = ROOT / "docs/gcp-bootstrap-evidence.md"
 PHASE3_CONTROL_SEED_SHA = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
 PHASE3_DRIFT_WORKFLOW_SHA = "2acbc425f688383375f724da7a4d80025dd9cc23"
 PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
+PHASE4_EVIDENCE_WORKFLOW_SHA = "6718021b47ae338478e364a22284a6f561b8fc47"
 FOUNDATION_DRIFT_CONTROL_SEED_SHA = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
 PHASE4_DEPLOY_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
@@ -72,7 +73,7 @@ PHASE4_BUILD_WORKFLOW_REF = (
 )
 PHASE4_EVIDENCE_WORKFLOW_REF = (
     "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@"
-    + PHASE4_CONTROL_SEED_SHA
+    + PHASE4_EVIDENCE_WORKFLOW_SHA
 )
 PHASE4_DEPLOY_WORKFLOW_REF = (
     "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@"
@@ -84,7 +85,7 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "f6edf6edb995f34a7873a844957f6fd5ede4febb",
+    "phase4_authority.tf": "1056b1ab0acb19d8bffadc40b4ee09ddd56f8637",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -397,8 +398,9 @@ def check_phase4_authority(errors: list[str]) -> None:
 
     exact_locals = (
         f'phase4_control_seed_sha                  = "{PHASE4_CONTROL_SEED_SHA}"',
+        f'phase4_evidence_workflow_sha             = "{PHASE4_EVIDENCE_WORKFLOW_SHA}"',
         'phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_control_seed_sha}"',
-        'phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_control_seed_sha}"',
+        'phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"',
         f'phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@{PHASE4_DEPLOY_WORKFLOW_SHA}"',
         f'phase4_transition_object_resource_prefix = "{PHASE4_TRANSITION_PREFIX}"',
     )
