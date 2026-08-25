@@ -98,7 +98,11 @@ jobs:
           SOURCE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$IDENTITY")"
           WORKFLOW_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["workflow_sha"])' "$IDENTITY")"
           CURRENT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
-          test "$CURRENT" = "$SOURCE_SHA"
+          python3 scripts/phase4_evidence_recovery.py \
+            --build-id "$BUILD_ID" \
+            --source-sha "$SOURCE_SHA" \
+            --build-control-sha "$WORKFLOW_SHA" \
+            --current-main-sha "$CURRENT"
           SOURCE_TREE_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SOURCE_SHA" --jq .tree.sha)"
           [[ "$SOURCE_TREE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
