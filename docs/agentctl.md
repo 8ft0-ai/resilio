@@ -17,42 +17,61 @@ tree:       29462eb2e71693f7c26cdbbf67217bacaf4e0392
 This baseline provides the stable read-only capabilities used or available to this pilot:
 
 ```text
-agentctl version
-agentctl doctor
-agentctl repo status [--repo PATH]
-agentctl repo evidence [--repo PATH]
-agentctl file hash <path>
-agentctl file inspect <path>
-agentctl github run evidence ...
-agentctl terraform plan evidence --plan PATH
+python -m agentctl version
+python -m agentctl doctor
+python -m agentctl repo status [--repo PATH]
+python -m agentctl repo evidence [--repo PATH]
+python -m agentctl file hash <path>
+python -m agentctl file inspect <path>
+python -m agentctl github run evidence ...
+python -m agentctl terraform plan evidence --plan PATH
 ```
 
 Each evidence-producing command supports command-level `--json` output. Do not silently substitute a later `agentctl main`, an unmerged branch or a different interface revision. Updating the adopted baseline is a separate Resilio reconciliation/change.
 
-At this baseline `agentctl` requires Python 3.14 or later and has no product runtime dependencies. Resilio does not maintain a separate installer or wrapper. The owner-local environment should install `agentctl` from an exact trusted checkout according to the upstream repository's installation contract.
+At this baseline `agentctl` requires Python 3.14 or later and has no product runtime dependencies. Resilio does not maintain a separate installer or wrapper. For decision-critical Resilio use, install the exact trusted checkout into its dedicated ignored `.venv` and invoke the supported module entry point through that environment. Do not rely on a bare `agentctl` resolved from ambient `PATH`: at this baseline `agentctl version` reports installed package metadata (`0.0.0`), not the Git commit that supplied the executable.
 
 ## Bootstrap the local capability deliberately
 
-Before relying on `agentctl` evidence for a decision-critical Resilio boundary, establish that the local upstream checkout is exactly the adopted source and that the installed toolkit satisfies its own runtime contract. A small direct bootstrap check is sufficient; do not download a Resilio helper script merely to run these commands.
+Before relying on `agentctl` evidence for a decision-critical Resilio boundary, establish that the local upstream checkout is exactly the adopted source and that the interpreter used for every evidence command imports `agentctl` from that same checkout. A small direct bootstrap check is sufficient; do not download a Resilio helper script merely to run these commands.
 
 For an owner-local checkout path stored in `AGENTCTL_REPO`:
 
 ```bash
 AGENTCTL_SHA=3d0bafa653f9d90349f22b5669fbe05c2a4becb4
+AGENTCTL_PYTHON="$AGENTCTL_REPO/.venv/bin/python"
 
 test "$(git -C "$AGENTCTL_REPO" rev-parse HEAD)" = "$AGENTCTL_SHA"
 test -z "$(git -C "$AGENTCTL_REPO" status --porcelain)"
-agentctl version --json
-agentctl doctor --json
-agentctl repo evidence --repo "$AGENTCTL_REPO" --json
+
+python3.14 -m venv "$AGENTCTL_REPO/.venv"
+"$AGENTCTL_PYTHON" -m pip install --disable-pip-version-check --no-deps --editable "$AGENTCTL_REPO"
+test -z "$(git -C "$AGENTCTL_REPO" status --porcelain)"
+
+AGENTCTL_REPO="$AGENTCTL_REPO" "$AGENTCTL_PYTHON" - <<'PY'
+import os
+from pathlib import Path
+import agentctl
+
+expected = (
+    Path(os.environ["AGENTCTL_REPO"]) / "src" / "agentctl" / "__init__.py"
+).resolve()
+observed = Path(agentctl.__file__).resolve()
+if observed != expected:
+    raise SystemExit(f"agentctl source mismatch: {observed}")
+PY
+
+"$AGENTCTL_PYTHON" -m agentctl version --json
+"$AGENTCTL_PYTHON" -m agentctl doctor --json
+"$AGENTCTL_PYTHON" -m agentctl repo evidence --repo "$AGENTCTL_REPO" --json
 ```
 
-Stop if the source identity is wrong, the checkout is dirty, the runtime doctor does not pass, or the installed capability cannot produce bounded share-safe evidence. Do not repair credentials, local cloud configuration or Terraform state from this preflight.
+The source-path assertion is the executable/source binding for this pilot: the same interpreter that later produces evidence must import `agentctl` from `src/agentctl` inside the checkout already proven to be at the adopted commit. Stop if the source identity is wrong, the checkout is dirty, the imported package resolves elsewhere, the runtime doctor does not pass, or the bound capability cannot produce share-safe evidence. Do not repair credentials, local cloud configuration or Terraform state from this preflight.
 
-For the Resilio checkout itself, the governing task still supplies the exact expected commit/tree/branch relationship. `agentctl` may observe the checkout but does not decide whether that observation is acceptable:
+For the Resilio checkout itself, the governing task still supplies the exact expected commit/tree/branch relationship. The bound `agentctl` may observe the checkout but does not decide whether that observation is acceptable:
 
 ```bash
-agentctl repo evidence --repo "$RESILIO_REPO" --json
+"$AGENTCTL_PYTHON" -m agentctl repo evidence --repo "$RESILIO_REPO" --json
 ```
 
 Compare the returned repository evidence with the exact Resilio identity required by the governing issue or handoff. A clean or dirty observation is evidence; the Resilio task decides whether cleanliness is mandatory.
@@ -62,12 +81,12 @@ Compare the returned repository evidence with the exact Resilio identity require
 Use this path only when a governing Resilio task has already authorised creation or inspection of an existing private saved Terraform plan. This command does not create, refresh, replace or apply a plan:
 
 ```bash
-agentctl terraform plan evidence --plan "$PLAN" --json
+"$AGENTCTL_PYTHON" -m agentctl terraform plan evidence --plan "$PLAN" --json
 ```
 
 The plan remains owner-local/private. At the adopted baseline the capability safely binds to the selected regular file, computes its SHA-256, inspects a verified private snapshot with fixed read-only Terraform commands and emits a deterministic sanitised structural manifest.
 
-For a successful handback, return the complete `agentctl` JSON evidence envelope produced on stdout without post-processing it through an ad hoc `jq`, Python or shell transformation. The shareable result may contain bounded provenance plus structural resource/output identities, normalised actions/counts, completeness metadata and manifest digests as defined by the adopted `agentctl` contract.
+For a successful handback, return the complete JSON evidence envelope produced on stdout by the bound invocation without post-processing it through an ad hoc `jq`, Python or shell transformation. The shareable result may contain bounded provenance plus structural resource/output identities, normalised actions/counts, completeness metadata and manifest digests as defined by the adopted `agentctl` contract.
 
 Do **not** return or commit:
 
@@ -78,7 +97,7 @@ Do **not** return or commit:
 - Terraform stderr/private diagnostic material;
 - credentials, tokens, billing/account secrets or environment dumps.
 
-If `agentctl` returns unavailable, capability-failure, unsafe-evidence or another non-success status, stop at that observation boundary. Do not fall back to publishing raw Terraform material just to obtain a review object.
+If the bound `agentctl` invocation returns unavailable, capability-failure, unsafe-evidence or another non-success status, stop at that observation boundary. Do not fall back to an ambient `agentctl` executable or publish raw Terraform material just to obtain a review object.
 
 ## What Resilio still has to decide
 
