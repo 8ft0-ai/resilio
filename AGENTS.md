@@ -28,6 +28,14 @@ Repository-local Resilio instructions and explicit task authority remain higher 
 - Keep secrets, credentials and private Terraform state out of Git.
 - Do not introduce long-lived Google Cloud service-account keys.
 
+## Owner-local reusable tooling
+
+- For owner-local observation or evidence that cannot legitimately run in the remote assistant environment, prefer a stable, separately adopted `agentctl` named capability when it already covers the reusable mechanism required by the governed task.
+- Do not generate or download a substantial bespoke shell/Python handoff, or add a Resilio wrapper that merely mirrors an adopted `agentctl` mechanism. Keep direct capability invocation small and keep project policy explicit.
+- Resilio continues to own expected repository, Terraform and cloud identities, allowed or forbidden effects, authority, review gates and the decision about what may happen next. A successful `agentctl` result is evidence only and never grants Resilio mutation authority.
+- Bind decision-critical use to the exact `agentctl` identity that Resilio has adopted for the task or pilot. Do not silently fall forward to floating upstream `main`, an unmerged capability or a later interface revision.
+- If the adopted capability is insufficient or unavailable, preserve the normal fail-closed boundary and use only the minimum separately governed local mechanism needed for the task. Do not weaken Resilio controls or broaden authority merely to avoid an upstream gap.
+
 ## Autonomous progression
 
 Routine planning, implementation, validation, bounded remediation and evidence capture should proceed without repeated human confirmation when current authority and evidence make the next action safely decidable.
