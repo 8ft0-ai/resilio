@@ -386,9 +386,9 @@ def scan_disposition(discovery_response: dict[str, Any], vulnerability_response:
     discoveries = discovery_response.get("occurrences") or []
     complete = False
     for occurrence in discoveries:
-        discovered = occurrence.get("discovered") or {}
-        if discovered.get("analysisStatus") in {"FINISHED_SUCCESS", "COMPLETE"}:
-            completed = ((discovered.get("analysisCompleted") or {}).get("analysisType") or [])
+        discovery = occurrence.get("discovery") or {}
+        if discovery.get("analysisStatus") in {"FINISHED_SUCCESS", "COMPLETE"}:
+            completed = ((discovery.get("analysisCompleted") or {}).get("analysisType") or [])
             if not completed or "VULNERABILITY" in completed:
                 complete = True
     if not complete:

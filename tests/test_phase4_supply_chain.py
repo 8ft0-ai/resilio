@@ -91,7 +91,7 @@ class BuildContractTests(unittest.TestCase):
             p4.select_existing_build([build, copy.deepcopy(build)], "a" * 40, "b" * 40)
 
     def test_scan_requires_completed_discovery(self) -> None:
-        good = {"occurrences": [{"discovered": {"analysisStatus": "FINISHED_SUCCESS", "analysisCompleted": {"analysisType": ["VULNERABILITY"]}}}]}
+        good = {"occurrences": [{"discovery": {"analysisStatus": "FINISHED_SUCCESS", "analysisCompleted": {"analysisType": ["VULNERABILITY"]}}}]}
         self.assertEqual(p4.scan_disposition(good, {"occurrences": []}), "PASS")
         critical = {"occurrences": [{"vulnerability": {"effectiveSeverity": "CRITICAL"}}]}
         self.assertEqual(p4.scan_disposition(good, critical), "FAIL_CRITICAL")
@@ -99,10 +99,13 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(p4.scan_disposition(good, high), "HIGH_REVIEW_REQUIRED")
         with self.assertRaisesRegex(p4.SupplyChainError, "VULNERABILITY_SCAN_UNAVAILABLE"):
             p4.scan_disposition({"occurrences": []}, {"occurrences": []})
+        legacy = {"occurrences": [{"discovered": {"analysisStatus": "FINISHED_SUCCESS", "analysisCompleted": {"analysisType": ["VULNERABILITY"]}}}]}
+        with self.assertRaisesRegex(p4.SupplyChainError, "VULNERABILITY_SCAN_UNAVAILABLE"):
+            p4.scan_disposition(legacy, {"occurrences": []})
 
     def test_pagination_exhausts_later_pages_and_fails_incomplete(self) -> None:
         discovery_pages = [
-            {"occurrences": [{"discovered": {"analysisStatus": "FINISHED_SUCCESS", "analysisCompleted": {"analysisType": ["VULNERABILITY"]}}}], "nextPageToken": "next"},
+            {"occurrences": [{"discovery": {"analysisStatus": "FINISHED_SUCCESS", "analysisCompleted": {"analysisType": ["VULNERABILITY"]}}}], "nextPageToken": "next"},
             {"occurrences": []},
         ]
         vulnerability_pages = [
