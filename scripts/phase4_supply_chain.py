@@ -387,10 +387,10 @@ def scan_disposition(discovery_response: dict[str, Any], vulnerability_response:
     complete = False
     for occurrence in discoveries:
         discovery = occurrence.get("discovery") or {}
+        # Artifact Analysis v1 reports completed analyzer/ecosystem types here;
+        # the successful analysisStatus is the authoritative completion signal.
         if discovery.get("analysisStatus") in {"FINISHED_SUCCESS", "COMPLETE"}:
-            completed = ((discovery.get("analysisCompleted") or {}).get("analysisType") or [])
-            if not completed or "VULNERABILITY" in completed:
-                complete = True
+            complete = True
     if not complete:
         raise SupplyChainError("VULNERABILITY_SCAN_UNAVAILABLE")
     return vulnerability_disposition(vulnerability_response.get("occurrences") or [])
