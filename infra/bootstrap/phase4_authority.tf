@@ -60,7 +60,7 @@ resource "google_service_account" "phase4_runtime" {
 resource "google_service_account" "phase4_verifier" {
   project      = google_project.reference.project_id
   account_id   = "github-p4-verifier"
-  display_name = "GitHub Phase 4 verifier"
+  display_name = "Phase 4 verifier"
 
   depends_on = [
     google_project_service.control["iam.googleapis.com"],
@@ -192,6 +192,7 @@ resource "google_project_iam_custom_role" "phase4_evidence_analysis" {
   permissions = [
     "cloudbuild.builds.get",
     "containeranalysis.occurrences.list",
+    "serviceusage.services.use",
   ]
 }
 
