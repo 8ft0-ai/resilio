@@ -85,7 +85,7 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "bf577a137338a3eca40e44c0ffc01016cb6e7b9e",
+    "phase4_authority.tf": "29a6d69a2916a44faa27cee6222573f3d2a903c1",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -494,6 +494,7 @@ def check_phase4_authority(errors: list[str]) -> None:
         "phase4_evidence_analysis": (
             "cloudbuild.builds.get",
             "containeranalysis.occurrences.list",
+            "serviceusage.services.use",
         ),
         "phase4_deployer": (
             "run.operations.get",

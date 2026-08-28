@@ -192,6 +192,7 @@ resource "google_project_iam_custom_role" "phase4_evidence_analysis" {
   permissions = [
     "cloudbuild.builds.get",
     "containeranalysis.occurrences.list",
+    "serviceusage.services.use",
   ]
 }
 
