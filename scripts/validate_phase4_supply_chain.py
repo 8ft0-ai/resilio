@@ -11,7 +11,8 @@ CHECKOUT_SHA = "11d5960a326750d5838078e36cf38b85af677262"
 AUTH_SHA = "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
 PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
 PHASE4_EVIDENCE_WORKFLOW_SHA = "08da1ec36cb54e0dfa9f2922094ce6f7a748a44a"
-PYTHON_DIGEST = "ed3a4beb46f8f8baac068743ba1b1f95ea3f793422129cf6dd23967f779b6018"
+BUILD_TEST_PYTHON_DIGEST = "ed3a4beb46f8f8baac068743ba1b1f95ea3f793422129cf6dd23967f779b6018"
+PROOF_RUNTIME_DIGEST = "f2b206661cee3edb44f132d7f054a9ced96f671d8a973de0db750895c9acb2fb"
 DOCKER_BUILDER_DIGEST = "154fcd4d2d65c6a35b06b98053a0829c581e223d530be5719326f5d85d680e8d"
 
 REUSABLE = (
@@ -200,8 +201,8 @@ def main() -> int:
             errors.append(f"deploy reusable missing exact-digest/readback control: {required}")
 
     helper = (ROOT / "scripts/phase4_supply_chain.py").read_text(encoding="utf-8") if (ROOT / "scripts/phase4_supply_chain.py").is_file() else ""
-    if f"sha256:{PYTHON_DIGEST}" not in helper:
-        errors.append("Phase 4 Python runtime must remain at the reviewed digest")
+    if f"sha256:{BUILD_TEST_PYTHON_DIGEST}" not in helper:
+        errors.append("Phase 4 Python build-test runtime must remain at the reviewed digest")
     if f"sha256:{DOCKER_BUILDER_DIGEST}" not in helper:
         errors.append("Cloud Build Docker builder must remain at the reviewed digest")
     if "requestedVerifyOption" not in helper or '"VERIFIED"' not in helper or '"E2_STANDARD_2"' not in helper:
@@ -210,7 +211,7 @@ def main() -> int:
         errors.append("Phase 4 helper must not contain mutable latest authority")
 
     dockerfile = (ROOT / "services/phase4-proof/Dockerfile").read_text(encoding="utf-8") if (ROOT / "services/phase4-proof/Dockerfile").is_file() else ""
-    if not dockerfile.startswith("FROM gcr.io/distroless/python3-debian13@sha256:" + PYTHON_DIGEST + "\n"):
+    if not dockerfile.startswith("FROM gcr.io/distroless/python3-debian13@sha256:" + PROOF_RUNTIME_DIGEST + "\n"):
         errors.append("proof Dockerfile must use the exact reviewed distroless digest")
     for forbidden in (" apt ", "apk ", "pip ", "curl ", ":latest"):
         if forbidden in dockerfile.lower():

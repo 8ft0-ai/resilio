@@ -1,4 +1,4 @@
-FROM gcr.io/distroless/python3-debian13@sha256:ed3a4beb46f8f8baac068743ba1b1f95ea3f793422129cf6dd23967f779b6018
+FROM gcr.io/distroless/python3-debian13@sha256:f2b206661cee3edb44f132d7f054a9ced96f671d8a973de0db750895c9acb2fb
 WORKDIR /app
 COPY services/phase4-proof/app.py /app/app.py
 USER 65532:65532
