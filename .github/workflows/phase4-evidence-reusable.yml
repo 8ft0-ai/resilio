@@ -69,6 +69,7 @@ jobs:
               if test -n "$NEXT"; then
                 curl --fail-with-body --silent --show-error -G \
                   -H "Authorization: Bearer $TOKEN" \
+                  -H "X-Goog-User-Project: resilio-control-e882d4" \
                   --data-urlencode "filter=$FILTER" \
                   --data-urlencode "pageSize=1000" \
                   --data-urlencode "pageToken=$NEXT" \
@@ -76,6 +77,7 @@ jobs:
               else
                 curl --fail-with-body --silent --show-error -G \
                   -H "Authorization: Bearer $TOKEN" \
+                  -H "X-Goog-User-Project: resilio-control-e882d4" \
                   --data-urlencode "filter=$FILTER" \
                   --data-urlencode "pageSize=1000" \
                   "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/occurrences" > "$PAGE_FILE"
@@ -137,7 +139,9 @@ jobs:
 
           EXPORT="$RUNNER_TEMP/export.json"
           curl --fail-with-body --silent --show-error -X POST \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "X-Goog-User-Project: resilio-control-e882d4" \
+            -H "Content-Type: application/json" \
             --data '{"cloudStorageLocation":{}}' \
             "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/resources/$ENCODED:exportSBOM" > "$EXPORT"
           SBOM_DISC="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("discoveryOccurrence",""))' "$EXPORT")"
