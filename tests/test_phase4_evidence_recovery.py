@@ -75,8 +75,8 @@ class Phase4EvidenceRecoveryTests(unittest.TestCase):
         self.assertEqual(
             recovery.PRESERVED_RECOVERY_TUPLE,
             (
-                "9284412c-6013-4a3b-9a12-30d9cb489dc6",
-                "58754930316e15c55e1dd25c3ad12df65b011f14",
+                "ed34bfbe-b081-4e60-b787-393e6f600cce",
+                "0d83b12fc8b16ca716f679fbb246ed11358c1a86",
                 "10e7a938046e2d2d28ffa08a470bf9dfeda40dac",
             ),
         )
