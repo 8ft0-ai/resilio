@@ -1,6 +1,6 @@
 locals {
   phase4_control_seed_sha                  = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
-  phase4_evidence_workflow_sha             = "08da1ec36cb54e0dfa9f2922094ce6f7a748a44a"
+  phase4_evidence_workflow_sha             = "b807376574de59df69ef448aa04e99b798615862"
   phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_control_seed_sha}"
   phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"
   phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@c70afa19c487f6f8d18720028db8e6379fbeed44"
@@ -60,7 +60,7 @@ resource "google_service_account" "phase4_runtime" {
 resource "google_service_account" "phase4_verifier" {
   project      = google_project.reference.project_id
   account_id   = "github-p4-verifier"
-  display_name = "GitHub Phase 4 verifier"
+  display_name = "Phase 4 verifier"
 
   depends_on = [
     google_project_service.control["iam.googleapis.com"],
