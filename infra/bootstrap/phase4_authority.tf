@@ -191,6 +191,7 @@ resource "google_project_iam_custom_role" "phase4_evidence_analysis" {
   description = "Read exact build and Artifact Analysis occurrence evidence and export the provider-native SBOM."
   permissions = [
     "cloudbuild.builds.get",
+    "containeranalysis.occurrences.create",
     "containeranalysis.occurrences.list",
     "serviceusage.services.use",
   ]
