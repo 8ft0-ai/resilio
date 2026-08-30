@@ -185,9 +185,22 @@ def main() -> int:
             errors.append(f"build reusable missing fixed control: {token}")
 
     evidence = (ROOT / ".github/workflows/phase4-evidence-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-evidence-reusable.yml").is_file() else ""
-    for token in ("github-p4-evidence@", "scan-disposition", ":exportSBOM", "SBOM_REFERENCE", "ifGenerationMatch=0"):
+    for token in (
+        "github-p4-evidence@", "scan-disposition", ":exportSBOM", "SBOM_REFERENCE",
+        "ifGenerationMatch=0", "artifact_analysis_request", "--write-out '%{http_code}'",
+        "google-api-response", "--http-status-file", "--curl-exit-code",
+        "CURL_STDERR_FILE", '2> "$CURL_STDERR_FILE"',
+        "DISCOVERY", "VULNERABILITY", "PROVENANCE", "EXPORT_SBOM",
+    ):
         if token not in evidence:
             errors.append(f"evidence reusable missing fail-closed evidence control: {token}")
+    for line in evidence.splitlines():
+        if "containeranalysis.googleapis.com" in line and "> \"$" in line:
+            errors.append("Artifact Analysis responses must use private body/status capture")
+    if evidence.count("artifact_analysis_request \"$REQUEST_CATEGORY\"") != 2:
+        errors.append("Artifact Analysis occurrence-list calls must use the diagnostic request wrapper")
+    if evidence.count("artifact_analysis_request EXPORT_SBOM") != 1:
+        errors.append("Artifact Analysis SBOM export must use the diagnostic request wrapper")
 
     deploy = (ROOT / ".github/workflows/phase4-deploy-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reusable.yml").is_file() else ""
     for forbidden in ("setIamPolicy", "invokerIamDisabled", "allUsers", "allAuthenticatedUsers", "docker build", "cloudbuild.googleapis.com"):

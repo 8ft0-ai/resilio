@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -195,6 +197,162 @@ class BuildContractTests(unittest.TestCase):
         bad = copy.deepcopy(manifest); del bad["sbom"]["generation"]
         with self.assertRaisesRegex(p4.SupplyChainError, "TRANSITION_SBOM_INVALID"):
             p4.validate_transition_manifest(bad)
+
+
+class GoogleApiDiagnosticTests(unittest.TestCase):
+    def _files(self, directory: str, body: bytes, status: bytes = b"403\n") -> tuple[str, str]:
+        response = Path(directory) / "response.json"
+        status_file = Path(directory) / "response.http-status"
+        response.write_bytes(body)
+        status_file.write_bytes(status)
+        return str(response), str(status_file)
+
+    def _error(self, metadata: dict[str, str] | None = None) -> bytes:
+        return json.dumps({"error": {
+            "code": 403,
+            "message": "Permission denied for caller 192.0.2.10 token=do-not-emit",
+            "status": "PERMISSION_DENIED",
+            "details": [{
+                "@type": p4.GOOGLE_ERROR_INFO_TYPE,
+                "reason": "IAM_PERMISSION_DENIED",
+                "domain": "containeranalysis.googleapis.com",
+                "metadata": metadata or {
+                    "service": "containeranalysis.googleapis.com",
+                    "permission": "containeranalysis.occurrences.list",
+                },
+            }],
+        }}).encode()
+
+    def test_representative_error_info_403_is_structured_and_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            response, status = self._files(directory, self._error())
+            exit_code, diagnostic = p4.google_api_response_disposition(
+                response, status, 0, "DISCOVERY", "33289172886",
+                "ed34bfbe-b081-4e60-b787-393e6f600cce",
+            )
+        self.assertEqual(exit_code, 1)
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual(diagnostic["http_code"], 403)
+        self.assertEqual(diagnostic["google_error_code"], 403)
+        self.assertEqual(diagnostic["google_error_status"], "PERMISSION_DENIED")
+        self.assertEqual(diagnostic["message_category"], "PERMISSION_DENIED")
+        self.assertEqual(diagnostic["error_info_reasons"], ["IAM_PERMISSION_DENIED"])
+        self.assertEqual(diagnostic["error_info_domains"], ["containeranalysis.googleapis.com"])
+        self.assertEqual(diagnostic["workflow_run_id"], "33289172886")
+        self.assertEqual(diagnostic["preserved_build_id"], "ed34bfbe-b081-4e60-b787-393e6f600cce")
+
+    def test_only_allowlisted_safe_metadata_values_are_emitted(self) -> None:
+        metadata = {
+            "service": "containeranalysis.googleapis.com",
+            "permission": "containeranalysis.occurrences.list",
+            "consumer": "projects/secret-billing-id",
+            "resource": "//containeranalysis.googleapis.com/projects/secret-project",
+            "credential": "Authorization: Bearer secret-token",
+            "unknown_key": "192.0.2.10 arbitrary secret",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            response, _ = self._files(directory, self._error(metadata))
+            diagnostic = p4.sanitize_google_api_error(
+                response, 403, "VULNERABILITY", "33289172886",
+                "ed34bfbe-b081-4e60-b787-393e6f600cce",
+            )
+        encoded = p4.canonical_json_bytes(diagnostic).decode()
+        self.assertEqual(diagnostic["metadata_keys"], sorted(metadata))
+        self.assertEqual(diagnostic["safe_metadata_values"], {
+            "permission": ["containeranalysis.occurrences.list"],
+            "service": ["containeranalysis.googleapis.com"],
+        })
+        for forbidden in (
+            "secret-billing-id", "secret-project", "secret-token", "192.0.2.10",
+            "Authorization", "Bearer", "do-not-emit",
+        ):
+            self.assertNotIn(forbidden, encoded)
+
+    def test_unknown_metadata_keys_emit_keys_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            response, _ = self._files(directory, self._error({"futureMetadataKey": "private-value"}))
+            diagnostic = p4.sanitize_google_api_error(
+                response, 403, "PROVENANCE", "33289172886",
+                "ed34bfbe-b081-4e60-b787-393e6f600cce",
+            )
+        self.assertEqual(diagnostic["metadata_keys"], ["futureMetadataKey"])
+        self.assertNotIn("safe_metadata_values", diagnostic)
+        self.assertNotIn("private-value", json.dumps(diagnostic))
+
+    def test_malformed_and_oversized_responses_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            response, _ = self._files(directory, b"not-json")
+            with self.assertRaisesRegex(p4.SupplyChainError, "GOOGLE_API_RESPONSE_JSON_INVALID"):
+                p4.sanitize_google_api_error(
+                    response, 403, "EXPORT_SBOM", "33289172886",
+                    "ed34bfbe-b081-4e60-b787-393e6f600cce",
+                )
+            Path(response).write_bytes(b"x" * (p4.GOOGLE_API_RESPONSE_MAX_BYTES + 1))
+            with self.assertRaisesRegex(p4.SupplyChainError, "GOOGLE_API_RESPONSE_SIZE_INVALID"):
+                p4.sanitize_google_api_error(
+                    response, 403, "EXPORT_SBOM", "33289172886",
+                    "ed34bfbe-b081-4e60-b787-393e6f600cce",
+                )
+
+    def test_unknown_error_detail_structure_fails_closed(self) -> None:
+        payload = {"error": {
+            "code": 403,
+            "status": "PERMISSION_DENIED",
+            "details": [{
+                "@type": "type.googleapis.com/google.rpc.DebugInfo",
+                "stackEntries": ["Authorization: Bearer private-token"],
+            }],
+        }}
+        with tempfile.TemporaryDirectory() as directory:
+            response, _ = self._files(directory, json.dumps(payload).encode())
+            with self.assertRaisesRegex(p4.SupplyChainError, "GOOGLE_API_ERROR_DETAIL_UNSUPPORTED"):
+                p4.sanitize_google_api_error(
+                    response, 403, "EXPORT_SBOM", "33289172886",
+                    "ed34bfbe-b081-4e60-b787-393e6f600cce",
+                )
+
+    def test_success_is_silent_and_does_not_read_or_change_response(self) -> None:
+        body = b"successful response remains byte-for-byte unchanged"
+        with tempfile.TemporaryDirectory() as directory:
+            response, status = self._files(directory, body, b"200\n")
+            exit_code, diagnostic = p4.google_api_response_disposition(
+                response, status, 0, "SBOM_REFERENCE", "33289172886",
+                "ed34bfbe-b081-4e60-b787-393e6f600cce",
+            )
+            self.assertEqual(Path(response).read_bytes(), body)
+        self.assertEqual((exit_code, diagnostic), (0, None))
+
+    def test_transport_failure_is_separate_and_does_not_read_response(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            response = str(Path(directory) / "not-created.json")
+            status = str(Path(directory) / "not-created.status")
+            exit_code, diagnostic = p4.google_api_response_disposition(
+                response, status, 6, "DISCOVERY", "33289172886",
+                "ed34bfbe-b081-4e60-b787-393e6f600cce",
+            )
+        self.assertEqual(exit_code, 1)
+        self.assertIsNotNone(diagnostic)
+        assert diagnostic is not None
+        self.assertEqual(diagnostic["message_category"], "TRANSPORT_FAILURE")
+        self.assertEqual(diagnostic["curl_exit_code"], 6)
+        self.assertNotIn("http_code", diagnostic)
+
+    def test_cli_non_2xx_emits_only_diagnostic_and_returns_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            response, status = self._files(directory, self._error())
+            result = subprocess.run([
+                sys.executable, str(ROOT / "scripts/phase4_supply_chain.py"),
+                "google-api-response", "--response-json", response,
+                "--http-status-file", status, "--curl-exit-code", "0",
+                "--request-category", "DISCOVERY", "--workflow-run-id", "33289172886",
+                "--preserved-build-id", "ed34bfbe-b081-4e60-b787-393e6f600cce",
+            ], check=False, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, "")
+        diagnostic = json.loads(result.stdout)
+        self.assertEqual(diagnostic["http_code"], 403)
+        self.assertNotIn("do-not-emit", result.stdout)
 
 
 class FoundationPhase4ContractTests(unittest.TestCase):
