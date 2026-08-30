@@ -45,6 +45,12 @@ FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 BUILD_ID = re.compile(r"^[0-9a-f-]{8,64}$")
+WORKFLOW_RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
+GOOGLE_ERROR_STATUS = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+GOOGLE_ERROR_REASON = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+GOOGLE_ERROR_DOMAIN = re.compile(r"^(?:[a-z][a-z0-9-]*\.)*googleapis\.com$")
+GOOGLE_METADATA_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,127}$")
+GOOGLE_PERMISSION_VALUE = re.compile(r"^containeranalysis\.[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$")
 IMAGE_DIGEST_REF = re.compile(
     rf"^{re.escape(IMAGE_PREFIX)}@sha256:[0-9a-f]{{64}}$"
 )
@@ -57,6 +63,28 @@ SEVERITY_RANK = {
     "MEDIUM": 3,
     "HIGH": 4,
     "CRITICAL": 5,
+}
+
+GOOGLE_API_RESPONSE_MAX_BYTES = 65_536
+GOOGLE_API_REQUEST_CATEGORIES = {
+    "DISCOVERY", "VULNERABILITY", "PROVENANCE", "EXPORT_SBOM", "SBOM_REFERENCE",
+}
+GOOGLE_ERROR_ROOT_FIELDS = {"error"}
+GOOGLE_ERROR_FIELDS = {"code", "message", "status", "details"}
+GOOGLE_ERROR_INFO_FIELDS = {"@type", "reason", "domain", "metadata"}
+GOOGLE_ERROR_INFO_TYPE = "type.googleapis.com/google.rpc.ErrorInfo"
+GOOGLE_SAFE_SERVICE_VALUES = {"containeranalysis.googleapis.com"}
+GOOGLE_MESSAGE_CATEGORIES = {
+    "UNAUTHENTICATED": "UNAUTHENTICATED",
+    "PERMISSION_DENIED": "PERMISSION_DENIED",
+    "RESOURCE_EXHAUSTED": "QUOTA_OR_RATE_LIMIT",
+    "INVALID_ARGUMENT": "INVALID_REQUEST",
+    "FAILED_PRECONDITION": "FAILED_PRECONDITION",
+    "NOT_FOUND": "NOT_FOUND",
+    "ABORTED": "ABORTED",
+    "DEADLINE_EXCEEDED": "SERVICE_UNAVAILABLE",
+    "INTERNAL": "SERVICE_UNAVAILABLE",
+    "UNAVAILABLE": "SERVICE_UNAVAILABLE",
 }
 
 BUILD_OUTPUT_ONLY_FIELDS = {
@@ -131,6 +159,183 @@ def require_full_sha(value: str, label: str) -> str:
     if not FULL_SHA.fullmatch(value):
         raise SupplyChainError(f"{label}_SHA_INVALID")
     return value
+
+
+def _require_google_api_context(
+    request_category: str,
+    workflow_run_id: str,
+    preserved_build_id: str,
+) -> None:
+    if request_category not in GOOGLE_API_REQUEST_CATEGORIES:
+        raise SupplyChainError("GOOGLE_API_REQUEST_CATEGORY_INVALID")
+    if not WORKFLOW_RUN_ID.fullmatch(workflow_run_id):
+        raise SupplyChainError("GOOGLE_API_WORKFLOW_RUN_ID_INVALID")
+    if not BUILD_ID.fullmatch(preserved_build_id):
+        raise SupplyChainError("GOOGLE_API_BUILD_ID_INVALID")
+
+
+def _read_bounded_bytes(path: str, maximum: int, label: str) -> bytes:
+    candidate = Path(path)
+    try:
+        if candidate.is_symlink() or not candidate.is_file():
+            raise SupplyChainError(f"{label}_FILE_INVALID")
+        size = candidate.stat().st_size
+        if size <= 0 or size > maximum:
+            raise SupplyChainError(f"{label}_SIZE_INVALID")
+        value = candidate.read_bytes()
+    except OSError as exc:
+        raise SupplyChainError(f"{label}_FILE_INVALID") from exc
+    if len(value) != size or len(value) > maximum:
+        raise SupplyChainError(f"{label}_SIZE_INVALID")
+    return value
+
+
+def _message_category(status: str | None, reasons: set[str]) -> str:
+    if "SERVICE_DISABLED" in reasons:
+        return "SERVICE_DISABLED"
+    if any(reason.startswith("QUOTA_") or reason == "RATE_LIMIT_EXCEEDED" for reason in reasons):
+        return "QUOTA_OR_RATE_LIMIT"
+    return GOOGLE_MESSAGE_CATEGORIES.get(status or "", "GOOGLE_API_ERROR")
+
+
+def _reject_non_json_constant(value: str) -> None:
+    raise ValueError(f"non-JSON constant: {value}")
+
+
+def sanitize_google_api_error(
+    response_json: str,
+    http_code: int,
+    request_category: str,
+    workflow_run_id: str,
+    preserved_build_id: str,
+) -> dict[str, Any]:
+    """Return a closed, non-secret diagnostic for a Google JSON error envelope."""
+    _require_google_api_context(request_category, workflow_run_id, preserved_build_id)
+    if http_code < 300 or http_code > 599:
+        raise SupplyChainError("GOOGLE_API_HTTP_CODE_INVALID")
+    raw = _read_bounded_bytes(
+        response_json, GOOGLE_API_RESPONSE_MAX_BYTES, "GOOGLE_API_RESPONSE",
+    )
+    try:
+        payload = json.loads(raw.decode("utf-8"), parse_constant=_reject_non_json_constant)
+    except ValueError as exc:
+        raise SupplyChainError("GOOGLE_API_RESPONSE_JSON_INVALID") from exc
+    if not isinstance(payload, dict) or set(payload) != GOOGLE_ERROR_ROOT_FIELDS:
+        raise SupplyChainError("GOOGLE_API_ERROR_ENVELOPE_INVALID")
+    error = payload.get("error")
+    if not isinstance(error, dict) or not set(error).issubset(GOOGLE_ERROR_FIELDS):
+        raise SupplyChainError("GOOGLE_API_ERROR_STRUCTURE_INVALID")
+
+    code = error.get("code")
+    if code is not None and (isinstance(code, bool) or not isinstance(code, int) or code != http_code):
+        raise SupplyChainError("GOOGLE_API_ERROR_CODE_INVALID")
+    status = error.get("status")
+    if status is not None and (not isinstance(status, str) or not GOOGLE_ERROR_STATUS.fullmatch(status)):
+        raise SupplyChainError("GOOGLE_API_ERROR_STATUS_INVALID")
+    message = error.get("message")
+    if message is not None and (not isinstance(message, str) or len(message) > 4096):
+        raise SupplyChainError("GOOGLE_API_ERROR_MESSAGE_INVALID")
+
+    details = error.get("details", [])
+    if not isinstance(details, list) or len(details) > 16:
+        raise SupplyChainError("GOOGLE_API_ERROR_DETAILS_INVALID")
+    reasons: set[str] = set()
+    domains: set[str] = set()
+    metadata_keys: set[str] = set()
+    safe_metadata_values: dict[str, set[str]] = {}
+    for detail in details:
+        if (
+            not isinstance(detail, dict)
+            or set(detail).difference(GOOGLE_ERROR_INFO_FIELDS)
+            or detail.get("@type") != GOOGLE_ERROR_INFO_TYPE
+        ):
+            raise SupplyChainError("GOOGLE_API_ERROR_DETAIL_UNSUPPORTED")
+        reason = detail.get("reason")
+        if reason is not None:
+            if not isinstance(reason, str) or not GOOGLE_ERROR_REASON.fullmatch(reason):
+                raise SupplyChainError("GOOGLE_API_ERROR_REASON_INVALID")
+            reasons.add(reason)
+        domain = detail.get("domain")
+        if domain is not None:
+            if not isinstance(domain, str) or not GOOGLE_ERROR_DOMAIN.fullmatch(domain):
+                raise SupplyChainError("GOOGLE_API_ERROR_DOMAIN_INVALID")
+            domains.add(domain)
+        metadata = detail.get("metadata", {})
+        if not isinstance(metadata, dict) or len(metadata) > 64:
+            raise SupplyChainError("GOOGLE_API_ERROR_METADATA_INVALID")
+        for key, value in metadata.items():
+            if not isinstance(key, str) or not GOOGLE_METADATA_KEY.fullmatch(key):
+                raise SupplyChainError("GOOGLE_API_ERROR_METADATA_KEY_INVALID")
+            if not isinstance(value, str):
+                raise SupplyChainError("GOOGLE_API_ERROR_METADATA_VALUE_INVALID")
+            metadata_keys.add(key)
+            if key == "service" and value in GOOGLE_SAFE_SERVICE_VALUES:
+                safe_metadata_values.setdefault(key, set()).add(value)
+            elif key == "permission" and GOOGLE_PERMISSION_VALUE.fullmatch(value):
+                safe_metadata_values.setdefault(key, set()).add(value)
+
+    diagnostic: dict[str, Any] = {
+        "contract": "resilio-phase4-google-api-diagnostic/v1",
+        "request_category": request_category,
+        "http_code": http_code,
+        "message_category": _message_category(status, reasons),
+        "metadata_keys": sorted(metadata_keys),
+        "workflow_run_id": workflow_run_id,
+        "preserved_build_id": preserved_build_id,
+    }
+    if code is not None:
+        diagnostic["google_error_code"] = code
+    if status is not None:
+        diagnostic["google_error_status"] = status
+    if reasons:
+        diagnostic["error_info_reasons"] = sorted(reasons)
+    if domains:
+        diagnostic["error_info_domains"] = sorted(domains)
+    if safe_metadata_values:
+        diagnostic["safe_metadata_values"] = {
+            key: sorted(values) for key, values in sorted(safe_metadata_values.items())
+        }
+    return diagnostic
+
+
+def google_api_response_disposition(
+    response_json: str,
+    http_status_file: str,
+    curl_exit_code: int,
+    request_category: str,
+    workflow_run_id: str,
+    preserved_build_id: str,
+) -> tuple[int, dict[str, Any] | None]:
+    """Return workflow exit disposition and an optional safe diagnostic."""
+    _require_google_api_context(request_category, workflow_run_id, preserved_build_id)
+    if curl_exit_code < 0 or curl_exit_code > 255:
+        raise SupplyChainError("GOOGLE_API_CURL_EXIT_CODE_INVALID")
+    if curl_exit_code != 0:
+        return 1, {
+            "contract": "resilio-phase4-google-api-diagnostic/v1",
+            "request_category": request_category,
+            "message_category": "TRANSPORT_FAILURE",
+            "curl_exit_code": curl_exit_code,
+            "workflow_run_id": workflow_run_id,
+            "preserved_build_id": preserved_build_id,
+        }
+    status_bytes = _read_bounded_bytes(http_status_file, 16, "GOOGLE_API_HTTP_STATUS")
+    try:
+        status_text = status_bytes.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise SupplyChainError("GOOGLE_API_HTTP_STATUS_INVALID") from exc
+    if not re.fullmatch(r"[1-5][0-9]{2}", status_text):
+        raise SupplyChainError("GOOGLE_API_HTTP_STATUS_INVALID")
+    http_code = int(status_text)
+    if 200 <= http_code < 300:
+        return 0, None
+    return 1, sanitize_google_api_error(
+        response_json,
+        http_code,
+        request_category,
+        workflow_run_id,
+        preserved_build_id,
+    )
 
 
 def image_tag(source_sha: str) -> str:
@@ -649,6 +854,7 @@ def main() -> int:
     p = commands.add_parser("verify-service"); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--expected-image", required=True); p.add_argument("--expected-source", required=True)
     p = commands.add_parser("verify-revision"); p.add_argument("--revision-json", required=True); p.add_argument("--expected-image", required=True)
     p = commands.add_parser("verify-health"); p.add_argument("--response-json", required=True); p.add_argument("--expected-source", required=True)
+    p = commands.add_parser("google-api-response"); p.add_argument("--response-json", required=True); p.add_argument("--http-status-file", required=True); p.add_argument("--curl-exit-code", required=True, type=int); p.add_argument("--request-category", required=True, choices=sorted(GOOGLE_API_REQUEST_CATEGORIES)); p.add_argument("--workflow-run-id", required=True); p.add_argument("--preserved-build-id", required=True)
     args = parser.parse_args()
     try:
         if args.command == "build-request":
@@ -686,8 +892,20 @@ def main() -> int:
             print(json.dumps(verify_cloud_run_service(_load_json(args.service_json), _load_json(args.policy_json), args.expected_image, args.expected_source), sort_keys=True, separators=(",", ":")))
         elif args.command == "verify-revision":
             verify_cloud_run_revision(_load_json(args.revision_json), args.expected_image)
-        else:
+        elif args.command == "verify-health":
             verify_health_response(_load_json(args.response_json), args.expected_source)
+        else:
+            exit_code, diagnostic = google_api_response_disposition(
+                args.response_json,
+                args.http_status_file,
+                args.curl_exit_code,
+                args.request_category,
+                args.workflow_run_id,
+                args.preserved_build_id,
+            )
+            if diagnostic is not None:
+                print(canonical_json_bytes(diagnostic).decode("utf-8"))
+            return exit_code
         return 0
     except (SupplyChainError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         print(f"PHASE4_SUPPLY_CHAIN_STOPPED:{exc}", file=sys.stderr)
