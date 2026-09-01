@@ -65,11 +65,12 @@ jobs:
             local HTTP_STATUS=""
             local CURL_EXIT_CODE=0
             rm -f "$RESPONSE_FILE" "$HTTP_STATUS_FILE" "$CURL_STDERR_FILE"
-            set +e
-            HTTP_STATUS="$(curl --silent --show-error --output "$RESPONSE_FILE" \
-              --write-out '%{http_code}' "$@" 2> "$CURL_STDERR_FILE")"
-            CURL_EXIT_CODE=$?
-            set -e
+            if HTTP_STATUS="$(curl --silent --show-error --output "$RESPONSE_FILE" \
+              --write-out '%{http_code}' "$@" 2> "$CURL_STDERR_FILE")"; then
+              CURL_EXIT_CODE=0
+            else
+              CURL_EXIT_CODE=$?
+            fi
             printf '%s\n' "$HTTP_STATUS" > "$HTTP_STATUS_FILE"
             python3 scripts/phase4_supply_chain.py google-api-response \
               --response-json "$RESPONSE_FILE" \
