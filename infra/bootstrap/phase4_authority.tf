@@ -60,7 +60,7 @@ resource "google_service_account" "phase4_runtime" {
 resource "google_service_account" "phase4_verifier" {
   project      = google_project.reference.project_id
   account_id   = "github-p4-verifier"
-  display_name = "GitHub Phase 4 verifier"
+  display_name = "Phase 4 proof verifier"
 
   depends_on = [
     google_project_service.control["iam.googleapis.com"],
@@ -250,7 +250,7 @@ resource "google_project_iam_member" "foundation_planner_phase4_control" {
 }
 
 resource "google_project_iam_member" "foundation_applier_phase4_control" {
-  project = google_project.control.project.id
+  project = google_project.control.project_id
   role    = google_project_iam_custom_role.phase4_foundation_control_applier.name
   member  = "serviceAccount:${google_service_account.foundation_applier.email}"
 }
