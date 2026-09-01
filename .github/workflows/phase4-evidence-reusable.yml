@@ -162,26 +162,62 @@ jobs:
           collect_occurrences "(kind=\"BUILD\" AND resourceUrl=\"$RESOURCE_URL\")" provenance PROVENANCE "$PROV"
           PROV_OCC="$(python3 scripts/phase4_supply_chain.py provenance-occurrence --occurrences-json "$PROV" --build-id "$BUILD_ID")"
 
-          EXPORT="$RUNNER_TEMP/export.json"
-          artifact_analysis_request EXPORT_SBOM "$EXPORT" -X POST \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "X-Goog-User-Project: resilio-control-e882d4" \
-            -H "Content-Type: application/json" \
-            --data '{"cloudStorageLocation":{}}' \
-            "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/resources/$ENCODED:exportSBOM"
-          SBOM_DISC="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("discoveryOccurrence",""))' "$EXPORT")"
-          test -n "$SBOM_DISC"
-
           SBOM_REF_RESPONSE="$RUNNER_TEMP/sbom-ref-response.json"
           SBOM="$RUNNER_TEMP/sbom.json"
           rm -f "$SBOM"
-          for _ in $(seq 1 30); do
-            collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference SBOM_REFERENCE "$SBOM_REF_RESPONSE"
-            if python3 scripts/phase4_supply_chain.py sbom-reference --occurrences-json "$SBOM_REF_RESPONSE" > "$SBOM" 2>/dev/null; then break; fi
+          collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference-precheck SBOM_REFERENCE "$SBOM_REF_RESPONSE"
+          SBOM_REF_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("occurrences") or []))' "$SBOM_REF_RESPONSE")"
+          test "$SBOM_REF_COUNT" -le 1
+          if test "$SBOM_REF_COUNT" -eq 1; then
+            python3 scripts/phase4_supply_chain.py sbom-reference --occurrences-json "$SBOM_REF_RESPONSE" > "$SBOM"
+            printf 'SBOM_REFERENCE_REUSED\n'
+          fi
+
+          if test ! -s "$SBOM"; then
+            EXPORT="$RUNNER_TEMP/export.json"
+            EXPORT_DIAGNOSTIC="$RUNNER_TEMP/export-diagnostic.json"
+            set +e
+            artifact_analysis_request EXPORT_SBOM "$EXPORT" -X POST \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "X-Goog-User-Project: resilio-control-e882d4" \
+              -H "Content-Type: application/json" \
+              --data '{"cloudStorageLocation":{}}' \
+              "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/resources/$ENCODED:exportSBOM" \
+              > "$EXPORT_DIAGNOSTIC"
+            EXPORT_RC=$?
+            set -e
+
+            if test "$EXPORT_RC" -eq 0; then
+              SBOM_DISC="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("discoveryOccurrence",""))' "$EXPORT")"
+              test -n "$SBOM_DISC"
+            else
+              test -s "$EXPORT_DIAGNOSTIC"
+              EXPORT_TRANSIENT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); c=d.get("http_code"); print("yes" if isinstance(c,int) and (c == 429 or 500 <= c <= 599) else "no")' "$EXPORT_DIAGNOSTIC")"
+              if test "$EXPORT_TRANSIENT" != "yes"; then
+                cat "$EXPORT_DIAGNOSTIC"
+                exit "$EXPORT_RC"
+              fi
+              printf 'EXPORT_SBOM_TRANSIENT_RECONCILE\n'
+            fi
+
             rm -f "$SBOM"
-            sleep 10
-          done
-          test -s "$SBOM"
+            for _ in $(seq 1 30); do
+              collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference SBOM_REFERENCE "$SBOM_REF_RESPONSE"
+              SBOM_REF_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("occurrences") or []))' "$SBOM_REF_RESPONSE")"
+              test "$SBOM_REF_COUNT" -le 1
+              if test "$SBOM_REF_COUNT" -eq 1; then
+                python3 scripts/phase4_supply_chain.py sbom-reference --occurrences-json "$SBOM_REF_RESPONSE" > "$SBOM"
+                break
+              fi
+              sleep 10
+            done
+            if test ! -s "$SBOM"; then
+              if test "$EXPORT_RC" -ne 0; then
+                cat "$EXPORT_DIAGNOSTIC"
+              fi
+              exit 1
+            fi
+          fi
 
           SBOM_BUCKET="$(python3 -c 'import json,sys; from urllib.parse import urlparse; p=urlparse(json.load(open(sys.argv[1]))["location"]); assert p.scheme == "gs" and p.netloc; print(p.netloc)' "$SBOM")"
           SBOM_OBJECT="$(python3 -c 'import json,sys; from urllib.parse import urlparse; p=urlparse(json.load(open(sys.argv[1]))["location"]); value=p.path.lstrip("/"); assert value; print(value)' "$SBOM")"
