@@ -24,7 +24,7 @@ EVIDENCE = ROOT / "docs/gcp-bootstrap-evidence.md"
 PHASE3_CONTROL_SEED_SHA = "cbfe9821ec07ca6c0c869ebe75100bc500c92a04"
 PHASE3_DRIFT_WORKFLOW_SHA = "2acbc425f688383375f724da7a4d80025dd9cc23"
 PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
-PHASE4_EVIDENCE_WORKFLOW_SHA = "f34343ee6c54b256e2f019df26ca4fc6e90eb16b"
+PHASE4_EVIDENCE_WORKFLOW_SHA = "1ea61e54f090d7eadb88055b1cb0763cf0a71cee"
 FOUNDATION_DRIFT_CONTROL_SEED_SHA = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
 PHASE4_DEPLOY_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
@@ -85,7 +85,7 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "356732806be5233b24c1fa2bdbfcd1b6a4c1c1c3",
+    "phase4_authority.tf": "19421dfd5fd6ad655baa55def280687a169fd1f6",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
