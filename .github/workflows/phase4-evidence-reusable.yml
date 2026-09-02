@@ -86,9 +86,17 @@ jobs:
             local PREFIX="$2"
             local REQUEST_CATEGORY="$3"
             local OUT="$4"
+            local LOCATION="${5:-}"
             local NEXT=""
             local PAGE_FILE=""
             local PAGES="$RUNNER_TEMP/$PREFIX-pages.json"
+            local ENDPOINT="https://containeranalysis.googleapis.com"
+            local PARENT="projects/resilio-control-e882d4"
+            if test -n "$LOCATION"; then
+              test "$LOCATION" = "us-central1"
+              ENDPOINT="https://containeranalysis.$LOCATION.rep.googleapis.com"
+              PARENT="$PARENT/locations/$LOCATION"
+            fi
             rm -f "$RUNNER_TEMP"/"$PREFIX"-page-*.json
             for PAGE in $(seq 1 100); do
               printf -v PAGE_FILE '%s/%s-page-%03d.json' "$RUNNER_TEMP" "$PREFIX" "$PAGE"
@@ -99,14 +107,14 @@ jobs:
                   --data-urlencode "filter=$FILTER" \
                   --data-urlencode "pageSize=1000" \
                   --data-urlencode "pageToken=$NEXT" \
-                  "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/occurrences"
+                  "$ENDPOINT/v1/$PARENT/occurrences"
               else
                 artifact_analysis_request "$REQUEST_CATEGORY" "$PAGE_FILE" -G \
                   -H "Authorization: Bearer $TOKEN" \
                   -H "X-Goog-User-Project: resilio-control-e882d4" \
                   --data-urlencode "filter=$FILTER" \
                   --data-urlencode "pageSize=1000" \
-                  "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/occurrences"
+                  "$ENDPOINT/v1/$PARENT/occurrences"
               fi
               NEXT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("nextPageToken", ""))' "$PAGE_FILE")"
               test -z "$NEXT" && break
@@ -139,6 +147,9 @@ jobs:
           IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$RESULT")"
           RESOURCE_URL="https://$IMAGE"
           ENCODED="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$RESOURCE_URL")"
+          ARTIFACT_ANALYSIS_LOCATION="${IMAGE%%-docker.pkg.dev/*}"
+          test "$ARTIFACT_ANALYSIS_LOCATION" = "us-central1"
+          ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT="https://containeranalysis.$ARTIFACT_ANALYSIS_LOCATION.rep.googleapis.com"
 
           DISC="$RUNNER_TEMP/discovery.json"
           VULN="$RUNNER_TEMP/vulnerabilities.json"
@@ -166,7 +177,7 @@ jobs:
           SBOM_REF_RESPONSE="$RUNNER_TEMP/sbom-ref-response.json"
           SBOM="$RUNNER_TEMP/sbom.json"
           rm -f "$SBOM"
-          collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference-precheck SBOM_REFERENCE "$SBOM_REF_RESPONSE"
+          collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference-precheck SBOM_REFERENCE "$SBOM_REF_RESPONSE" "$ARTIFACT_ANALYSIS_LOCATION"
           SBOM_REF_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("occurrences") or []))' "$SBOM_REF_RESPONSE")"
           test "$SBOM_REF_COUNT" -le 1
           if test "$SBOM_REF_COUNT" -eq 1; then
@@ -183,7 +194,7 @@ jobs:
               -H "X-Goog-User-Project: resilio-control-e882d4" \
               -H "Content-Type: application/json" \
               --data '{"cloudStorageLocation":{}}' \
-              "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/resources/$ENCODED:exportSBOM" \
+              "$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$ENCODED:exportSBOM" \
               > "$EXPORT_DIAGNOSTIC"
             EXPORT_RC=$?
             set -e
@@ -203,7 +214,7 @@ jobs:
 
             rm -f "$SBOM"
             for _ in $(seq 1 30); do
-              collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference SBOM_REFERENCE "$SBOM_REF_RESPONSE"
+              collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference SBOM_REFERENCE "$SBOM_REF_RESPONSE" "$ARTIFACT_ANALYSIS_LOCATION"
               SBOM_REF_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("occurrences") or []))' "$SBOM_REF_RESPONSE")"
               test "$SBOM_REF_COUNT" -le 1
               if test "$SBOM_REF_COUNT" -eq 1; then
