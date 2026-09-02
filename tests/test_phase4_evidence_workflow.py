@@ -54,10 +54,56 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
         self.assertNotIn("set -e", request_function)
         self.assertIn('if HTTP_STATUS="$(curl', request_function)
 
+    def test_sbom_regional_routing_is_selective(self) -> None:
+        text, _, _ = workflow_sections()
+
+        # Artifact Analysis stores SBOM data regionally. The workflow derives the
+        # region from the already validated immutable image identity and then
+        # requires the repository's exact governed Phase 4 region.
+        self.assertIn('ARTIFACT_ANALYSIS_LOCATION="${IMAGE%%-docker.pkg.dev/*}"', text)
+        self.assertIn('test "$ARTIFACT_ANALYSIS_LOCATION" = "us-central1"', text)
+        self.assertIn(
+            'ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT="https://containeranalysis.$ARTIFACT_ANALYSIS_LOCATION.rep.googleapis.com"',
+            text,
+        )
+
+        # The occurrence helper remains global by default and only switches when
+        # a location is supplied. This preserves build-provenance retrieval on
+        # the provider-documented global route.
+        self.assertIn('local LOCATION="${5:-}"', text)
+        self.assertIn('local ENDPOINT="https://containeranalysis.googleapis.com"', text)
+        self.assertIn('ENDPOINT="https://containeranalysis.$LOCATION.rep.googleapis.com"', text)
+        self.assertIn('PARENT="$PARENT/locations/$LOCATION"', text)
+        self.assertIn('"$ENDPOINT/v1/$PARENT/occurrences"', text)
+        self.assertNotIn(
+            'provenance PROVENANCE "$PROV" "$ARTIFACT_ANALYSIS_LOCATION"', text
+        )
+        self.assertNotIn(
+            'discovery DISCOVERY "$DISC" "$ARTIFACT_ANALYSIS_LOCATION"', text
+        )
+        self.assertNotIn(
+            'vulnerability VULNERABILITY "$VULN" "$ARTIFACT_ANALYSIS_LOCATION"', text
+        )
+
+        # Only SBOM-reference reads and the ExportSBOM POST use the regional
+        # endpoint/location-qualified API surface.
+        self.assertIn(
+            'sbom-reference-precheck SBOM_REFERENCE "$SBOM_REF_RESPONSE" "$ARTIFACT_ANALYSIS_LOCATION"',
+            text,
+        )
+        self.assertIn(
+            'sbom-reference SBOM_REFERENCE "$SBOM_REF_RESPONSE" "$ARTIFACT_ANALYSIS_LOCATION"',
+            text,
+        )
+        self.assertIn(
+            '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$ENCODED:exportSBOM"',
+            text,
+        )
+
     def _run_transient_harness(self, scenario: str) -> tuple[subprocess.CompletedProcess[str], int]:
         _, request_function, export_block = workflow_sections()
         valid_occurrence = (
-            '{"name":"projects/resilio-control-e882d4/occurrences/sbom-1",'
+            '{"name":"projects/resilio-control-e882d4/locations/us-central1/occurrences/sbom-1",'
             '"sbomReference":{"payload":{"predicate":{'
             '"location":"gs://sbom-bucket/sbom.json",'
             '"digest":{"sha256":"' + ("0" * 64) + '"}}}}}'
@@ -74,6 +120,8 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
             + ("1" * 64)
             + '"\n'
             'ENCODED="test-resource"\n'
+            'ARTIFACT_ANALYSIS_LOCATION="us-central1"\n'
+            'ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT="https://containeranalysis.us-central1.rep.googleapis.com"\n'
             'POST_COUNT="$RUNNER_TEMP/post-count"\n\n'
             + request_function
             + "\n\n"
@@ -96,7 +144,7 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
             + "}\n\n"
             + "sleep() { :; }\n\n"
             + "collect_occurrences() {\n"
-            + '  local _filter="$1" prefix="$2" _category="$3" out="$4"\n'
+            + '  local _filter="$1" prefix="$2" _category="$3" out="$4" _location="${5:-}"\n'
             + '  if test "$prefix" = "sbom-reference-precheck"; then\n'
             + "    printf '%s\\n' '{\"occurrences\":[]}' > \"$out\"\n"
             + "    return 0\n"
