@@ -146,7 +146,6 @@ jobs:
           python3 scripts/phase4_evidence_readback.py --build-json "$BUILD" --source-sha "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA" > "$RESULT"
           IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$RESULT")"
           RESOURCE_URL="https://$IMAGE"
-          ENCODED="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$RESOURCE_URL")"
           ARTIFACT_ANALYSIS_LOCATION="${IMAGE%%-docker.pkg.dev/*}"
           test "$ARTIFACT_ANALYSIS_LOCATION" = "us-central1"
           ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT="https://containeranalysis.$ARTIFACT_ANALYSIS_LOCATION.rep.googleapis.com"
@@ -194,7 +193,7 @@ jobs:
               -H "X-Goog-User-Project: resilio-control-e882d4" \
               -H "Content-Type: application/json" \
               --data '{"cloudStorageLocation":{}}' \
-              "$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$ENCODED:exportSBOM" \
+              "$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM" \
               > "$EXPORT_DIAGNOSTIC"
             EXPORT_RC=$?
             set -e
