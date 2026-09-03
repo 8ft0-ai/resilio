@@ -197,10 +197,20 @@ def main() -> int:
     for line in evidence.splitlines():
         if "containeranalysis.googleapis.com" in line and "> \"$" in line:
             errors.append("Artifact Analysis responses must use private body/status capture")
+        if "urllib.parse.quote" in line and '"$RESOURCE_URL"' in line:
+            errors.append("Artifact Analysis SBOM export must preserve reserved RESOURCE_URL characters")
     if evidence.count("artifact_analysis_request \"$REQUEST_CATEGORY\"") != 2:
         errors.append("Artifact Analysis occurrence-list calls must use the diagnostic request wrapper")
     if evidence.count("artifact_analysis_request EXPORT_SBOM") != 1:
         errors.append("Artifact Analysis SBOM export must use the diagnostic request wrapper")
+    if 'RESOURCE_URL="https://$IMAGE"' not in evidence:
+        errors.append("Artifact Analysis resource URL must remain bound to the validated immutable image")
+    expected_export_url = (
+        '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/'
+        'locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"'
+    )
+    if expected_export_url not in evidence:
+        errors.append("Artifact Analysis SBOM export must use v1 reserved resource-name expansion")
 
     deploy = (ROOT / ".github/workflows/phase4-deploy-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reusable.yml").is_file() else ""
     for forbidden in ("setIamPolicy", "invokerIamDisabled", "allUsers", "allAuthenticatedUsers", "docker build", "cloudbuild.googleapis.com"):
