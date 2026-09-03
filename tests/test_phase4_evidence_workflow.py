@@ -96,7 +96,7 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
             text,
         )
         self.assertIn(
-            '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$ENCODED:exportSBOM"',
+            '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"',
             text,
         )
 
@@ -119,7 +119,6 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
             'RESOURCE_URL="https://us-central1-docker.pkg.dev/resilio-control-e882d4/resilio-phase4/phase4-proof@sha256:'
             + ("1" * 64)
             + '"\n'
-            'ENCODED="test-resource"\n'
             'ARTIFACT_ANALYSIS_LOCATION="us-central1"\n'
             'ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT="https://containeranalysis.us-central1.rep.googleapis.com"\n'
             'POST_COUNT="$RUNNER_TEMP/post-count"\n\n'
