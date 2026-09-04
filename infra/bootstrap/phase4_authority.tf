@@ -1,6 +1,6 @@
 locals {
   phase4_control_seed_sha                  = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
-  phase4_evidence_workflow_sha             = "f973489cfb74046c1a7e1de60437cb6ae13dcf89"
+  phase4_evidence_workflow_sha             = "a9e4832b48cac4ad2e4f916e37aceafe7f93b9aa"
   phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_control_seed_sha}"
   phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"
   phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@c70afa19c487f6f8d18720028db8e6379fbeed44"
@@ -40,7 +40,7 @@ resource "google_service_account" "phase4_evidence" {
 resource "google_service_account" "phase4_deployer" {
   project      = google_project.reference.project_id
   account_id   = "github-p4-deployer"
-  display_name = "GitHub Phase 4 deployer"
+  display_name = "Phase 4 Cloud Run deployer"
 
   depends_on = [
     google_project_service.control["iam.googleapis.com"],
@@ -60,7 +60,7 @@ resource "google_service_account" "phase4_runtime" {
 resource "google_service_account" "phase4_verifier" {
   project      = google_project.reference.project_id
   account_id   = "github-p4-verifier"
-  display_name = "GitHub Phase 4 verifier"
+  display_name = "Phase 4 verifier"
 
   depends_on = [
     google_project_service.control["iam.googleapis.com"],
