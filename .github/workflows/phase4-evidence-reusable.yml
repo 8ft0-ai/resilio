@@ -191,15 +191,13 @@ jobs:
             artifact_analysis_request EXPORT_SBOM "$EXPORT" -X POST \
               -H "Authorization: Bearer $TOKEN" \
               -H "X-Goog-User-Project: resilio-control-e882d4" \
-              -H "Content-Type: application/json" \
-              --data '{"cloudStorageLocation":{}}' \
-              "$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM" \
+              "$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1beta1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM" \
               > "$EXPORT_DIAGNOSTIC"
             EXPORT_RC=$?
             set -e
 
             if test "$EXPORT_RC" -eq 0; then
-              SBOM_DISC="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("discoveryOccurrence",""))' "$EXPORT")"
+              SBOM_DISC="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("discoveryOccurrenceId",""))' "$EXPORT")"
               test -n "$SBOM_DISC"
             else
               test -s "$EXPORT_DIAGNOSTIC"
