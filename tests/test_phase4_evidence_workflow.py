@@ -55,7 +55,7 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
         self.assertIn('if HTTP_STATUS="$(curl', request_function)
 
     def test_sbom_regional_routing_is_selective(self) -> None:
-        text, _, _ = workflow_sections()
+        text, _, export_block = workflow_sections()
 
         # Artifact Analysis stores SBOM data regionally. The workflow derives the
         # region from the already validated immutable image identity and then
@@ -68,8 +68,7 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
         )
 
         # The occurrence helper remains global by default and only switches when
-        # a location is supplied. This preserves build-provenance retrieval on
-        # the provider-documented global route.
+        # a location is supplied. Occurrence reads remain on the working v1 API.
         self.assertIn('local LOCATION="${5:-}"', text)
         self.assertIn('local ENDPOINT="https://containeranalysis.googleapis.com"', text)
         self.assertIn('ENDPOINT="https://containeranalysis.$LOCATION.rep.googleapis.com"', text)
@@ -86,7 +85,9 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
         )
 
         # Only SBOM-reference reads and the ExportSBOM POST use the regional
-        # endpoint/location-qualified API surface.
+        # endpoint/location-qualified surface. The live ExportSBOM path follows
+        # the currently shipped gcloud v1beta1 contract: empty body and
+        # discoveryOccurrenceId response field.
         self.assertIn(
             'sbom-reference-precheck SBOM_REFERENCE "$SBOM_REF_RESPONSE" "$ARTIFACT_ANALYSIS_LOCATION"',
             text,
@@ -96,9 +97,18 @@ class Phase4EvidenceWorkflowTests(unittest.TestCase):
             text,
         )
         self.assertIn(
+            '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1beta1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"',
+            text,
+        )
+        self.assertNotIn(
             '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"',
             text,
         )
+        export_call = export_block[export_block.index("artifact_analysis_request EXPORT_SBOM"):export_block.index("EXPORT_RC=$?")]
+        self.assertNotIn("--data", export_call)
+        self.assertNotIn("cloudStorageLocation", export_call)
+        self.assertIn('get("discoveryOccurrenceId","")', export_block)
+        self.assertNotIn('get("discoveryOccurrence","")', export_block)
 
     def _run_transient_harness(self, scenario: str) -> tuple[subprocess.CompletedProcess[str], int]:
         _, request_function, export_block = workflow_sections()

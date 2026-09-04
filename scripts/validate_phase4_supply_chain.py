@@ -206,11 +206,21 @@ def main() -> int:
     if 'RESOURCE_URL="https://$IMAGE"' not in evidence:
         errors.append("Artifact Analysis resource URL must remain bound to the validated immutable image")
     expected_export_url = (
-        '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/'
+        '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1beta1/projects/resilio-control-e882d4/'
         'locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"'
     )
     if expected_export_url not in evidence:
-        errors.append("Artifact Analysis SBOM export must use v1 reserved resource-name expansion")
+        errors.append("Artifact Analysis SBOM export must use the regional v1beta1 resource-name expansion")
+    forbidden_v1_export_url = (
+        '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/'
+        'locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"'
+    )
+    if forbidden_v1_export_url in evidence:
+        errors.append("Artifact Analysis SBOM export must not use the live-failing v1 route")
+    if '--data \'{"cloudStorageLocation":{}}\'' in evidence:
+        errors.append("Artifact Analysis v1beta1 SBOM export request body must remain empty")
+    if 'get("discoveryOccurrenceId","")' not in evidence:
+        errors.append("Artifact Analysis v1beta1 SBOM export must validate discoveryOccurrenceId")
 
     deploy = (ROOT / ".github/workflows/phase4-deploy-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reusable.yml").is_file() else ""
     for forbidden in ("setIamPolicy", "invokerIamDisabled", "allUsers", "allAuthenticatedUsers", "docker build", "cloudbuild.googleapis.com"):
