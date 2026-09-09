@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKOUT_SHA = "11d5960a326750d5838078e36cf38b85af677262"
 AUTH_SHA = "7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
 PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
+PHASE4_BUILD_WORKFLOW_SHA = "5a800f8216f52effc216b3ef77f2c95aa20010a5"
 PHASE4_EVIDENCE_WORKFLOW_SHA = "a9e4832b48cac4ad2e4f916e37aceafe7f93b9aa"
 BUILD_TEST_PYTHON_DIGEST = "ed3a4beb46f8f8baac068743ba1b1f95ea3f793422129cf6dd23967f779b6018"
 PROOF_RUNTIME_DIGEST = "f2b206661cee3edb44f132d7f054a9ced96f671d8a973de0db750895c9acb2fb"
@@ -127,7 +128,7 @@ def main() -> int:
     build_caller = caller_text.get(".github/workflows/phase4-build.yml", "")
     expected_build_use = (
         "uses: 8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@"
-        + PHASE4_CONTROL_SEED_SHA
+        + PHASE4_BUILD_WORKFLOW_SHA
     )
     if expected_build_use not in build_caller:
         errors.append("Phase 4 build caller must pin the reviewed immutable build reusable workflow")
