@@ -27,6 +27,6 @@ jobs:
       contents: read
       issues: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@a9e4832b48cac4ad2e4f916e37aceafe7f93b9aa
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@260d7414a9e0d722e277fb0b577aff77a64c80b7
     with:
       build_id: ${{ inputs.build_id }}
