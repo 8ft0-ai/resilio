@@ -10,9 +10,11 @@ The exact `agentctl` baseline adopted for this pilot is:
 
 ```text
 repository: 8ft0-ai/agentctl
-commit:     3d0bafa653f9d90349f22b5669fbe05c2a4becb4
-tree:       29462eb2e71693f7c26cdbbf67217bacaf4e0392
+commit:     4be0233d104db98ec11b57355f52eb5a2e3d33cf
+tree:       a003b1c4770e07b37de065d1d2e575d5c77c0361
 ```
+
+This exact baseline is the smallest later stable revision adopted for the current Resilio need: it includes the reviewed `agentctl#40` / PR #41 fix that accepts Terraform 1.15.8 output `actions: ["no-op"]` as structural evidence while retaining fail-closed handling for unknown output actions. No unrelated later `agentctl` capability is adopted by this bump.
 
 This baseline provides the stable read-only capabilities used or available to this pilot:
 
@@ -38,7 +40,7 @@ Before relying on `agentctl` evidence for a decision-critical Resilio boundary, 
 For an owner-local checkout path stored in `AGENTCTL_REPO`:
 
 ```bash
-AGENTCTL_SHA=3d0bafa653f9d90349f22b5669fbe05c2a4becb4
+AGENTCTL_SHA=4be0233d104db98ec11b57355f52eb5a2e3d33cf
 AGENTCTL_PYTHON="$AGENTCTL_REPO/.venv/bin/python"
 
 test "$(git -C "$AGENTCTL_REPO" rev-parse HEAD)" = "$AGENTCTL_SHA"
