@@ -146,9 +146,6 @@ jobs:
           python3 scripts/phase4_evidence_readback.py --build-json "$BUILD" --source-sha "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA" > "$RESULT"
           IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$RESULT")"
           RESOURCE_URL="https://$IMAGE"
-          ARTIFACT_ANALYSIS_LOCATION="${IMAGE%%-docker.pkg.dev/*}"
-          test "$ARTIFACT_ANALYSIS_LOCATION" = "us-central1"
-          ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT="https://containeranalysis.$ARTIFACT_ANALYSIS_LOCATION.rep.googleapis.com"
 
           DISC="$RUNNER_TEMP/discovery.json"
           VULN="$RUNNER_TEMP/vulnerabilities.json"
@@ -173,83 +170,52 @@ jobs:
           collect_occurrences "(kind=\"BUILD\" AND resourceUrl=\"$RESOURCE_URL\")" provenance PROVENANCE "$PROV"
           PROV_OCC="$(python3 scripts/phase4_supply_chain.py provenance-occurrence --occurrences-json "$PROV" --build-id "$BUILD_ID")"
 
-          SBOM_REF_RESPONSE="$RUNNER_TEMP/sbom-ref-response.json"
-          SBOM="$RUNNER_TEMP/sbom.json"
-          rm -f "$SBOM"
-          collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference-precheck SBOM_REFERENCE "$SBOM_REF_RESPONSE" "$ARTIFACT_ANALYSIS_LOCATION"
-          SBOM_REF_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("occurrences") or []))' "$SBOM_REF_RESPONSE")"
-          test "$SBOM_REF_COUNT" -le 1
-          if test "$SBOM_REF_COUNT" -eq 1; then
-            python3 scripts/phase4_supply_chain.py sbom-reference --occurrences-json "$SBOM_REF_RESPONSE" > "$SBOM"
-            printf 'SBOM_REFERENCE_REUSED\n'
-          fi
+          GENERATOR_SPEC="$RUNNER_TEMP/sbom-generator.json"
+          python3 scripts/phase4_repository_sbom.py generator-spec > "$GENERATOR_SPEC"
+          SYFT_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"])' "$GENERATOR_SPEC")"
+          SYFT_ASSET="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["asset"])' "$GENERATOR_SPEC")"
+          SYFT_ARCHIVE="$RUNNER_TEMP/$SYFT_ASSET"
+          SYFT_DIR="$RUNNER_TEMP/syft"
+          mkdir -m 0700 "$SYFT_DIR"
+          curl --fail-with-body --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "$SYFT_URL" > "$SYFT_ARCHIVE"
+          python3 scripts/phase4_repository_sbom.py verify-archive --archive "$SYFT_ARCHIVE"
+          tar -xzf "$SYFT_ARCHIVE" -C "$SYFT_DIR" syft
+          SYFT_BIN="$SYFT_DIR/syft"
+          test -x "$SYFT_BIN"
+          SYFT_VERSION="$RUNNER_TEMP/syft-version.txt"
+          "$SYFT_BIN" version > "$SYFT_VERSION"
+          python3 scripts/phase4_repository_sbom.py verify-version --version-file "$SYFT_VERSION"
 
-          if test ! -s "$SBOM"; then
-            EXPORT="$RUNNER_TEMP/export.json"
-            EXPORT_DIAGNOSTIC="$RUNNER_TEMP/export-diagnostic.json"
-            set +e
-            artifact_analysis_request EXPORT_SBOM "$EXPORT" -X POST \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "X-Goog-User-Project: resilio-control-e882d4" \
-              "$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1beta1/projects/resilio-control-e882d4/locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM" \
-              > "$EXPORT_DIAGNOSTIC"
-            EXPORT_RC=$?
-            set -e
+          SBOM_CONTENT="$RUNNER_TEMP/sbom.spdx.json"
+          SYFT_REGISTRY_AUTH_AUTHORITY="us-central1-docker.pkg.dev" \
+          SYFT_REGISTRY_AUTH_USERNAME="oauth2accesstoken" \
+          SYFT_REGISTRY_AUTH_PASSWORD="$TOKEN" \
+            "$SYFT_BIN" "$IMAGE" -o "spdx-json=$SBOM_CONTENT"
+          test -s "$SBOM_CONTENT"
 
-            if test "$EXPORT_RC" -eq 0; then
-              SBOM_DISC="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("discoveryOccurrenceId",""))' "$EXPORT")"
-              test -n "$SBOM_DISC"
-            else
-              test -s "$EXPORT_DIAGNOSTIC"
-              EXPORT_TRANSIENT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); c=d.get("http_code"); print("yes" if isinstance(c,int) and (c == 429 or 500 <= c <= 599) else "no")' "$EXPORT_DIAGNOSTIC")"
-              if test "$EXPORT_TRANSIENT" != "yes"; then
-                cat "$EXPORT_DIAGNOSTIC"
-                exit "$EXPORT_RC"
-              fi
-              printf 'EXPORT_SBOM_TRANSIENT_RECONCILE\n'
-            fi
-
-            rm -f "$SBOM"
-            for _ in $(seq 1 30); do
-              collect_occurrences "(kind=\"SBOM_REFERENCE\" AND resourceUrl=\"$RESOURCE_URL\")" sbom-reference SBOM_REFERENCE "$SBOM_REF_RESPONSE" "$ARTIFACT_ANALYSIS_LOCATION"
-              SBOM_REF_COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("occurrences") or []))' "$SBOM_REF_RESPONSE")"
-              test "$SBOM_REF_COUNT" -le 1
-              if test "$SBOM_REF_COUNT" -eq 1; then
-                python3 scripts/phase4_supply_chain.py sbom-reference --occurrences-json "$SBOM_REF_RESPONSE" > "$SBOM"
-                break
-              fi
-              sleep 10
-            done
-            if test ! -s "$SBOM"; then
-              if test "$EXPORT_RC" -ne 0; then
-                cat "$EXPORT_DIAGNOSTIC"
-              fi
-              exit 1
-            fi
-          fi
-
-          SBOM_BUCKET="$(python3 -c 'import json,sys; from urllib.parse import urlparse; p=urlparse(json.load(open(sys.argv[1]))["location"]); assert p.scheme == "gs" and p.netloc; print(p.netloc)' "$SBOM")"
-          SBOM_OBJECT="$(python3 -c 'import json,sys; from urllib.parse import urlparse; p=urlparse(json.load(open(sys.argv[1]))["location"]); value=p.path.lstrip("/"); assert value; print(value)' "$SBOM")"
+          SBOM_OBJECT="$(python3 scripts/phase4_repository_sbom.py object --build-id "$BUILD_ID")"
           ENCODED_SBOM_OBJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$SBOM_OBJECT")"
-          SBOM_METADATA="$RUNNER_TEMP/sbom-metadata.json"
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $TOKEN" \
-            "https://storage.googleapis.com/storage/v1/b/$SBOM_BUCKET/o/$ENCODED_SBOM_OBJECT" > "$SBOM_METADATA"
-          SBOM_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("generation", ""))' "$SBOM_METADATA")"
-          [[ "$SBOM_GENERATION" =~ ^[1-9][0-9]*$ ]]
-          SBOM_CONTENT="$RUNNER_TEMP/sbom-content"
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $TOKEN" \
-            "https://storage.googleapis.com/storage/v1/b/$SBOM_BUCKET/o/$ENCODED_SBOM_OBJECT?alt=media&generation=$SBOM_GENERATION" > "$SBOM_CONTENT"
+          SBOM_UPLOAD="$RUNNER_TEMP/sbom-upload.json"
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary "@$SBOM_CONTENT" \
+            "https://storage.googleapis.com/upload/storage/v1/b/resilio-control-e882d4-phase4-evidence/o?uploadType=media&name=$ENCODED_SBOM_OBJECT&ifGenerationMatch=0" \
+            > "$SBOM_UPLOAD"
+
           BOUND_SBOM="$RUNNER_TEMP/bound-sbom.json"
-          python3 scripts/phase4_supply_chain.py bind-sbom \
-            --sbom-json "$SBOM" --metadata-json "$SBOM_METADATA" --content-file "$SBOM_CONTENT" > "$BOUND_SBOM"
+          python3 scripts/phase4_repository_sbom.py bind \
+            --image "$IMAGE" --build-id "$BUILD_ID" \
+            --metadata-json "$SBOM_UPLOAD" --content-file "$SBOM_CONTENT" --output "$BOUND_SBOM"
 
           MANIFEST="$RUNNER_TEMP/transition.json"
           python3 scripts/phase4_supply_chain.py make-transition \
             --build-result "$RESULT" --source-tree-sha "$SOURCE_TREE_SHA" \
             --provenance-occurrence "$PROV_OCC" --sbom-json "$BOUND_SBOM" --output "$MANIFEST"
           python3 scripts/phase4_supply_chain.py validate-transition --manifest "$MANIFEST"
+          python3 scripts/phase4_repository_sbom.py validate-transition \
+            --manifest "$MANIFEST" --image "$IMAGE" --build-id "$BUILD_ID" \
+            --content-file "$SBOM_CONTENT"
 
           OBJECT="transitions/$BUILD_ID.json"
           ENCODED_OBJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$OBJECT")"

@@ -15,6 +15,8 @@ PHASE4_EVIDENCE_WORKFLOW_SHA = "260d7414a9e0d722e277fb0b577aff77a64c80b7"
 BUILD_TEST_PYTHON_DIGEST = "ed3a4beb46f8f8baac068743ba1b1f95ea3f793422129cf6dd23967f779b6018"
 PROOF_RUNTIME_DIGEST = "f2b206661cee3edb44f132d7f054a9ced96f671d8a973de0db750895c9acb2fb"
 DOCKER_BUILDER_DIGEST = "154fcd4d2d65c6a35b06b98053a0829c581e223d530be5719326f5d85d680e8d"
+SYFT_VERSION = "1.51.1"
+SYFT_ARCHIVE_SHA256 = "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3"
 
 REUSABLE = (
     ".github/workflows/phase4-build-reusable.yml",
@@ -27,7 +29,9 @@ CALLERS = (
 )
 REQUIRED = REUSABLE + CALLERS + (
     "scripts/phase4_supply_chain.py",
+    "scripts/phase4_repository_sbom.py",
     "tests/test_phase4_supply_chain.py",
+    "tests/test_phase4_repository_sbom.py",
     "services/phase4-proof/app.py",
     "services/phase4-proof/test_app.py",
     "services/phase4-proof/Dockerfile",
@@ -187,47 +191,53 @@ def main() -> int:
 
     evidence = (ROOT / ".github/workflows/phase4-evidence-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-evidence-reusable.yml").is_file() else ""
     for token in (
-        "github-p4-evidence@", "scan-disposition", ":exportSBOM", "SBOM_REFERENCE",
-        "ifGenerationMatch=0", "artifact_analysis_request", "--write-out '%{http_code}'",
+        "github-p4-evidence@", "scan-disposition", "provenance-occurrence",
+        "phase4_repository_sbom.py", "generator-spec", "verify-archive", "verify-version",
+        'SYFT_REGISTRY_AUTH_AUTHORITY="us-central1-docker.pkg.dev"',
+        'SYFT_REGISTRY_AUTH_USERNAME="oauth2accesstoken"',
+        '"$SYFT_BIN" "$IMAGE" -o "spdx-json=$SBOM_CONTENT"',
+        'SBOM_OBJECT="$(python3 scripts/phase4_repository_sbom.py object --build-id "$BUILD_ID")"',
+        "transitions/$BUILD_ID.json", "ifGenerationMatch=0",
+        "artifact_analysis_request", "--write-out '%{http_code}'",
         "google-api-response", "--http-status-file", "--curl-exit-code",
         "CURL_STDERR_FILE", '2> "$CURL_STDERR_FILE"',
-        "DISCOVERY", "VULNERABILITY", "PROVENANCE", "EXPORT_SBOM",
+        "DISCOVERY", "VULNERABILITY", "PROVENANCE",
     ):
         if token not in evidence:
             errors.append(f"evidence reusable missing fail-closed evidence control: {token}")
-    for line in evidence.splitlines():
-        if "containeranalysis.googleapis.com" in line and "> \"$" in line:
-            errors.append("Artifact Analysis responses must use private body/status capture")
-        if "urllib.parse.quote" in line and '"$RESOURCE_URL"' in line:
-            errors.append("Artifact Analysis SBOM export must preserve reserved RESOURCE_URL characters")
-    if evidence.count("artifact_analysis_request \"$REQUEST_CATEGORY\"") != 2:
+    for forbidden in (":exportSBOM", "EXPORT_SBOM", "SBOM_REFERENCE", "cloudStorageLocation"):
+        if forbidden in evidence:
+            errors.append(f"evidence reusable retains provider-native SBOM path: {forbidden}")
+    if evidence.count('artifact_analysis_request "$REQUEST_CATEGORY"') != 2:
         errors.append("Artifact Analysis occurrence-list calls must use the diagnostic request wrapper")
-    if evidence.count("artifact_analysis_request EXPORT_SBOM") != 1:
-        errors.append("Artifact Analysis SBOM export must use the diagnostic request wrapper")
     if 'RESOURCE_URL="https://$IMAGE"' not in evidence:
         errors.append("Artifact Analysis resource URL must remain bound to the validated immutable image")
-    expected_export_url = (
-        '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1beta1/projects/resilio-control-e882d4/'
-        'locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"'
-    )
-    if expected_export_url not in evidence:
-        errors.append("Artifact Analysis SBOM export must use the regional v1beta1 resource-name expansion")
-    forbidden_v1_export_url = (
-        '"$ARTIFACT_ANALYSIS_REGIONAL_ENDPOINT/v1/projects/resilio-control-e882d4/'
-        'locations/$ARTIFACT_ANALYSIS_LOCATION/resources/$RESOURCE_URL:exportSBOM"'
-    )
-    if forbidden_v1_export_url in evidence:
-        errors.append("Artifact Analysis SBOM export must not use the live-failing v1 route")
-    if '--data \'{"cloudStorageLocation":{}}\'' in evidence:
-        errors.append("Artifact Analysis v1beta1 SBOM export request body must remain empty")
-    if 'get("discoveryOccurrenceId","")' not in evidence:
-        errors.append("Artifact Analysis v1beta1 SBOM export must validate discoveryOccurrenceId")
+    if evidence.count("ifGenerationMatch=0") != 2:
+        errors.append("SBOM and transition uploads must both preserve immutable-create semantics")
+    if "syft:latest" in evidence.lower() or "releases/latest" in evidence.lower():
+        errors.append("Phase 4 evidence reusable must not contain mutable Syft latest authority")
+
+    repository_sbom = (ROOT / "scripts/phase4_repository_sbom.py").read_text(encoding="utf-8") if (ROOT / "scripts/phase4_repository_sbom.py").is_file() else ""
+    for token in (
+        f'GENERATOR_VERSION = "{SYFT_VERSION}"',
+        f'GENERATOR_ARCHIVE_SHA256 = "{SYFT_ARCHIVE_SHA256}"',
+        'GENERATOR_OUTPUT_FORMAT = "spdx-json"',
+        'return f"transitions/{build_id}.sbom.spdx.json"',
+        "SBOM_IMAGE_DIGEST_INVALID",
+        "SBOM_GENERATOR_CHECKSUM_MISMATCH",
+        "SBOM_GENERATOR_VERSION_MISMATCH",
+        "SBOM_STORAGE_OBJECT_MISMATCH",
+        "SBOM_CONTENT_DIGEST_MISMATCH",
+        "SBOM_BINDING_DIGEST_MISMATCH",
+        '"contract": "resilio-phase4-sbom-binding/v1"',
+    ):
+        if token not in repository_sbom:
+            errors.append(f"repository SBOM helper missing immutable/fail-closed control: {token}")
+    if ":latest" in repository_sbom or re.search(r'"latest"', repository_sbom):
+        errors.append("repository SBOM helper must not contain mutable latest authority")
 
     deploy = (ROOT / ".github/workflows/phase4-deploy-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reusable.yml").is_file() else ""
-    for forbidden in ("setIamPolicy", "invokerIamDisabled", "allUsers", "allAuthenticatedUsers", "docker build", "cloudbuild.googleapis.com"):
-        if forbidden == "allUsers" or forbidden == "allAuthenticatedUsers":
-            # The verifier must explicitly reject these strings, so their presence is required.
-            continue
+    for forbidden in ("setIamPolicy", "invokerIamDisabled", "docker build", "cloudbuild.googleapis.com"):
         if forbidden in deploy:
             errors.append(f"deploy reusable contains forbidden mutation path: {forbidden}")
     for required in ("validate-transition", "allowMissing=true", "phase4-proof", "github-p4-verifier@", "id_token"):
