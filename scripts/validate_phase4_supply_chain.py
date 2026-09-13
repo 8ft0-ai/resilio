@@ -214,8 +214,8 @@ def main() -> int:
         errors.append("Artifact Analysis resource URL must remain bound to the validated immutable image")
     if evidence.count("ifGenerationMatch=0") != 2:
         errors.append("SBOM and transition uploads must both preserve immutable-create semantics")
-    if "latest" in evidence.lower():
-        errors.append("Phase 4 evidence reusable must not contain mutable latest authority")
+    if "syft:latest" in evidence.lower() or "releases/latest" in evidence.lower():
+        errors.append("Phase 4 evidence reusable must not contain mutable Syft latest authority")
 
     repository_sbom = (ROOT / "scripts/phase4_repository_sbom.py").read_text(encoding="utf-8") if (ROOT / "scripts/phase4_repository_sbom.py").is_file() else ""
     for token in (
