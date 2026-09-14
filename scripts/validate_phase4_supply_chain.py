@@ -32,6 +32,7 @@ REQUIRED = REUSABLE + CALLERS + (
     "scripts/phase4_repository_sbom.py",
     "tests/test_phase4_supply_chain.py",
     "tests/test_phase4_repository_sbom.py",
+    "tests/test_phase4_evidence_workflow.py",
     "services/phase4-proof/app.py",
     "services/phase4-proof/test_app.py",
     "services/phase4-proof/Dockerfile",
@@ -195,7 +196,14 @@ def main() -> int:
         "phase4_repository_sbom.py", "generator-spec", "verify-archive", "verify-version",
         'SYFT_REGISTRY_AUTH_AUTHORITY="us-central1-docker.pkg.dev"',
         'SYFT_REGISTRY_AUTH_USERNAME="oauth2accesstoken"',
-        '"$SYFT_BIN" "$IMAGE" -o "spdx-json=$SBOM_CONTENT"',
+        '"$SYFT_BIN" "$IMAGE" \\',
+        '-o "spdx-json=$SBOM_CONTENT"',
+        '-o "syft-json=$SBOM_SYFT_JSON"',
+        "verify-resolved-digest",
+        "phase4_repository_sbom.py generation",
+        "SBOM_READBACK_METADATA", "SBOM_READBACK_CONTENT",
+        "generation=$SBOM_GENERATION",
+        "download/storage/v1/b/resilio-control-e882d4-phase4-evidence/o/",
         'SBOM_OBJECT="$(python3 scripts/phase4_repository_sbom.py object --build-id "$BUILD_ID")"',
         "transitions/$BUILD_ID.json", "ifGenerationMatch=0",
         "artifact_analysis_request", "--write-out '%{http_code}'",
@@ -214,6 +222,10 @@ def main() -> int:
         errors.append("Artifact Analysis resource URL must remain bound to the validated immutable image")
     if evidence.count("ifGenerationMatch=0") != 2:
         errors.append("SBOM and transition uploads must both preserve immutable-create semantics")
+    if evidence.count('"$SYFT_BIN" "$IMAGE" \\') != 1:
+        errors.append("Phase 4 evidence must perform exactly one governed Syft scan")
+    if evidence.count("generation=$SBOM_GENERATION") != 2:
+        errors.append("SBOM readback metadata and bytes must both target the exact created generation")
     if "syft:latest" in evidence.lower() or "releases/latest" in evidence.lower():
         errors.append("Phase 4 evidence reusable must not contain mutable Syft latest authority")
 
@@ -229,7 +241,13 @@ def main() -> int:
         "SBOM_STORAGE_OBJECT_MISMATCH",
         "SBOM_CONTENT_DIGEST_MISMATCH",
         "SBOM_BINDING_DIGEST_MISMATCH",
-        '"contract": "resilio-phase4-sbom-binding/v1"',
+        "resolved_manifest_digest",
+        "SBOM_GENERATOR_MANIFEST_DIGEST_INVALID",
+        "SBOM_GENERATOR_MANIFEST_DIGEST_AMBIGUOUS",
+        "SBOM_GENERATOR_MANIFEST_DIGEST_MISMATCH",
+        "SBOM_STORAGE_READBACK_IDENTITY_MISMATCH",
+        "SBOM_STORAGE_READBACK_DIGEST_MISMATCH",
+        '"contract": "resilio-phase4-sbom-binding/v2"',
     ):
         if token not in repository_sbom:
             errors.append(f"repository SBOM helper missing immutable/fail-closed control: {token}")
