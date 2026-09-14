@@ -28,6 +28,8 @@ GENERATOR_ARCHIVE_SHA256 = "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248
 GENERATOR_OUTPUT_FORMAT = "spdx-json"
 
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+REPO_DIGEST_REF = re.compile(r"^.+@(sha256:[0-9a-f]{64})$")
 BUILD_ID = re.compile(r"^[0-9a-f-]{8,64}$")
 IMAGE_DIGEST_REF = re.compile(rf"^{re.escape(IMAGE_PREFIX)}@sha256:[0-9a-f]{{64}}$")
 SYFT_VERSION_LINE = re.compile(r"^Version:\s*1\.51\.1\s*$", re.MULTILINE)
@@ -66,6 +68,38 @@ def require_exact_image(image: str) -> str:
     if not IMAGE_DIGEST_REF.fullmatch(image):
         raise RepositorySbomError("SBOM_IMAGE_DIGEST_INVALID")
     return image
+
+
+def resolved_manifest_digest(image: str, metadata_document: dict[str, Any]) -> str:
+    require_exact_image(image)
+    if not isinstance(metadata_document, dict):
+        raise RepositorySbomError("SBOM_GENERATOR_METADATA_INVALID")
+    source = metadata_document.get("source")
+    if not isinstance(source, dict) or source.get("type") != "image":
+        raise RepositorySbomError("SBOM_GENERATOR_METADATA_INVALID")
+    metadata = source.get("metadata")
+    if not isinstance(metadata, dict):
+        raise RepositorySbomError("SBOM_GENERATOR_METADATA_INVALID")
+    manifest_digest = metadata.get("manifestDigest")
+    if not isinstance(manifest_digest, str) or not SHA256_DIGEST.fullmatch(manifest_digest):
+        raise RepositorySbomError("SBOM_GENERATOR_MANIFEST_DIGEST_INVALID")
+    repo_digests = metadata.get("repoDigests", [])
+    if not isinstance(repo_digests, list):
+        raise RepositorySbomError("SBOM_GENERATOR_METADATA_INVALID")
+    observed = {manifest_digest}
+    for reference in repo_digests:
+        if not isinstance(reference, str):
+            raise RepositorySbomError("SBOM_GENERATOR_METADATA_INVALID")
+        match = REPO_DIGEST_REF.fullmatch(reference)
+        if match is None:
+            raise RepositorySbomError("SBOM_GENERATOR_METADATA_INVALID")
+        observed.add(match.group(1))
+    if len(observed) != 1:
+        raise RepositorySbomError("SBOM_GENERATOR_MANIFEST_DIGEST_AMBIGUOUS")
+    governed_digest = image.rsplit("@", 1)[1]
+    if manifest_digest != governed_digest:
+        raise RepositorySbomError("SBOM_GENERATOR_MANIFEST_DIGEST_MISMATCH")
+    return manifest_digest
 
 
 def sbom_object(build_id: str) -> str:
@@ -114,42 +148,74 @@ def _storage_identity(build_id: str, metadata: dict[str, Any]) -> tuple[str, str
     return EVIDENCE_BUCKET, expected_object, generation
 
 
+def _metadata_size(metadata: dict[str, Any], label: str) -> int:
+    size = str(metadata.get("size") or "")
+    if not size.isdigit() or int(size) < 0:
+        raise RepositorySbomError(f"{label}_SIZE_INVALID")
+    return int(size)
+
+
 def _binding_payload(
     image: str,
+    resolved_digest: str,
     location: str,
     generation: str,
     content_sha256: str,
+    size_bytes: int,
 ) -> dict[str, Any]:
     return {
-        "contract": "resilio-phase4-sbom-binding/v1",
+        "contract": "resilio-phase4-sbom-binding/v2",
         "image": require_exact_image(image),
+        "resolved_manifest_digest": resolved_digest,
         "generator": generator_identity(),
         "location": location,
         "generation": generation,
         "content_sha256": content_sha256,
+        "size_bytes": size_bytes,
     }
 
 
 def bind_repository_sbom(
     image: str,
     build_id: str,
-    metadata: dict[str, Any],
+    upload_metadata: dict[str, Any],
+    readback_metadata: dict[str, Any],
     content: bytes,
+    readback: bytes,
+    generator_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     require_exact_image(image)
     _validate_spdx_json(content)
-    bucket, object_name, generation = _storage_identity(build_id, metadata)
-    content_sha256 = sha256_bytes(content)
+    _validate_spdx_json(readback)
+    resolved_digest = resolved_manifest_digest(image, generator_metadata)
+    upload_identity = _storage_identity(build_id, upload_metadata)
+    readback_identity = _storage_identity(build_id, readback_metadata)
+    if readback_identity != upload_identity:
+        raise RepositorySbomError("SBOM_STORAGE_READBACK_IDENTITY_MISMATCH")
+    upload_size = _metadata_size(upload_metadata, "SBOM_STORAGE_UPLOAD")
+    readback_size = _metadata_size(readback_metadata, "SBOM_STORAGE_READBACK")
+    if upload_size != len(content) or readback_size != len(readback) or upload_size != readback_size:
+        raise RepositorySbomError("SBOM_STORAGE_READBACK_SIZE_MISMATCH")
+    local_sha256 = sha256_bytes(content)
+    readback_sha256 = sha256_bytes(readback)
+    if readback_sha256 != local_sha256:
+        raise RepositorySbomError("SBOM_STORAGE_READBACK_DIGEST_MISMATCH")
+    bucket, object_name, generation = upload_identity
     location = f"gs://{bucket}/{object_name}"
-    payload = _binding_payload(image, location, generation, content_sha256)
+    payload = _binding_payload(
+        image, resolved_digest, location, generation, readback_sha256, readback_size,
+    )
     return {
         "occurrence": f"repository-generator/{GENERATOR_NAME}/{GENERATOR_VERSION}",
         "producer": "repository-generator",
+        "binding_contract": "resilio-phase4-sbom-binding/v2",
         "generator": generator_identity(),
         "image": image,
+        "resolved_manifest_digest": resolved_digest,
         "location": location,
         "generation": generation,
-        "sha256": content_sha256,
+        "sha256": readback_sha256,
+        "size_bytes": readback_size,
         "binding_sha256": sha256_bytes(canonical_json_bytes(payload)),
     }
 
@@ -159,11 +225,15 @@ def validate_sbom_record(
     image: str,
     build_id: str,
     content: bytes,
+    readback: bytes,
+    generator_metadata: dict[str, Any],
 ) -> None:
     if not isinstance(record, dict):
         raise RepositorySbomError("SBOM_RECORD_INVALID")
     required = {
-        "occurrence", "producer", "generator", "image", "location", "generation", "sha256", "binding_sha256",
+        "occurrence", "producer", "binding_contract", "generator", "image",
+        "resolved_manifest_digest", "location", "generation", "sha256", "size_bytes",
+        "binding_sha256",
     }
     if set(record) != required:
         raise RepositorySbomError("SBOM_RECORD_SHAPE_INVALID")
@@ -171,24 +241,37 @@ def validate_sbom_record(
         raise RepositorySbomError("SBOM_OCCURRENCE_INVALID")
     if record["producer"] != "repository-generator":
         raise RepositorySbomError("SBOM_PRODUCER_INVALID")
+    if record["binding_contract"] != "resilio-phase4-sbom-binding/v2":
+        raise RepositorySbomError("SBOM_BINDING_CONTRACT_INVALID")
     if record["generator"] != generator_identity():
         raise RepositorySbomError("SBOM_GENERATOR_IDENTITY_MISMATCH")
     require_exact_image(image)
     if record["image"] != image:
         raise RepositorySbomError("SBOM_IMAGE_MISMATCH")
+    resolved_digest = resolved_manifest_digest(image, generator_metadata)
+    if record["resolved_manifest_digest"] != resolved_digest:
+        raise RepositorySbomError("SBOM_RESOLVED_MANIFEST_DIGEST_MISMATCH")
     expected_location = f"gs://{EVIDENCE_BUCKET}/{sbom_object(build_id)}"
     if record["location"] != expected_location:
         raise RepositorySbomError("SBOM_LOCATION_MISMATCH")
-    generation = str(record["generation"])
+    generation = str(record["generation"] or "")
     if not generation.isdigit() or int(generation) <= 0:
         raise RepositorySbomError("SBOM_STORAGE_GENERATION_INVALID")
     _validate_spdx_json(content)
-    content_sha256 = sha256_bytes(content)
-    if record["sha256"] != content_sha256:
+    _validate_spdx_json(readback)
+    local_sha256 = sha256_bytes(content)
+    readback_sha256 = sha256_bytes(readback)
+    if local_sha256 != readback_sha256:
+        raise RepositorySbomError("SBOM_STORAGE_READBACK_DIGEST_MISMATCH")
+    if record["sha256"] != readback_sha256:
         raise RepositorySbomError("SBOM_CONTENT_DIGEST_MISMATCH")
+    if record["size_bytes"] != len(readback) or len(content) != len(readback):
+        raise RepositorySbomError("SBOM_STORAGE_READBACK_SIZE_MISMATCH")
     if not SHA256_HEX.fullmatch(str(record["binding_sha256"])):
         raise RepositorySbomError("SBOM_BINDING_DIGEST_INVALID")
-    payload = _binding_payload(image, expected_location, generation, content_sha256)
+    payload = _binding_payload(
+        image, resolved_digest, expected_location, generation, readback_sha256, len(readback),
+    )
     expected_binding = sha256_bytes(canonical_json_bytes(payload))
     if record["binding_sha256"] != expected_binding:
         raise RepositorySbomError("SBOM_BINDING_DIGEST_MISMATCH")
@@ -199,6 +282,8 @@ def validate_transition(
     image: str,
     build_id: str,
     content: bytes,
+    readback: bytes,
+    generator_metadata: dict[str, Any],
 ) -> None:
     if not isinstance(manifest, dict):
         raise RepositorySbomError("SBOM_TRANSITION_INVALID")
@@ -206,8 +291,9 @@ def validate_transition(
         raise RepositorySbomError("SBOM_TRANSITION_BUILD_MISMATCH")
     if manifest.get("image") != image:
         raise RepositorySbomError("SBOM_TRANSITION_IMAGE_MISMATCH")
-    sbom = manifest.get("sbom")
-    validate_sbom_record(sbom, image, build_id, content)
+    validate_sbom_record(
+        manifest.get("sbom"), image, build_id, content, readback, generator_metadata,
+    )
 
 
 def _load_json(path: str) -> Any:
@@ -222,19 +308,30 @@ def main() -> int:
     p.add_argument("--archive", required=True)
     p = commands.add_parser("verify-version")
     p.add_argument("--version-file", required=True)
+    p = commands.add_parser("verify-resolved-digest")
+    p.add_argument("--image", required=True)
+    p.add_argument("--syft-json", required=True)
     p = commands.add_parser("object")
     p.add_argument("--build-id", required=True)
+    p = commands.add_parser("generation")
+    p.add_argument("--build-id", required=True)
+    p.add_argument("--metadata-json", required=True)
     p = commands.add_parser("bind")
     p.add_argument("--image", required=True)
     p.add_argument("--build-id", required=True)
-    p.add_argument("--metadata-json", required=True)
+    p.add_argument("--syft-json", required=True)
+    p.add_argument("--upload-metadata-json", required=True)
+    p.add_argument("--readback-metadata-json", required=True)
     p.add_argument("--content-file", required=True)
+    p.add_argument("--readback-file", required=True)
     p.add_argument("--output", required=True)
     p = commands.add_parser("validate-transition")
     p.add_argument("--manifest", required=True)
     p.add_argument("--image", required=True)
     p.add_argument("--build-id", required=True)
+    p.add_argument("--syft-json", required=True)
     p.add_argument("--content-file", required=True)
+    p.add_argument("--readback-file", required=True)
     args = parser.parse_args()
 
     try:
@@ -244,14 +341,21 @@ def main() -> int:
             verify_generator_archive(args.archive)
         elif args.command == "verify-version":
             verify_generator_version(args.version_file)
+        elif args.command == "verify-resolved-digest":
+            print(resolved_manifest_digest(args.image, _load_json(args.syft_json)))
         elif args.command == "object":
             print(sbom_object(args.build_id))
+        elif args.command == "generation":
+            print(_storage_identity(args.build_id, _load_json(args.metadata_json))[2])
         elif args.command == "bind":
             record = bind_repository_sbom(
                 args.image,
                 args.build_id,
-                _load_json(args.metadata_json),
+                _load_json(args.upload_metadata_json),
+                _load_json(args.readback_metadata_json),
                 Path(args.content_file).read_bytes(),
+                Path(args.readback_file).read_bytes(),
+                _load_json(args.syft_json),
             )
             Path(args.output).write_bytes(canonical_json_bytes(record) + b"\n")
         else:
@@ -260,6 +364,8 @@ def main() -> int:
                 args.image,
                 args.build_id,
                 Path(args.content_file).read_bytes(),
+                Path(args.readback_file).read_bytes(),
+                _load_json(args.syft_json),
             )
         return 0
     except (RepositorySbomError, OSError, json.JSONDecodeError, TypeError, ValueError) as exc:

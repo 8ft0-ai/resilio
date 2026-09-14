@@ -188,11 +188,17 @@ jobs:
           python3 scripts/phase4_repository_sbom.py verify-version --version-file "$SYFT_VERSION"
 
           SBOM_CONTENT="$RUNNER_TEMP/sbom.spdx.json"
+          SBOM_SYFT_JSON="$RUNNER_TEMP/sbom.syft.json"
           SYFT_REGISTRY_AUTH_AUTHORITY="us-central1-docker.pkg.dev" \
           SYFT_REGISTRY_AUTH_USERNAME="oauth2accesstoken" \
           SYFT_REGISTRY_AUTH_PASSWORD="$TOKEN" \
-            "$SYFT_BIN" "$IMAGE" -o "spdx-json=$SBOM_CONTENT"
+            "$SYFT_BIN" "$IMAGE" \
+              -o "spdx-json=$SBOM_CONTENT" \
+              -o "syft-json=$SBOM_SYFT_JSON"
           test -s "$SBOM_CONTENT"
+          test -s "$SBOM_SYFT_JSON"
+          python3 scripts/phase4_repository_sbom.py verify-resolved-digest \
+            --image "$IMAGE" --syft-json "$SBOM_SYFT_JSON"
 
           SBOM_OBJECT="$(python3 scripts/phase4_repository_sbom.py object --build-id "$BUILD_ID")"
           ENCODED_SBOM_OBJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$SBOM_OBJECT")"
@@ -203,10 +209,30 @@ jobs:
             "https://storage.googleapis.com/upload/storage/v1/b/resilio-control-e882d4-phase4-evidence/o?uploadType=media&name=$ENCODED_SBOM_OBJECT&ifGenerationMatch=0" \
             > "$SBOM_UPLOAD"
 
+          SBOM_GENERATION="$(python3 scripts/phase4_repository_sbom.py generation \
+            --build-id "$BUILD_ID" --metadata-json "$SBOM_UPLOAD")"
+          [[ "$SBOM_GENERATION" =~ ^[1-9][0-9]*$ ]]
+
+          SBOM_READBACK_METADATA="$RUNNER_TEMP/sbom-readback-metadata.json"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/storage/v1/b/resilio-control-e882d4-phase4-evidence/o/$ENCODED_SBOM_OBJECT?generation=$SBOM_GENERATION" \
+            > "$SBOM_READBACK_METADATA"
+
+          SBOM_READBACK_CONTENT="$RUNNER_TEMP/sbom-readback.spdx.json"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/download/storage/v1/b/resilio-control-e882d4-phase4-evidence/o/$ENCODED_SBOM_OBJECT?generation=$SBOM_GENERATION&alt=media" \
+            > "$SBOM_READBACK_CONTENT"
+          test -s "$SBOM_READBACK_CONTENT"
+
           BOUND_SBOM="$RUNNER_TEMP/bound-sbom.json"
           python3 scripts/phase4_repository_sbom.py bind \
-            --image "$IMAGE" --build-id "$BUILD_ID" \
-            --metadata-json "$SBOM_UPLOAD" --content-file "$SBOM_CONTENT" --output "$BOUND_SBOM"
+            --image "$IMAGE" --build-id "$BUILD_ID" --syft-json "$SBOM_SYFT_JSON" \
+            --upload-metadata-json "$SBOM_UPLOAD" \
+            --readback-metadata-json "$SBOM_READBACK_METADATA" \
+            --content-file "$SBOM_CONTENT" --readback-file "$SBOM_READBACK_CONTENT" \
+            --output "$BOUND_SBOM"
 
           MANIFEST="$RUNNER_TEMP/transition.json"
           python3 scripts/phase4_supply_chain.py make-transition \
@@ -215,7 +241,8 @@ jobs:
           python3 scripts/phase4_supply_chain.py validate-transition --manifest "$MANIFEST"
           python3 scripts/phase4_repository_sbom.py validate-transition \
             --manifest "$MANIFEST" --image "$IMAGE" --build-id "$BUILD_ID" \
-            --content-file "$SBOM_CONTENT"
+            --syft-json "$SBOM_SYFT_JSON" --content-file "$SBOM_CONTENT" \
+            --readback-file "$SBOM_READBACK_CONTENT"
 
           OBJECT="transitions/$BUILD_ID.json"
           ENCODED_OBJECT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$OBJECT")"
