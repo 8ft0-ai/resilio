@@ -15,18 +15,25 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: resilio-phase4-high-acceptance-consumer
+  cancel-in-progress: false
+
 jobs:
-  evidence:
+  adjudicate:
     name: adjudicate-exact-build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
-      issues: read
       id-token: write
     outputs:
-      evidence_object: ${{ steps.result.outputs.evidence_object }}
+      gate: ${{ steps.result.outputs.gate }}
+      findings_sha256: ${{ steps.result.outputs.findings_sha256 }}
       image: ${{ steps.result.outputs.image }}
+      source_sha: ${{ steps.result.outputs.source_sha }}
+      workflow_sha: ${{ steps.result.outputs.workflow_sha }}
+      source_tree_sha: ${{ steps.result.outputs.source_tree_sha }}
     steps:
       - name: Check out immutable trusted control code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -46,7 +53,7 @@ jobs:
           create_credentials_file: false
           export_environment_variables: false
 
-      - name: Adjudicate build, scan, provenance and SBOM
+      - name: Adjudicate immutable build and vulnerability gate
         id: result
         env:
           TOKEN: ${{ steps.auth.outputs.access_token }}
@@ -55,7 +62,312 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$BUILD_ID" =~ ^[0-9a-f-]{8,64}$ ]]
+          artifact_analysis_request() {
+            local REQUEST_CATEGORY="$1"
+            local RESPONSE_FILE="$2"
+            shift 2
+            local HTTP_STATUS_FILE="$RESPONSE_FILE.http-status"
+            local CURL_STDERR_FILE="$RESPONSE_FILE.curl-stderr"
+            local HTTP_STATUS=""
+            local CURL_EXIT_CODE=0
+            rm -f "$RESPONSE_FILE" "$HTTP_STATUS_FILE" "$CURL_STDERR_FILE"
+            if HTTP_STATUS="$(curl --silent --show-error --output "$RESPONSE_FILE" \
+              --write-out '%{http_code}' "$@" 2> "$CURL_STDERR_FILE")"; then
+              CURL_EXIT_CODE=0
+            else
+              CURL_EXIT_CODE=$?
+            fi
+            printf '%s\n' "$HTTP_STATUS" > "$HTTP_STATUS_FILE"
+            python3 scripts/phase4_supply_chain.py google-api-response \
+              --response-json "$RESPONSE_FILE" \
+              --http-status-file "$HTTP_STATUS_FILE" \
+              --curl-exit-code "$CURL_EXIT_CODE" \
+              --request-category "$REQUEST_CATEGORY" \
+              --workflow-run-id "$GITHUB_RUN_ID" \
+              --preserved-build-id "$BUILD_ID"
+          }
 
+          collect_occurrences() {
+            local FILTER="$1"
+            local PREFIX="$2"
+            local REQUEST_CATEGORY="$3"
+            local OUT="$4"
+            local LOCATION="${5:-}"
+            local NEXT=""
+            local PAGE_FILE=""
+            local PAGES="$RUNNER_TEMP/$PREFIX-pages.json"
+            local ENDPOINT="https://containeranalysis.googleapis.com"
+            local PARENT="projects/resilio-control-e882d4"
+            if test -n "$LOCATION"; then
+              test "$LOCATION" = "us-central1"
+              ENDPOINT="https://containeranalysis.$LOCATION.rep.googleapis.com"
+              PARENT="$PARENT/locations/$LOCATION"
+            fi
+            rm -f "$RUNNER_TEMP"/"$PREFIX"-page-*.json
+            for PAGE in $(seq 1 100); do
+              printf -v PAGE_FILE '%s/%s-page-%03d.json' "$RUNNER_TEMP" "$PREFIX" "$PAGE"
+              if test -n "$NEXT"; then
+                artifact_analysis_request "$REQUEST_CATEGORY" "$PAGE_FILE" -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "X-Goog-User-Project: resilio-control-e882d4" \
+                  --data-urlencode "filter=$FILTER" \
+                  --data-urlencode "pageSize=1000" \
+                  --data-urlencode "pageToken=$NEXT" \
+                  "$ENDPOINT/v1/$PARENT/occurrences"
+              else
+                artifact_analysis_request "$REQUEST_CATEGORY" "$PAGE_FILE" -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "X-Goog-User-Project: resilio-control-e882d4" \
+                  --data-urlencode "filter=$FILTER" \
+                  --data-urlencode "pageSize=1000" \
+                  "$ENDPOINT/v1/$PARENT/occurrences"
+              fi
+              NEXT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("nextPageToken", ""))' "$PAGE_FILE")"
+              test -z "$NEXT" && break
+            done
+            test -z "$NEXT"
+            python3 -c 'import glob,json,sys; pages=[json.load(open(p)) for p in sorted(glob.glob(sys.argv[1]))]; json.dump(pages,open(sys.argv[2],"w"),separators=(",",":"))' \
+              "$RUNNER_TEMP/$PREFIX-page-*.json" "$PAGES"
+            python3 scripts/phase4_supply_chain.py merge-pages --pages-json "$PAGES" --items-key occurrences > "$OUT"
+          }
+          BUILD="$RUNNER_TEMP/build.json"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+            "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds/$BUILD_ID" > "$BUILD"
+
+          IDENTITY="$RUNNER_TEMP/identity.json"
+          python3 scripts/phase4_supply_chain.py build-identity --build-json "$BUILD" > "$IDENTITY"
+          SOURCE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$IDENTITY")"
+          WORKFLOW_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["workflow_sha"])' "$IDENTITY")"
+          CURRENT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          python3 scripts/phase4_evidence_recovery.py \
+            --build-id "$BUILD_ID" \
+            --source-sha "$SOURCE_SHA" \
+            --build-control-sha "$WORKFLOW_SHA" \
+            --current-main-sha "$CURRENT"
+          SOURCE_TREE_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SOURCE_SHA" --jq .tree.sha)"
+          [[ "$SOURCE_TREE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          RESULT="$RUNNER_TEMP/build-result.json"
+          python3 scripts/phase4_evidence_readback.py --build-json "$BUILD" --source-sha "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA" > "$RESULT"
+          IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$RESULT")"
+          RESOURCE_URL="https://$IMAGE"
+
+          DISC="$RUNNER_TEMP/discovery.json"
+          VULN="$RUNNER_TEMP/vulnerabilities.json"
+          DISP=""
+          for _ in $(seq 1 30); do
+            collect_occurrences "(kind=\"DISCOVERY\" AND resourceUrl=\"$RESOURCE_URL\")" discovery DISCOVERY "$DISC"
+            collect_occurrences "(kind=\"VULNERABILITY\" AND resourceUrl=\"$RESOURCE_URL\")" vulnerability VULNERABILITY "$VULN"
+            if DISP="$(python3 scripts/phase4_supply_chain.py scan-disposition --discovery-json "$DISC" --vulnerability-json "$VULN" 2>/dev/null)"; then break; fi
+            sleep 10
+          done
+          test -n "$DISP"
+          test "$DISP" != "FAIL_CRITICAL"
+          FINDINGS_SHA256=""
+          if test "$DISP" = "HIGH_REVIEW_REQUIRED"; then
+            FINDINGS_SHA256="$(python3 scripts/phase4_acceptance_lifecycle.py findings-sha256 \
+              --vulnerability-json "$VULN")"
+            [[ "$FINDINGS_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          elif test "$DISP" != "PASS"; then
+            printf 'PHASE4_EVIDENCE_DISPOSITION_INVALID=%s\n' "$DISP" >&2
+            exit 1
+          fi
+
+          printf 'gate=%s\n' "$DISP" >> "$GITHUB_OUTPUT"
+          printf 'findings_sha256=%s\n' "$FINDINGS_SHA256" >> "$GITHUB_OUTPUT"
+          printf 'image=%s\n' "$IMAGE" >> "$GITHUB_OUTPUT"
+          printf 'source_sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'workflow_sha=%s\n' "$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
+          printf 'source_tree_sha=%s\n' "$SOURCE_TREE_SHA" >> "$GITHUB_OUTPUT"
+
+  consume_acceptance:
+    name: consume-high-acceptance
+    needs: adjudicate
+    if: needs.adjudicate.outputs.gate == 'HIGH_REVIEW_REQUIRED'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Fetch exact lifecycle helper without GitHub credentials
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$WORKFLOW_REPOSITORY" = "8ft0-ai/resilio"
+          [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test -z "${GH_TOKEN:-}"
+          test -z "${GITHUB_TOKEN:-}"
+          LIFECYCLE_HELPER="$RUNNER_TEMP/phase4_acceptance_lifecycle.py"
+          curl --fail-with-body --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://raw.githubusercontent.com/$WORKFLOW_REPOSITORY/$WORKFLOW_SHA/scripts/phase4_acceptance_lifecycle.py" \
+            > "$LIFECYCLE_HELPER"
+          test -s "$LIFECYCLE_HELPER"
+          test "$(git hash-object "$LIFECYCLE_HELPER")" = "b302048ecc870925a73d790b3b602f48e6116143"
+          chmod 0400 "$LIFECYCLE_HELPER"
+
+      - name: Read HIGH acceptance comments
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          COMMENTS="$RUNNER_TEMP/high-comments.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS"
+
+      - name: Prepare HIGH acceptance consumption
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
+          IMAGE: ${{ needs.adjudicate.outputs.image }}
+          FINDINGS_SHA256: ${{ needs.adjudicate.outputs.findings_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_ID" =~ ^[0-9a-f-]{8,64}$ ]]
+          [[ "$IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]
+          [[ "$FINDINGS_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test -z "${GH_TOKEN:-}"
+          test -z "${GITHUB_TOKEN:-}"
+          LIFECYCLE_HELPER="$RUNNER_TEMP/phase4_acceptance_lifecycle.py"
+          test "$(git hash-object "$LIFECYCLE_HELPER")" = "b302048ecc870925a73d790b3b602f48e6116143"
+
+          COMMENTS="$RUNNER_TEMP/high-comments.json"
+          test -s "$COMMENTS"
+          ACCEPTANCE="$RUNNER_TEMP/high-acceptance.json"
+          python3 "$LIFECYCLE_HELPER" check-available \
+            --comments-json "$COMMENTS" \
+            --build-id "$BUILD_ID" \
+            --image "$IMAGE" \
+            --findings-sha256 "$FINDINGS_SHA256" > "$ACCEPTANCE"
+
+          CONSUMPTION_BODY_FILE="$RUNNER_TEMP/high-consumption-body.txt"
+          python3 "$LIFECYCLE_HELPER" consumption-body \
+            --acceptance-json "$ACCEPTANCE" \
+            --run-id "$GITHUB_RUN_ID" > "$CONSUMPTION_BODY_FILE"
+          test -s "$CONSUMPTION_BODY_FILE"
+          chmod 0400 "$CONSUMPTION_BODY_FILE"
+
+      - name: Attempt HIGH acceptance consumption once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          CONSUMPTION_BODY_FILE="$RUNNER_TEMP/high-consumption-body.txt"
+          test -s "$CONSUMPTION_BODY_FILE"
+          IFS= read -r CONSUMPTION_BODY < "$CONSUMPTION_BODY_FILE"
+          test -n "$CONSUMPTION_BODY"
+          CONSUMPTION_CREATE="$RUNNER_TEMP/high-consumption-create.json"
+          set +e
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/28/comments" \
+            -f body="$CONSUMPTION_BODY" > "$CONSUMPTION_CREATE"
+          CONSUMPTION_CREATE_RC=$?
+          set -e
+          printf '%s\n' "$CONSUMPTION_CREATE_RC" > "$RUNNER_TEMP/high-consumption-create.rc"
+          if test "$CONSUMPTION_CREATE_RC" -ne 0; then
+            printf 'CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE\n'
+          fi
+
+      - name: Read HIGH acceptance comments after consumption
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          COMMENTS_AFTER="$RUNNER_TEMP/high-comments-after.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS_AFTER"
+
+      - name: Verify HIGH acceptance consumption
+        run: |
+          set -euo pipefail
+          test -z "${GH_TOKEN:-}"
+          test -z "${GITHUB_TOKEN:-}"
+          LIFECYCLE_HELPER="$RUNNER_TEMP/phase4_acceptance_lifecycle.py"
+          test "$(git hash-object "$LIFECYCLE_HELPER")" = "b302048ecc870925a73d790b3b602f48e6116143"
+          ACCEPTANCE="$RUNNER_TEMP/high-acceptance.json"
+          COMMENTS_AFTER="$RUNNER_TEMP/high-comments-after.json"
+          CREATE_RC_FILE="$RUNNER_TEMP/high-consumption-create.rc"
+          test -s "$ACCEPTANCE"
+          test -s "$COMMENTS_AFTER"
+          test -s "$CREATE_RC_FILE"
+          IFS= read -r CONSUMPTION_CREATE_RC < "$CREATE_RC_FILE"
+          [[ "$CONSUMPTION_CREATE_RC" =~ ^[0-9]+$ ]]
+          if test "$CONSUMPTION_CREATE_RC" -ne 0; then
+            printf 'CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE\n'
+          fi
+          python3 "$LIFECYCLE_HELPER" verify-consumed \
+            --comments-json "$COMMENTS_AFTER" \
+            --acceptance-json "$ACCEPTANCE" \
+            --run-id "$GITHUB_RUN_ID"
+
+
+  evidence:
+    name: generate-exact-build-evidence
+    needs: [adjudicate, consume_acceptance]
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.adjudicate.result == 'success' &&
+        (
+          (needs.adjudicate.outputs.gate == 'PASS' && needs.consume_acceptance.result == 'skipped') ||
+          (needs.adjudicate.outputs.gate == 'HIGH_REVIEW_REQUIRED' && needs.consume_acceptance.result == 'success')
+        )
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      evidence_object: ${{ steps.result.outputs.evidence_object }}
+      image: ${{ steps.result.outputs.image }}
+    steps:
+      - name: Check out immutable trusted control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Require GitHub write-token isolation
+        run: |
+          set -euo pipefail
+          test -z "${GH_TOKEN:-}"
+          test -z "${GITHUB_TOKEN:-}"
+          test ! -f "$HOME/.git-credentials"
+          if git config --local --get-regexp '^http\..*\.extraheader$' >/dev/null 2>&1; then
+            printf 'GITHUB_CHECKOUT_CREDENTIAL_REMAINS\n' >&2
+            exit 1
+          fi
+
+      - name: Authenticate as evidence adjudicator
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-evidence@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 900s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Generate provenance and repository SBOM evidence
+        id: result
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          BUILD_ID: ${{ inputs.build_id }}
+          EXPECTED_IMAGE: ${{ needs.adjudicate.outputs.image }}
+          EXPECTED_SOURCE_SHA: ${{ needs.adjudicate.outputs.source_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ needs.adjudicate.outputs.workflow_sha }}
+          EXPECTED_SOURCE_TREE_SHA: ${{ needs.adjudicate.outputs.source_tree_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_ID" =~ ^[0-9a-f-]{8,64}$ ]]
+          [[ "$EXPECTED_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_SOURCE_TREE_SHA" =~ ^[0-9a-f]{40}$ ]]
           artifact_analysis_request() {
             local REQUEST_CATEGORY="$1"
             local RESPONSE_FILE="$2"
@@ -133,39 +445,15 @@ jobs:
           python3 scripts/phase4_supply_chain.py build-identity --build-json "$BUILD" > "$IDENTITY"
           SOURCE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$IDENTITY")"
           WORKFLOW_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["workflow_sha"])' "$IDENTITY")"
-          CURRENT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
-          python3 scripts/phase4_evidence_recovery.py \
-            --build-id "$BUILD_ID" \
-            --source-sha "$SOURCE_SHA" \
-            --build-control-sha "$WORKFLOW_SHA" \
-            --current-main-sha "$CURRENT"
-          SOURCE_TREE_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$SOURCE_SHA" --jq .tree.sha)"
-          [[ "$SOURCE_TREE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$SOURCE_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$WORKFLOW_SHA" = "$EXPECTED_WORKFLOW_SHA"
+          SOURCE_TREE_SHA="$EXPECTED_SOURCE_TREE_SHA"
 
           RESULT="$RUNNER_TEMP/build-result.json"
           python3 scripts/phase4_evidence_readback.py --build-json "$BUILD" --source-sha "$SOURCE_SHA" --workflow-sha "$WORKFLOW_SHA" > "$RESULT"
           IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$RESULT")"
+          test "$IMAGE" = "$EXPECTED_IMAGE"
           RESOURCE_URL="https://$IMAGE"
-
-          DISC="$RUNNER_TEMP/discovery.json"
-          VULN="$RUNNER_TEMP/vulnerabilities.json"
-          DISP=""
-          for _ in $(seq 1 30); do
-            collect_occurrences "(kind=\"DISCOVERY\" AND resourceUrl=\"$RESOURCE_URL\")" discovery DISCOVERY "$DISC"
-            collect_occurrences "(kind=\"VULNERABILITY\" AND resourceUrl=\"$RESOURCE_URL\")" vulnerability VULNERABILITY "$VULN"
-            if DISP="$(python3 scripts/phase4_supply_chain.py scan-disposition --discovery-json "$DISC" --vulnerability-json "$VULN" 2>/dev/null)"; then break; fi
-            sleep 10
-          done
-          test -n "$DISP"
-          test "$DISP" != "FAIL_CRITICAL"
-          if test "$DISP" = "HIGH_REVIEW_REQUIRED"; then
-            COMMENTS="$RUNNER_TEMP/high-comments.json"
-            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS"
-            python3 scripts/phase4_supply_chain.py check-high-acceptance --comments-json "$COMMENTS" --image "$IMAGE"
-            DISP=PASS
-          fi
-          test "$DISP" = "PASS"
-
           PROV="$RUNNER_TEMP/provenance.json"
           collect_occurrences "(kind=\"BUILD\" AND resourceUrl=\"$RESOURCE_URL\")" provenance PROVENANCE "$PROV"
           PROV_OCC="$(python3 scripts/phase4_supply_chain.py provenance-occurrence --occurrences-json "$PROV" --build-id "$BUILD_ID")"
@@ -212,7 +500,6 @@ jobs:
           SBOM_GENERATION="$(python3 scripts/phase4_repository_sbom.py generation \
             --build-id "$BUILD_ID" --metadata-json "$SBOM_UPLOAD")"
           [[ "$SBOM_GENERATION" =~ ^[1-9][0-9]*$ ]]
-
           SBOM_READBACK_METADATA="$RUNNER_TEMP/sbom-readback-metadata.json"
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $TOKEN" \

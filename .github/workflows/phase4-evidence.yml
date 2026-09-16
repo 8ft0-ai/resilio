@@ -25,7 +25,7 @@ jobs:
     needs: require-main
     permissions:
       contents: read
-      issues: read
+      issues: write
       id-token: write
     uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@9ef1edfad9538418e3f4936c8580c4401b49e514
     with:

@@ -216,7 +216,10 @@ def main() -> int:
     for forbidden in (":exportSBOM", "EXPORT_SBOM", "SBOM_REFERENCE", "cloudStorageLocation"):
         if forbidden in evidence:
             errors.append(f"evidence reusable retains provider-native SBOM path: {forbidden}")
-    if evidence.count('artifact_analysis_request "$REQUEST_CATEGORY"') != 2:
+    occurrence_helpers = evidence.count("collect_occurrences() {")
+    if occurrence_helpers != 2:
+        errors.append("Phase 4 evidence must keep occurrence collection in adjudication and evidence jobs")
+    if evidence.count('artifact_analysis_request "$REQUEST_CATEGORY"') != occurrence_helpers * 2:
         errors.append("Artifact Analysis occurrence-list calls must use the diagnostic request wrapper")
     if 'RESOURCE_URL="https://$IMAGE"' not in evidence:
         errors.append("Artifact Analysis resource URL must remain bound to the validated immutable image")
