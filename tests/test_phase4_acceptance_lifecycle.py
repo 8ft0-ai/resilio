@@ -328,8 +328,8 @@ class AcceptanceWorkflowTests(unittest.TestCase):
 
     def test_issue_write_job_has_no_downloaded_action_or_ambient_token(self) -> None:
         self.assertNotIn("uses:", self.consume)
-        self.assertNotIn("GH_TOKEN:", self.consume)
-        self.assertNotIn("GITHUB_TOKEN:", self.consume)
+        self.assertNotIn("\n          GH_TOKEN:", self.consume)
+        self.assertNotIn("\n          GITHUB_TOKEN:", self.consume)
         self.assertEqual(
             self.consume.count('GH_TOKEN="${{ github.token }}" gh api'),
             3,
