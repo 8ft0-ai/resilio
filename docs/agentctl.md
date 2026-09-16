@@ -10,11 +10,13 @@ The exact `agentctl` baseline adopted for this pilot is:
 
 ```text
 repository: 8ft0-ai/agentctl
-commit:     3d0bafa653f9d90349f22b5669fbe05c2a4becb4
-tree:       29462eb2e71693f7c26cdbbf67217bacaf4e0392
+commit:     4be0233d104db98ec11b57355f52eb5a2e3d33cf
+tree:       a003b1c4770e07b37de065d1d2e575d5c77c0361
 ```
 
-This baseline provides the stable read-only capabilities used or available to this pilot:
+This exact baseline is the smallest later stable revision adopted for the current Resilio need: it includes the reviewed `agentctl#40` / PR #41 fix that accepts Terraform 1.15.8 output `actions: ["no-op"]` as structural evidence while retaining fail-closed handling for unknown output actions. No unrelated later `agentctl` capability is adopted by this bump.
+
+The following command set is the complete Resilio-adopted capability allowlist for this pilot:
 
 ```text
 python -m agentctl version
@@ -27,6 +29,8 @@ python -m agentctl github run evidence ...
 python -m agentctl terraform plan evidence --plan PATH
 ```
 
+The exact upstream checkout also contains additional implemented commands, including `agentctl terraform plan check` and `agentctl terraform state evidence`. Those commands are physically present in the pinned source identity but are not adopted, authorised or available for decision-critical Resilio use under this pilot or issue #79. Their presence does not widen the allowlist or Resilio authority; any Resilio use requires separate governed adoption.
+
 Each evidence-producing command supports command-level `--json` output. Do not silently substitute a later `agentctl main`, an unmerged branch or a different interface revision. Updating the adopted baseline is a separate Resilio reconciliation/change.
 
 At this baseline `agentctl` requires Python 3.14 or later and has no product runtime dependencies. Resilio does not maintain a separate installer or wrapper. For decision-critical Resilio use, install the exact trusted checkout into its dedicated ignored `.venv` and invoke the supported module entry point through that environment. Do not rely on a bare `agentctl` resolved from ambient `PATH`: at this baseline `agentctl version` reports installed package metadata (`0.0.0`), not the Git commit that supplied the executable.
@@ -38,7 +42,7 @@ Before relying on `agentctl` evidence for a decision-critical Resilio boundary, 
 For an owner-local checkout path stored in `AGENTCTL_REPO`:
 
 ```bash
-AGENTCTL_SHA=3d0bafa653f9d90349f22b5669fbe05c2a4becb4
+AGENTCTL_SHA=4be0233d104db98ec11b57355f52eb5a2e3d33cf
 AGENTCTL_PYTHON="$AGENTCTL_REPO/.venv/bin/python"
 
 test "$(git -C "$AGENTCTL_REPO" rev-parse HEAD)" = "$AGENTCTL_SHA"
@@ -118,12 +122,12 @@ Those expectations belong in the Resilio governing issue, plan/review record or 
 
 ## Current pilot limits
 
-This pilot intentionally does not recreate capabilities that are not part of the adopted stable baseline.
+This pilot intentionally adopts only the allowlisted capabilities above, even where the exact upstream baseline contains additional implemented commands.
 
 As of this adoption point:
 
-- Terraform remote-state identity evidence is not adopted here; current upstream work for `agentctl terraform state evidence` is outside this exact baseline until it completes and Resilio separately adopts it.
-- Caller-supplied Terraform effect-contract comparison remains a later upstream capability; the exact Resilio effect policy therefore stays in the governing Resilio record/review path for this pilot.
+- Terraform remote-state identity evidence exists in the pinned upstream source as `agentctl terraform state evidence`, but is not adopted or authorised by this Resilio pilot; any Resilio use requires separate governed adoption.
+- Caller-supplied Terraform effect-contract comparison exists in the pinned upstream source as `agentctl terraform plan check`, but is not adopted or authorised by this Resilio pilot; the exact Resilio effect policy therefore stays in the governing Resilio record/review path.
 - Broader hermetic repository/tool/workspace/cloud-account preflight remains separately governed upstream; do not replace it with a new large Resilio environment script.
 - Bounded multi-step handoff composition is not part of this pilot. Prefer direct named commands over a locally invented orchestration wrapper.
 
