@@ -20,9 +20,12 @@ jobs:
     name: adjudicate-exact-build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: resilio-phase4-high-acceptance-consumer
+      cancel-in-progress: false
     permissions:
       contents: read
-      issues: read
+      issues: write
       id-token: write
     outputs:
       evidence_object: ${{ steps.result.outputs.evidence_object }}
@@ -159,9 +162,38 @@ jobs:
           test -n "$DISP"
           test "$DISP" != "FAIL_CRITICAL"
           if test "$DISP" = "HIGH_REVIEW_REQUIRED"; then
+            FINDINGS_SHA256="$(python3 scripts/phase4_acceptance_lifecycle.py findings-sha256 \
+              --vulnerability-json "$VULN")"
+            [[ "$FINDINGS_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
             COMMENTS="$RUNNER_TEMP/high-comments.json"
             gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS"
-            python3 scripts/phase4_supply_chain.py check-high-acceptance --comments-json "$COMMENTS" --image "$IMAGE"
+            ACCEPTANCE="$RUNNER_TEMP/high-acceptance.json"
+            python3 scripts/phase4_acceptance_lifecycle.py check-available \
+              --comments-json "$COMMENTS" \
+              --build-id "$BUILD_ID" \
+              --image "$IMAGE" \
+              --findings-sha256 "$FINDINGS_SHA256" > "$ACCEPTANCE"
+
+            CONSUMPTION_BODY="$(python3 scripts/phase4_acceptance_lifecycle.py consumption-body \
+              --acceptance-json "$ACCEPTANCE" \
+              --run-id "$GITHUB_RUN_ID")"
+            CONSUMPTION_CREATE="$RUNNER_TEMP/high-consumption-create.json"
+            set +e
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/28/comments" \
+              -f body="$CONSUMPTION_BODY" > "$CONSUMPTION_CREATE"
+            CONSUMPTION_CREATE_RC=$?
+            set -e
+            if test "$CONSUMPTION_CREATE_RC" -ne 0; then
+              printf 'CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE\n'
+            fi
+
+            COMMENTS_AFTER="$RUNNER_TEMP/high-comments-after.json"
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS_AFTER"
+            python3 scripts/phase4_acceptance_lifecycle.py verify-consumed \
+              --comments-json "$COMMENTS_AFTER" \
+              --acceptance-json "$ACCEPTANCE" \
+              --run-id "$GITHUB_RUN_ID"
             DISP=PASS
           fi
           test "$DISP" = "PASS"
