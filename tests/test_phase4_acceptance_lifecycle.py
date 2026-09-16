@@ -269,15 +269,45 @@ class AcceptanceWorkflowTests(unittest.TestCase):
         cls.caller = (
             ROOT / ".github/workflows/phase4-evidence.yml"
         ).read_text(encoding="utf-8")
+        cls.adjudicate = cls.workflow[
+            cls.workflow.index("  adjudicate:\n"):
+            cls.workflow.index("  consume_acceptance:\n")
+        ]
+        cls.consume = cls.workflow[
+            cls.workflow.index("  consume_acceptance:\n"):
+            cls.workflow.index("  evidence:\n")
+        ]
+        cls.evidence = cls.workflow[cls.workflow.index("  evidence:\n"):]
 
-    def test_consumption_is_serialised_and_issue_write_is_bounded_to_evidence_path(self) -> None:
-        self.assertIn(
-            "group: resilio-phase4-high-acceptance-consumer",
-            self.workflow,
+    def test_consumption_is_serialised_and_issue_write_is_job_isolated(self) -> None:
+        concurrency = self.workflow.index(
+            "concurrency:\n  group: resilio-phase4-high-acceptance-consumer"
         )
-        self.assertIn("cancel-in-progress: false", self.workflow)
-        self.assertIn("      issues: write", self.workflow)
+        self.assertLess(concurrency, self.workflow.index("jobs:\n"))
+        self.assertIn("cancel-in-progress: false", self.workflow[: self.workflow.index("jobs:\n")])
+        self.assertEqual(self.workflow.count("      issues: write"), 1)
+        self.assertNotIn("issues: write", self.adjudicate)
+        self.assertIn("      issues: write", self.consume)
+        self.assertNotIn("issues: write", self.evidence)
         self.assertIn("      issues: write", self.caller)
+        self.assertNotIn("id-token: write", self.consume)
+
+    def test_issue_write_job_runs_only_for_high_review_required(self) -> None:
+        self.assertIn(
+            "if: needs.adjudicate.outputs.gate == 'HIGH_REVIEW_REQUIRED'",
+            self.consume,
+        )
+        self.assertIn("needs: [adjudicate, consume_acceptance]", self.evidence)
+        self.assertIn("always() &&", self.evidence)
+        self.assertIn("!cancelled() &&", self.evidence)
+        self.assertIn(
+            "needs.adjudicate.outputs.gate == 'PASS' && needs.consume_acceptance.result == 'skipped'",
+            self.evidence,
+        )
+        self.assertIn(
+            "needs.adjudicate.outputs.gate == 'HIGH_REVIEW_REQUIRED' && needs.consume_acceptance.result == 'success'",
+            self.evidence,
+        )
 
     def test_new_lifecycle_replaces_legacy_live_checker(self) -> None:
         self.assertNotIn(
@@ -292,39 +322,70 @@ class AcceptanceWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(required, self.workflow)
 
-    def test_consumption_is_written_once_and_reconciled_before_pass(self) -> None:
-        check = self.workflow.index(
+    def test_consumption_is_written_once_and_reconciled_before_evidence(self) -> None:
+        check = self.consume.index(
             "phase4_acceptance_lifecycle.py check-available"
         )
-        create = self.workflow.index(
+        create = self.consume.index(
             'gh api --method POST "repos/$GITHUB_REPOSITORY/issues/28/comments"'
         )
-        verify = self.workflow.index(
+        verify = self.consume.index(
             "phase4_acceptance_lifecycle.py verify-consumed"
-        )
-        passed = self.workflow.index("          DISP=PASS", verify)
-        provenance = self.workflow.index(
-            "phase4_supply_chain.py provenance-occurrence"
         )
         self.assertLess(check, create)
         self.assertLess(create, verify)
-        self.assertLess(verify, passed)
-        self.assertLess(passed, provenance)
         self.assertEqual(
             self.workflow.count(
                 'gh api --method POST "repos/$GITHUB_REPOSITORY/issues/28/comments"'
             ),
             1,
         )
+        self.assertNotIn("phase4_acceptance_lifecycle.py verify-consumed", self.evidence)
+        self.assertIn('"$SYFT_BIN" version > "$SYFT_VERSION"', self.evidence)
 
     def test_ambiguous_create_outcome_reconciles_without_retry(self) -> None:
-        self.assertIn("CONSUMPTION_CREATE_RC=$?", self.workflow)
-        self.assertIn("CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE", self.workflow)
-        self.assertIn("high-comments-after.json", self.workflow)
-        self.assertNotIn("for _ in $(seq", self.workflow[
-            self.workflow.index("CONSUMPTION_CREATE_RC=$?"):
-            self.workflow.index("phase4_acceptance_lifecycle.py verify-consumed")
-        ])
+        self.assertIn("CONSUMPTION_CREATE_RC=$?", self.consume)
+        self.assertIn("CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE", self.consume)
+        self.assertIn("high-comments-after.json", self.consume)
+        create_to_verify = self.consume[
+            self.consume.index("CONSUMPTION_CREATE_RC=$?"):
+            self.consume.index("phase4_acceptance_lifecycle.py verify-consumed")
+        ]
+        self.assertNotIn("for _ in $(seq", create_to_verify)
+
+    def test_syft_job_has_no_issue_write_token_or_checkout_credential(self) -> None:
+        self.assertNotIn("issues: write", self.evidence)
+        result_step = self.evidence[self.evidence.index("      - name: Generate provenance and repository SBOM evidence"):]
+        self.assertNotIn("GH_TOKEN", result_step)
+        self.assertNotIn("GITHUB_TOKEN", result_step)
+        self.assertNotIn("${{ github.token }}", result_step)
+        self.assertIn('test -z "${GH_TOKEN:-}"', self.evidence)
+        self.assertIn('test -z "${GITHUB_TOKEN:-}"', self.evidence)
+        self.assertIn('test ! -f "$HOME/.git-credentials"', self.evidence)
+        self.assertIn("GITHUB_CHECKOUT_CREDENTIAL_REMAINS", self.evidence)
+        self.assertIn("persist-credentials: false", self.evidence)
+        self.assertIn('"$SYFT_BIN" "$IMAGE" \\', self.evidence)
+
+    def test_adjudication_passes_only_immutable_non_secret_gate_data(self) -> None:
+        for output in (
+            "gate",
+            "findings_sha256",
+            "image",
+            "source_sha",
+            "workflow_sha",
+            "source_tree_sha",
+        ):
+            self.assertIn(f"      {output}: ${{{{ steps.result.outputs.{output} }}}}", self.adjudicate)
+        self.assertNotIn("acceptance_token", self.adjudicate)
+        self.assertNotIn("consumption_comment", self.adjudicate)
+        self.assertNotIn("github.token", self.evidence[self.evidence.index("      - name: Generate provenance and repository SBOM evidence"):])
+
+    def test_activation_remains_pinned_to_current_production_reusable(self) -> None:
+        self.assertIn(
+            "uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@"
+            "9ef1edfad9538418e3f4936c8580c4401b49e514",
+            self.caller,
+        )
 
 
 if __name__ == "__main__":
