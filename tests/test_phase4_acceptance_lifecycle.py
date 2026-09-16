@@ -290,6 +290,7 @@ class AcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn("      issues: write", self.consume)
         self.assertNotIn("issues: write", self.evidence)
         self.assertIn("      issues: write", self.caller)
+        self.assertNotIn("contents: read", self.consume)
         self.assertNotIn("id-token: write", self.consume)
 
     def test_issue_write_job_runs_only_for_high_review_required(self) -> None:
@@ -314,33 +315,47 @@ class AcceptanceWorkflowTests(unittest.TestCase):
             "phase4_supply_chain.py check-high-acceptance",
             self.workflow,
         )
-        for required in (
+        self.assertIn(
             "phase4_acceptance_lifecycle.py findings-sha256",
-            "phase4_acceptance_lifecycle.py check-available",
-            "phase4_acceptance_lifecycle.py consumption-body",
-            "phase4_acceptance_lifecycle.py verify-consumed",
+            self.workflow,
+        )
+        for required in (
+            '"$LIFECYCLE_HELPER" check-available',
+            '"$LIFECYCLE_HELPER" consumption-body',
+            '"$LIFECYCLE_HELPER" verify-consumed',
         ):
-            self.assertIn(required, self.workflow)
+            self.assertIn(required, self.consume)
+
+    def test_issue_write_job_has_no_downloaded_action_or_ambient_token(self) -> None:
+        self.assertNotIn("uses:", self.consume)
+        self.assertNotIn("GH_TOKEN:", self.consume)
+        self.assertNotIn("GITHUB_TOKEN:", self.consume)
+        self.assertEqual(
+            self.consume.count('GH_TOKEN="${{ github.token }}" gh api'),
+            3,
+        )
+        self.assertEqual(self.consume.count("${{ github.token }}"), 3)
+        self.assertIn(
+            "https://raw.githubusercontent.com/$WORKFLOW_REPOSITORY/$WORKFLOW_SHA/"
+            "scripts/phase4_acceptance_lifecycle.py",
+            self.consume,
+        )
+        self.assertIn(
+            'test "$(git hash-object "$LIFECYCLE_HELPER")" = '
+            '"b302048ecc870925a73d790b3b602f48e6116143"',
+            self.consume,
+        )
+        self.assertIn('test -z "${GH_TOKEN:-}"', self.consume)
+        self.assertIn('test -z "${GITHUB_TOKEN:-}"', self.consume)
 
     def test_consumption_is_written_once_and_reconciled_before_evidence(self) -> None:
-        check = self.consume.index(
-            "phase4_acceptance_lifecycle.py check-available"
-        )
-        create = self.consume.index(
-            'gh api --method POST "repos/$GITHUB_REPOSITORY/issues/28/comments"'
-        )
-        verify = self.consume.index(
-            "phase4_acceptance_lifecycle.py verify-consumed"
-        )
+        check = self.consume.index('"$LIFECYCLE_HELPER" check-available')
+        create = self.consume.index("gh api --method POST")
+        verify = self.consume.index('"$LIFECYCLE_HELPER" verify-consumed')
         self.assertLess(check, create)
         self.assertLess(create, verify)
-        self.assertEqual(
-            self.workflow.count(
-                'gh api --method POST "repos/$GITHUB_REPOSITORY/issues/28/comments"'
-            ),
-            1,
-        )
-        self.assertNotIn("phase4_acceptance_lifecycle.py verify-consumed", self.evidence)
+        self.assertEqual(self.workflow.count("gh api --method POST"), 1)
+        self.assertNotIn('"$LIFECYCLE_HELPER" verify-consumed', self.evidence)
         self.assertIn('"$SYFT_BIN" version > "$SYFT_VERSION"', self.evidence)
 
     def test_ambiguous_create_outcome_reconciles_without_retry(self) -> None:
@@ -349,7 +364,7 @@ class AcceptanceWorkflowTests(unittest.TestCase):
         self.assertIn("high-comments-after.json", self.consume)
         create_to_verify = self.consume[
             self.consume.index("CONSUMPTION_CREATE_RC=$?"):
-            self.consume.index("phase4_acceptance_lifecycle.py verify-consumed")
+            self.consume.index('"$LIFECYCLE_HELPER" verify-consumed')
         ]
         self.assertNotIn("for _ in $(seq", create_to_verify)
 
