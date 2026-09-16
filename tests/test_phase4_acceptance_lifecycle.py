@@ -328,13 +328,46 @@ class AcceptanceWorkflowTests(unittest.TestCase):
 
     def test_issue_write_job_has_no_downloaded_action_or_ambient_token(self) -> None:
         self.assertNotIn("uses:", self.consume)
-        self.assertNotIn("\n          GH_TOKEN:", self.consume)
-        self.assertNotIn("\n          GITHUB_TOKEN:", self.consume)
         self.assertEqual(
-            self.consume.count('GH_TOKEN="${{ github.token }}" gh api'),
+            self.consume.count("          GH_TOKEN: ${{ github.token }}"),
             3,
         )
         self.assertEqual(self.consume.count("${{ github.token }}"), 3)
+        self.assertNotIn('GH_TOKEN="${{ github.token }}" gh api', self.consume)
+        self.assertEqual(self.consume.count("gh api"), 3)
+
+        def step(name: str) -> str:
+            marker = f"      - name: {name}\n"
+            begin = self.consume.index(marker)
+            finish = self.consume.find("\n      - name: ", begin + len(marker))
+            if finish == -1:
+                finish = len(self.consume)
+            return self.consume[begin:finish]
+
+        token_steps = (
+            "Read HIGH acceptance comments",
+            "Attempt HIGH acceptance consumption once",
+            "Read HIGH acceptance comments after consumption",
+        )
+        for name in token_steps:
+            block = step(name)
+            self.assertIn("          GH_TOKEN: ${{ github.token }}", block)
+            run = block[block.index("        run: |") :]
+            self.assertNotIn("${{ github.token }}", run)
+            self.assertEqual(run.count("gh api"), 1)
+            self.assertNotIn("python3", run)
+            self.assertNotIn("LIFECYCLE_HELPER", run)
+
+        helper_steps = (
+            "Fetch exact lifecycle helper without GitHub credentials",
+            "Prepare HIGH acceptance consumption",
+            "Verify HIGH acceptance consumption",
+        )
+        for name in helper_steps:
+            block = step(name)
+            self.assertNotIn("${{ github.token }}", block)
+            self.assertNotIn("\n          GH_TOKEN:", block)
+
         self.assertIn(
             "https://raw.githubusercontent.com/$WORKFLOW_REPOSITORY/$WORKFLOW_SHA/"
             "scripts/phase4_acceptance_lifecycle.py",

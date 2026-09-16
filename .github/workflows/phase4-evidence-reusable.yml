@@ -207,7 +207,16 @@ jobs:
           test "$(git hash-object "$LIFECYCLE_HELPER")" = "b302048ecc870925a73d790b3b602f48e6116143"
           chmod 0400 "$LIFECYCLE_HELPER"
 
-      - name: Consume HIGH acceptance exactly once
+      - name: Read HIGH acceptance comments
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          COMMENTS="$RUNNER_TEMP/high-comments.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS"
+
+      - name: Prepare HIGH acceptance consumption
         env:
           BUILD_ID: ${{ inputs.build_id }}
           IMAGE: ${{ needs.adjudicate.outputs.image }}
@@ -223,11 +232,7 @@ jobs:
           test "$(git hash-object "$LIFECYCLE_HELPER")" = "b302048ecc870925a73d790b3b602f48e6116143"
 
           COMMENTS="$RUNNER_TEMP/high-comments.json"
-          GH_TOKEN="${{ github.token }}" gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS"
-          test -z "${GH_TOKEN:-}"
-          test -z "${GITHUB_TOKEN:-}"
-
+          test -s "$COMMENTS"
           ACCEPTANCE="$RUNNER_TEMP/high-acceptance.json"
           python3 "$LIFECYCLE_HELPER" check-available \
             --comments-json "$COMMENTS" \
@@ -235,27 +240,61 @@ jobs:
             --image "$IMAGE" \
             --findings-sha256 "$FINDINGS_SHA256" > "$ACCEPTANCE"
 
-          CONSUMPTION_BODY="$(python3 "$LIFECYCLE_HELPER" consumption-body \
+          CONSUMPTION_BODY_FILE="$RUNNER_TEMP/high-consumption-body.txt"
+          python3 "$LIFECYCLE_HELPER" consumption-body \
             --acceptance-json "$ACCEPTANCE" \
-            --run-id "$GITHUB_RUN_ID")"
+            --run-id "$GITHUB_RUN_ID" > "$CONSUMPTION_BODY_FILE"
+          test -s "$CONSUMPTION_BODY_FILE"
+          chmod 0400 "$CONSUMPTION_BODY_FILE"
+
+      - name: Attempt HIGH acceptance consumption once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          CONSUMPTION_BODY_FILE="$RUNNER_TEMP/high-consumption-body.txt"
+          test -s "$CONSUMPTION_BODY_FILE"
+          IFS= read -r CONSUMPTION_BODY < "$CONSUMPTION_BODY_FILE"
+          test -n "$CONSUMPTION_BODY"
           CONSUMPTION_CREATE="$RUNNER_TEMP/high-consumption-create.json"
           set +e
-          GH_TOKEN="${{ github.token }}" gh api --method POST \
+          gh api --method POST \
             "repos/$GITHUB_REPOSITORY/issues/28/comments" \
             -f body="$CONSUMPTION_BODY" > "$CONSUMPTION_CREATE"
           CONSUMPTION_CREATE_RC=$?
           set -e
-          test -z "${GH_TOKEN:-}"
-          test -z "${GITHUB_TOKEN:-}"
+          printf '%s\n' "$CONSUMPTION_CREATE_RC" > "$RUNNER_TEMP/high-consumption-create.rc"
           if test "$CONSUMPTION_CREATE_RC" -ne 0; then
             printf 'CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE\n'
           fi
 
+      - name: Read HIGH acceptance comments after consumption
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
           COMMENTS_AFTER="$RUNNER_TEMP/high-comments-after.json"
-          GH_TOKEN="${{ github.token }}" gh api --paginate --slurp \
+          gh api --paginate --slurp \
             "repos/$GITHUB_REPOSITORY/issues/28/comments?per_page=100" > "$COMMENTS_AFTER"
+
+      - name: Verify HIGH acceptance consumption
+        run: |
+          set -euo pipefail
           test -z "${GH_TOKEN:-}"
           test -z "${GITHUB_TOKEN:-}"
+          LIFECYCLE_HELPER="$RUNNER_TEMP/phase4_acceptance_lifecycle.py"
+          test "$(git hash-object "$LIFECYCLE_HELPER")" = "b302048ecc870925a73d790b3b602f48e6116143"
+          ACCEPTANCE="$RUNNER_TEMP/high-acceptance.json"
+          COMMENTS_AFTER="$RUNNER_TEMP/high-comments-after.json"
+          CREATE_RC_FILE="$RUNNER_TEMP/high-consumption-create.rc"
+          test -s "$ACCEPTANCE"
+          test -s "$COMMENTS_AFTER"
+          test -s "$CREATE_RC_FILE"
+          IFS= read -r CONSUMPTION_CREATE_RC < "$CREATE_RC_FILE"
+          [[ "$CONSUMPTION_CREATE_RC" =~ ^[0-9]+$ ]]
+          if test "$CONSUMPTION_CREATE_RC" -ne 0; then
+            printf 'CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE\n'
+          fi
           python3 "$LIFECYCLE_HELPER" verify-consumed \
             --comments-json "$COMMENTS_AFTER" \
             --acceptance-json "$ACCEPTANCE" \
