@@ -28,6 +28,7 @@ PHASE4_BUILD_WORKFLOW_SHA = "5a800f8216f52effc216b3ef77f2c95aa20010a5"
 PHASE4_EVIDENCE_WORKFLOW_SHA = "b3aebc9b2069b09b0d972a5319df0b1f97a8d8f2"
 FOUNDATION_DRIFT_CONTROL_SEED_SHA = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
 PHASE4_DEPLOY_WORKFLOW_SHA = "288a0fb525a3e4914d59dc4702914eaa066f061b"
+PHASE4_DEPLOY_OLD_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -409,6 +410,11 @@ def check_phase4_authority(errors: list[str]) -> None:
     for token in exact_locals:
         if token not in text:
             errors.append(f"Phase 4 authority is missing exact activation local: {token}")
+
+    if PHASE4_DEPLOY_OLD_WORKFLOW_SHA in text or PHASE4_DEPLOY_OLD_WORKFLOW_SHA in outputs_text:
+        errors.append(
+            "Phase 4 target-grant state must reject the superseded deployment workflow identity"
+        )
 
     expected_accounts = (
         "github-p4-build",
