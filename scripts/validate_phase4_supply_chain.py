@@ -258,12 +258,49 @@ def main() -> int:
         errors.append("repository SBOM helper must not contain mutable latest authority")
 
     deploy = (ROOT / ".github/workflows/phase4-deploy-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reusable.yml").is_file() else ""
-    for forbidden in ("setIamPolicy", "invokerIamDisabled", "docker build", "cloudbuild.googleapis.com"):
+    for forbidden in (
+        "allowMissing=true",
+        "git/ref/heads/main",
+        "docker build",
+        "cloudbuild.googleapis.com",
+        "setIamPolicy",
+        "-X PATCH",
+        "-X DELETE",
+    ):
         if forbidden in deploy:
-            errors.append(f"deploy reusable contains forbidden mutation path: {forbidden}")
-    for required in ("validate-transition", "allowMissing=true", "phase4-proof", "github-p4-verifier@", "id_token"):
+            errors.append(f"deploy reusable contains superseded/forbidden deployment path: {forbidden}")
+    for required in (
+        "validate-deployment-envelope",
+        "verify-deployment-risk-comments",
+        "verify-deployment-consumption-comment",
+        "verify-deployment-transition",
+        "deployment-create-request",
+        "verify-deployment-service",
+        "phase4-cloud-run-provider-mutation",
+        "GITHUB_RUN_ATTEMPT",
+        "serviceId=phase4-proof",
+        "-X POST",
+        "github-p4-deployer@",
+        "github-p4-verifier@",
+        "id_token",
+        "CREATE_OUTCOME_UNKNOWN",
+        "NO_MUTATION_CONFIRMED",
+        "deployment-operation-outcome",
+        "Reconcile exact known provider operation without mutation",
+        "steps.reconcile.outputs.provider_operation",
+    ):
         if required not in deploy:
-            errors.append(f"deploy reusable missing exact-digest/readback control: {required}")
+            errors.append(f"deploy reusable missing accepted deployment-architecture control: {required}")
+    if deploy.count("serviceId=phase4-proof") != 1:
+        errors.append("deploy reusable must expose exactly one create-only Cloud Run mutation endpoint")
+    if deploy.count("-X POST") != 1:
+        errors.append("deploy reusable must contain exactly one provider mutation POST")
+    if deploy.count("https://run.googleapis.com/v2/$OPERATION") != 1:
+        errors.append("deploy reusable must perform exactly one bounded read-only known-operation reconciliation path")
+    if "steps.reconcile.outputs.provider_mutation_disposition" not in deploy or "steps.reconcile.outputs.revision" not in deploy:
+        errors.append("deploy reusable job outputs must bind the read-only reconciled operation outcome")
+    if "cancel-in-progress: false" not in deploy:
+        errors.append("deploy reusable must preserve non-cancelling provider-mutation concurrency")
 
     helper = (ROOT / "scripts/phase4_supply_chain.py").read_text(encoding="utf-8") if (ROOT / "scripts/phase4_supply_chain.py").is_file() else ""
     if f"sha256:{BUILD_TEST_PYTHON_DIGEST}" not in helper:
@@ -274,6 +311,21 @@ def main() -> int:
         errors.append("Build request must require provenance on the bounded free-tier machine")
     if ':latest' in helper or re.search(r'"latest"', helper):
         errors.append("Phase 4 helper must not contain mutable latest authority")
+    for required in (
+        "resilio-phase4-deployment-envelope/v1",
+        "PHASE4_DEPLOYMENT_AUTHORISED_V1",
+        "PHASE4_DEPLOYMENT_AUTHORITY_CONSUMED_V2",
+        "DEPLOYMENT_ENVELOPE_NOT_CANONICAL",
+        "DEPLOYMENT_RELEASE_ID_MISMATCH",
+        "DEPLOYMENT_RUN_ATTEMPT_NOT_FIRST",
+        "DEPLOYMENT_CONSUMPTION_NOT_UNIQUE",
+        "DEPLOYMENT_TRANSITION_BINDING_MISMATCH",
+        "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+        "DEPLOYMENT_TRAFFIC_MISMATCH",
+        "DEPLOYMENT_PUBLIC_PRINCIPAL_FORBIDDEN",
+    ):
+        if required not in helper:
+            errors.append(f"Phase 4 helper missing deployment-envelope/authority control: {required}")
 
     dockerfile = (ROOT / "services/phase4-proof/Dockerfile").read_text(encoding="utf-8") if (ROOT / "services/phase4-proof/Dockerfile").is_file() else ""
     if not dockerfile.startswith("FROM gcr.io/distroless/python3-debian13@sha256:" + PROOF_RUNTIME_DIGEST + "\n"):

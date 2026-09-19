@@ -831,6 +831,491 @@ def verify_health_response(response: dict[str, Any], expected_source: str) -> No
         raise SupplyChainError("RUN_HEALTH_RESPONSE_MISMATCH")
 
 
+
+GITHUB_ACTIONS_LOGIN = "github-actions[bot]"
+DEPLOYMENT_ENVELOPE_CONTRACT = "resilio-phase4-deployment-envelope/v1"
+DEPLOYMENT_AUTHORITY_PREFIX = "PHASE4_DEPLOYMENT_AUTHORISED_V1"
+DEPLOYMENT_CONSUMPTION_PREFIX = "PHASE4_DEPLOYMENT_AUTHORITY_CONSUMED_V2"
+DEPLOYMENT_SERVICE = (
+    "projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+)
+
+PHASE4_DEPLOYMENT_ENVELOPE_EXPECTED: dict[str, Any] = {
+    "contract": DEPLOYMENT_ENVELOPE_CONTRACT,
+    "repository": REPOSITORY,
+    "phase": 4,
+    "artifact": {
+        "source_sha": "5a800f8216f52effc216b3ef77f2c95aa20010a5",
+        "source_tree_sha": "2f0299f93209d6cf29f8f26a25de5a9081eb6308",
+        "build_id": "16251096-2ad8-40b7-a8d4-6a4bbacb0928",
+        "build_control_sha": "10e7a938046e2d2d28ffa08a470bf9dfeda40dac",
+        "build_request_sha256": "51629aa53e5cad17ee336d4f987830f25532fb216d9ded8c326b01ddd604bccb",
+        "image": (
+            "us-central1-docker.pkg.dev/resilio-control-e882d4/"
+            "resilio-phase4/phase4-proof@sha256:"
+            "409333b0a48bc3d2c1f8fea8f99c66c64c14c8f9db1469f0349807e91329f60e"
+        ),
+        "provenance_occurrence": (
+            "projects/resilio-control-e882d4/occurrences/"
+            "29912abc-02d6-4506-a51b-f566253211f3"
+        ),
+    },
+    "evidence": {
+        "run_id": "35405855112",
+        "run_attempt": 1,
+        "workflow_ref": (
+            "8ft0-ai/resilio/.github/workflows/"
+            "phase4-evidence-reusable.yml@b3aebc9b2069b09b0d972a5319df0b1f97a8d8f2"
+        ),
+        "vulnerability": {
+            "findings_sha256": "e9ef9a2f607dc33d9fe1df666eb5603fad85ca6e56c35a68ecfc642851576f53",
+            "high": 1,
+            "critical": 0,
+            "accepted_finding": "CVE-2026-85091 / zlib",
+            "risk_id": "RISK-002",
+            "decision": {
+                "comment_id": 5736857486,
+                "decision": "ACCEPTED",
+                "author_id": OWNER_ID,
+                "body_sha256": "2ee2caac464669b979b4a2d2e57d7f560c1cc01840be437e577cf65f400ea200",
+            },
+            "acceptance": {
+                "comment_id": 5736859911,
+                "contract": "PHASE4_HIGH_ACCEPTED_V2",
+                "body_sha256": "20607ac8f84b2c690b5a03d90f08a65607a4d6f4f1565a6380d6f4a049141276",
+            },
+            "consumption": {
+                "comment_id": 5737423313,
+                "contract": "PHASE4_HIGH_ACCEPTANCE_CONSUMED_V1",
+                "run_id": "35405855112",
+                "body_sha256": "1286f0c5010988e1a47fd4f492c3bda9a7a1cba12f34b25e70c0bd24db482ecd",
+            },
+        },
+        "sbom": {
+            "object": (
+                "gs://resilio-control-e882d4-phase4-evidence/transitions/"
+                "16251096-2ad8-40b7-a8d4-6a4bbacb0928.sbom.spdx.json"
+            ),
+            "generation": "1789774201094802",
+            "sha256": "ab9b8e081dc414e038c0e77d5705d9c97a42528123fb48bd99b84b1c17b068c9",
+            "size": 1666799,
+            "generator": {
+                "name": "syft",
+                "version": "1.51.1",
+                "archive_sha256": "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3",
+            },
+        },
+        "transition": {
+            "contract": "resilio-phase4-transition/v1",
+            "object": (
+                "gs://resilio-control-e882d4-phase4-evidence/transitions/"
+                "16251096-2ad8-40b7-a8d4-6a4bbacb0928.json"
+            ),
+            "generation": "1789774202522366",
+            "sha256": "dad035b20b31c17dc1652627f9911aeeb7fe953fdbc2165a5c2750d55739738b",
+            "size": 1721,
+        },
+    },
+    "target": {
+        "service": DEPLOYMENT_SERVICE,
+        "region": REGION,
+        "transition_kind": "CREATE_IF_ABSENT",
+        "expected_previous_revision": None,
+        "runtime_service_account": RUNTIME,
+        "ingress": "INGRESS_TRAFFIC_ALL",
+        "authentication": "IAM_REQUIRED",
+        "public_principals_forbidden": True,
+        "timeout": "10s",
+        "max_instance_request_concurrency": 10,
+        "scaling": {"min_instances": 0, "max_instances": 1},
+        "resources": {"cpu": "1", "memory": "256Mi"},
+        "environment": {"SOURCE_SHA": "5a800f8216f52effc216b3ef77f2c95aa20010a5"},
+        "secrets": [],
+        "traffic": {"mode": "LATEST_CREATED_REVISION", "percent": 100},
+    },
+    "execution_policy": {
+        "rebuild_forbidden": True,
+        "image_substitution_forbidden": True,
+        "single_mutation_attempt": True,
+        "automatic_retry_after_unknown_forbidden": True,
+        "rollback_requires_separate_owner_authority": True,
+    },
+}
+
+
+def _flatten_github_comments(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, list):
+        raise SupplyChainError("DEPLOYMENT_COMMENTS_INVALID")
+    rows: list[Any] = []
+    for item in payload:
+        if isinstance(item, list):
+            rows.extend(item)
+        else:
+            rows.append(item)
+    if not all(isinstance(item, dict) for item in rows):
+        raise SupplyChainError("DEPLOYMENT_COMMENTS_INVALID")
+    return rows
+
+
+def _deployment_is_owner(comment: dict[str, Any]) -> bool:
+    user = comment.get("user") or {}
+    return user.get("login") == OWNER_LOGIN and user.get("id") == OWNER_ID
+
+
+def _deployment_is_consumption_actor(comment: dict[str, Any]) -> bool:
+    if _deployment_is_owner(comment):
+        return True
+    user = comment.get("user") or {}
+    return user.get("login") == GITHUB_ACTIONS_LOGIN
+
+
+def _deployment_parse_fields(body: Any, prefix: str, keys: tuple[str, ...]) -> dict[str, str]:
+    if not isinstance(body, str) or body != body.strip() or "\n" in body or "\r" in body:
+        raise SupplyChainError(f"{prefix}_FORMAT_INVALID")
+    parts = body.split(" ")
+    if len(parts) != len(keys) + 1 or parts[0] != prefix:
+        raise SupplyChainError(f"{prefix}_FORMAT_INVALID")
+    result: dict[str, str] = {}
+    for part, key in zip(parts[1:], keys, strict=True):
+        if not part.startswith(key + "="):
+            raise SupplyChainError(f"{prefix}_FORMAT_INVALID")
+        value = part[len(key) + 1 :]
+        if not value:
+            raise SupplyChainError(f"{prefix}_FORMAT_INVALID")
+        result[key] = value
+    return result
+
+
+def _require_comment_id(value: Any, label: str) -> int:
+    text = str(value)
+    if not WORKFLOW_RUN_ID.fullmatch(text):
+        raise SupplyChainError(f"{label}_INVALID")
+    return int(text)
+
+
+def _require_release_id(value: Any, label: str = "DEPLOYMENT_RELEASE_ID") -> str:
+    text = str(value)
+    if not SHA256_HEX.fullmatch(text):
+        raise SupplyChainError(f"{label}_INVALID")
+    return text
+
+
+def validate_deployment_envelope(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or value != PHASE4_DEPLOYMENT_ENVELOPE_EXPECTED:
+        raise SupplyChainError("DEPLOYMENT_ENVELOPE_MISMATCH")
+    return value
+
+
+def load_deployment_envelope(path: str, expected_release_id: str) -> dict[str, Any]:
+    release_id = _require_release_id(expected_release_id)
+    candidate = Path(path)
+    try:
+        if candidate.is_symlink() or not candidate.is_file():
+            raise SupplyChainError("DEPLOYMENT_ENVELOPE_FILE_INVALID")
+        raw = candidate.read_bytes()
+    except OSError as exc:
+        raise SupplyChainError("DEPLOYMENT_ENVELOPE_FILE_INVALID") from exc
+    try:
+        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_non_json_constant)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise SupplyChainError("DEPLOYMENT_ENVELOPE_JSON_INVALID") from exc
+    canonical = canonical_json_bytes(value)
+    if raw != canonical:
+        raise SupplyChainError("DEPLOYMENT_ENVELOPE_NOT_CANONICAL")
+    if sha256_bytes(canonical) != release_id:
+        raise SupplyChainError("DEPLOYMENT_RELEASE_ID_MISMATCH")
+    return validate_deployment_envelope(value)
+
+
+def validate_deployment_authority_comment(comment: dict[str, Any], authority_comment_id: Any) -> dict[str, Any]:
+    expected_id = _require_comment_id(authority_comment_id, "DEPLOYMENT_AUTHORITY_COMMENT")
+    if _require_comment_id(comment.get("id"), "DEPLOYMENT_AUTHORITY_COMMENT") != expected_id:
+        raise SupplyChainError("DEPLOYMENT_AUTHORITY_COMMENT_MISMATCH")
+    if not _deployment_is_owner(comment):
+        raise SupplyChainError("DEPLOYMENT_AUTHORITY_OWNER_INVALID")
+    fields = _deployment_parse_fields(
+        comment.get("body"), DEPLOYMENT_AUTHORITY_PREFIX,
+        ("release_id", "envelope_commit", "service", "transition"),
+    )
+    release_id = _require_release_id(fields["release_id"])
+    envelope_commit = require_full_sha(fields["envelope_commit"], "DEPLOYMENT_ENVELOPE_COMMIT")
+    if fields["service"] != DEPLOYMENT_SERVICE:
+        raise SupplyChainError("DEPLOYMENT_AUTHORITY_SERVICE_MISMATCH")
+    if fields["transition"] != "CREATE_IF_ABSENT":
+        raise SupplyChainError("DEPLOYMENT_AUTHORITY_TRANSITION_MISMATCH")
+    issue_url = str(comment.get("issue_url") or "")
+    prefix = f"https://api.github.com/repos/{REPOSITORY}/issues/"
+    if not issue_url.startswith(prefix):
+        raise SupplyChainError("DEPLOYMENT_AUTHORITY_ISSUE_INVALID")
+    issue_number = issue_url[len(prefix):]
+    if not issue_number.isdigit() or int(issue_number) <= 0:
+        raise SupplyChainError("DEPLOYMENT_AUTHORITY_ISSUE_INVALID")
+    return {
+        "authority_comment_id": expected_id,
+        "release_id": release_id,
+        "envelope_commit": envelope_commit,
+        "service": DEPLOYMENT_SERVICE,
+        "transition": "CREATE_IF_ABSENT",
+        "issue_number": int(issue_number),
+    }
+
+
+def deployment_consumption_body(authority_comment_id: Any, release_id: str, run_id: Any, run_attempt: int) -> str:
+    authority = _require_comment_id(authority_comment_id, "DEPLOYMENT_AUTHORITY_COMMENT")
+    release = _require_release_id(release_id)
+    run = _require_comment_id(run_id, "DEPLOYMENT_RUN")
+    if run_attempt != 1:
+        raise SupplyChainError("DEPLOYMENT_RUN_ATTEMPT_NOT_FIRST")
+    return (
+        f"{DEPLOYMENT_CONSUMPTION_PREFIX} authority={authority} "
+        f"release_id={release} run={run} attempt=1"
+    )
+
+
+def _parse_deployment_consumption(comment: dict[str, Any]) -> dict[str, Any] | None:
+    body = comment.get("body")
+    if not isinstance(body, str) or not body.startswith(DEPLOYMENT_CONSUMPTION_PREFIX):
+        return None
+    if not _deployment_is_consumption_actor(comment):
+        raise SupplyChainError("DEPLOYMENT_CONSUMPTION_ACTOR_INVALID")
+    fields = _deployment_parse_fields(
+        body, DEPLOYMENT_CONSUMPTION_PREFIX,
+        ("authority", "release_id", "run", "attempt"),
+    )
+    if fields["attempt"] != "1":
+        raise SupplyChainError("DEPLOYMENT_CONSUMPTION_ATTEMPT_INVALID")
+    return {
+        "comment_id": _require_comment_id(comment.get("id"), "DEPLOYMENT_CONSUMPTION_COMMENT"),
+        "authority_comment_id": _require_comment_id(fields["authority"], "DEPLOYMENT_AUTHORITY_COMMENT"),
+        "release_id": _require_release_id(fields["release_id"]),
+        "run_id": _require_comment_id(fields["run"], "DEPLOYMENT_RUN"),
+        "run_attempt": 1,
+        "body": body,
+    }
+
+
+def deployment_consumption_available(comments_payload: Any, authority_comment_id: Any, release_id: str) -> None:
+    authority = _require_comment_id(authority_comment_id, "DEPLOYMENT_AUTHORITY_COMMENT")
+    release = _require_release_id(release_id)
+    for comment in _flatten_github_comments(comments_payload):
+        parsed = _parse_deployment_consumption(comment)
+        if parsed is None:
+            continue
+        if parsed["authority_comment_id"] == authority:
+            if parsed["release_id"] != release:
+                raise SupplyChainError("DEPLOYMENT_CONSUMPTION_CONFLICT")
+            raise SupplyChainError("DEPLOYMENT_AUTHORITY_ALREADY_CONSUMED")
+
+
+def verify_deployment_consumption(
+    comments_payload: Any, authority_comment_id: Any, release_id: str,
+    run_id: Any, run_attempt: int,
+) -> dict[str, Any]:
+    authority = _require_comment_id(authority_comment_id, "DEPLOYMENT_AUTHORITY_COMMENT")
+    release = _require_release_id(release_id)
+    run = _require_comment_id(run_id, "DEPLOYMENT_RUN")
+    if run_attempt != 1:
+        raise SupplyChainError("DEPLOYMENT_RUN_ATTEMPT_NOT_FIRST")
+    matches: list[dict[str, Any]] = []
+    for comment in _flatten_github_comments(comments_payload):
+        parsed = _parse_deployment_consumption(comment)
+        if parsed is not None and parsed["authority_comment_id"] == authority:
+            matches.append(parsed)
+    if len(matches) != 1:
+        raise SupplyChainError("DEPLOYMENT_CONSUMPTION_NOT_UNIQUE")
+    result = matches[0]
+    if result["release_id"] != release or result["run_id"] != run or result["run_attempt"] != 1:
+        raise SupplyChainError("DEPLOYMENT_CONSUMPTION_IDENTITY_MISMATCH")
+    return result
+
+
+def verify_deployment_consumption_comment(
+    comment: dict[str, Any], consumption_comment_id: Any, authority_comment_id: Any,
+    release_id: str, run_id: Any, run_attempt: int,
+) -> dict[str, Any]:
+    expected_comment = _require_comment_id(consumption_comment_id, "DEPLOYMENT_CONSUMPTION_COMMENT")
+    parsed = _parse_deployment_consumption(comment)
+    if parsed is None or parsed["comment_id"] != expected_comment:
+        raise SupplyChainError("DEPLOYMENT_CONSUMPTION_COMMENT_MISMATCH")
+    return verify_deployment_consumption(
+        [[comment]], authority_comment_id, release_id, run_id, run_attempt
+    )
+
+
+def _verify_comment_body_identity(
+    comment: dict[str, Any], *, comment_id: int, body_sha256: str, actor: str,
+) -> None:
+    if comment.get("id") != comment_id:
+        raise SupplyChainError("DEPLOYMENT_RISK_COMMENT_ID_MISMATCH")
+    user = comment.get("user") or {}
+    if actor == "owner":
+        if user.get("login") != OWNER_LOGIN or user.get("id") != OWNER_ID:
+            raise SupplyChainError("DEPLOYMENT_RISK_COMMENT_ACTOR_MISMATCH")
+    elif actor == "actions":
+        if user.get("login") != GITHUB_ACTIONS_LOGIN:
+            raise SupplyChainError("DEPLOYMENT_RISK_COMMENT_ACTOR_MISMATCH")
+    else:
+        raise SupplyChainError("DEPLOYMENT_RISK_COMMENT_ACTOR_INVALID")
+    body = comment.get("body")
+    if not isinstance(body, str) or sha256_bytes(body.encode("utf-8")) != body_sha256:
+        raise SupplyChainError("DEPLOYMENT_RISK_COMMENT_BODY_MISMATCH")
+
+
+def verify_deployment_risk_comments(
+    envelope: dict[str, Any], decision_comment: dict[str, Any],
+    acceptance_comment: dict[str, Any], consumption_comment: dict[str, Any],
+) -> None:
+    validate_deployment_envelope(envelope)
+    vulnerability = envelope["evidence"]["vulnerability"]
+    decision = vulnerability["decision"]
+    acceptance = vulnerability["acceptance"]
+    consumption = vulnerability["consumption"]
+    _verify_comment_body_identity(
+        decision_comment, comment_id=decision["comment_id"],
+        body_sha256=decision["body_sha256"], actor="owner",
+    )
+    _verify_comment_body_identity(
+        acceptance_comment, comment_id=acceptance["comment_id"],
+        body_sha256=acceptance["body_sha256"], actor="owner",
+    )
+    _verify_comment_body_identity(
+        consumption_comment, comment_id=consumption["comment_id"],
+        body_sha256=consumption["body_sha256"], actor="actions",
+    )
+
+
+def validate_deployment_transition_binding(envelope: dict[str, Any], transition: dict[str, Any]) -> None:
+    validate_deployment_envelope(envelope)
+    validate_transition_manifest(transition)
+    artifact = envelope["artifact"]
+    evidence = envelope["evidence"]
+    expected_pairs = {
+        "build_id": artifact["build_id"],
+        "source_sha": artifact["source_sha"],
+        "source_tree_sha": artifact["source_tree_sha"],
+        "workflow_sha": artifact["build_control_sha"],
+        "build_request_sha256": artifact["build_request_sha256"],
+        "image": artifact["image"],
+    }
+    for key, expected in expected_pairs.items():
+        if transition.get(key) != expected:
+            raise SupplyChainError("DEPLOYMENT_TRANSITION_BINDING_MISMATCH")
+    if (transition.get("provenance") or {}).get("occurrence") != artifact["provenance_occurrence"]:
+        raise SupplyChainError("DEPLOYMENT_TRANSITION_PROVENANCE_MISMATCH")
+    sbom = transition.get("sbom") or {}
+    expected_sbom = evidence["sbom"]
+    if (
+        sbom.get("location") != expected_sbom["object"]
+        or str(sbom.get("generation")) != expected_sbom["generation"]
+        or sbom.get("sha256") != expected_sbom["sha256"]
+    ):
+        raise SupplyChainError("DEPLOYMENT_TRANSITION_SBOM_MISMATCH")
+
+
+def deployment_cloud_run_create_request(envelope: dict[str, Any]) -> dict[str, Any]:
+    validate_deployment_envelope(envelope)
+    artifact = envelope["artifact"]
+    target = envelope["target"]
+    return {
+        "ingress": target["ingress"],
+        "template": {
+            "serviceAccount": target["runtime_service_account"],
+            "timeout": target["timeout"],
+            "maxInstanceRequestConcurrency": target["max_instance_request_concurrency"],
+            "scaling": {
+                "minInstanceCount": target["scaling"]["min_instances"],
+                "maxInstanceCount": target["scaling"]["max_instances"],
+            },
+            "containers": [{
+                "image": artifact["image"],
+                "env": [{"name": "SOURCE_SHA", "value": artifact["source_sha"]}],
+                "resources": {"limits": dict(target["resources"])},
+            }],
+        },
+        "traffic": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
+    }
+
+
+def deployment_operation_outcome(
+    operation: dict[str, Any], expected_operation: str,
+) -> dict[str, str | None]:
+    if not isinstance(operation, dict):
+        raise SupplyChainError("DEPLOYMENT_OPERATION_RESPONSE_INVALID")
+    if not isinstance(expected_operation, str) or not expected_operation:
+        raise SupplyChainError("DEPLOYMENT_OPERATION_IDENTITY_INVALID")
+    if operation.get("name") != expected_operation:
+        raise SupplyChainError("DEPLOYMENT_OPERATION_IDENTITY_MISMATCH")
+    if operation.get("done") is not True:
+        return {"disposition": "PENDING", "revision": None}
+    error = operation.get("error")
+    if isinstance(error, dict) and error:
+        return {"disposition": "CREATE_FAILED_KNOWN", "revision": None}
+    response = operation.get("response")
+    if not isinstance(response, dict):
+        return {"disposition": "CREATE_OUTCOME_UNKNOWN", "revision": None}
+    created = response.get("latestCreatedRevision")
+    ready = response.get("latestReadyRevision")
+    if isinstance(created, str) and created and created == ready:
+        return {"disposition": "PROVIDER_CREATED", "revision": created}
+    return {"disposition": "CREATE_OUTCOME_UNKNOWN", "revision": None}
+
+
+def verify_deployment_cloud_run_service(
+    envelope: dict[str, Any], service: dict[str, Any], policy: dict[str, Any],
+    expected_revision: str,
+) -> dict[str, str]:
+    validate_deployment_envelope(envelope)
+    if not expected_revision:
+        raise SupplyChainError("DEPLOYMENT_EXPECTED_REVISION_MISSING")
+    expected = deployment_cloud_run_create_request(envelope)
+    artifact = envelope["artifact"]
+    if service.get("name") not in (None, DEPLOYMENT_SERVICE):
+        raise SupplyChainError("DEPLOYMENT_SERVICE_IDENTITY_MISMATCH")
+    if service.get("ingress") != expected["ingress"] or service.get("invokerIamDisabled") is True:
+        raise SupplyChainError("DEPLOYMENT_ACCESS_POSTURE_MISMATCH")
+    template = service.get("template") or {}
+    wanted = expected["template"]
+    for key in ("serviceAccount", "timeout", "maxInstanceRequestConcurrency"):
+        if template.get(key) != wanted[key]:
+            raise SupplyChainError("DEPLOYMENT_TEMPLATE_MISMATCH")
+    scaling = template.get("scaling") or {}
+    if scaling.get("minInstanceCount", 0) != 0 or scaling.get("maxInstanceCount") != 1:
+        raise SupplyChainError("DEPLOYMENT_SCALING_MISMATCH")
+    containers = template.get("containers") or []
+    if len(containers) != 1 or not isinstance(containers[0], dict):
+        raise SupplyChainError("DEPLOYMENT_CONTAINER_MISMATCH")
+    container = containers[0]
+    if container.get("image") != artifact["image"]:
+        raise SupplyChainError("DEPLOYMENT_IMAGE_MISMATCH")
+    if container.get("resources", {}).get("limits") != wanted["containers"][0]["resources"]["limits"]:
+        raise SupplyChainError("DEPLOYMENT_RESOURCES_MISMATCH")
+    if container.get("env") != wanted["containers"][0]["env"]:
+        raise SupplyChainError("DEPLOYMENT_ENVIRONMENT_MISMATCH")
+    for binding in policy.get("bindings") or []:
+        members = set(binding.get("members") or []) if isinstance(binding, dict) else set()
+        if {"allUsers", "allAuthenticatedUsers"} & members:
+            raise SupplyChainError("DEPLOYMENT_PUBLIC_PRINCIPAL_FORBIDDEN")
+    if (
+        service.get("latestCreatedRevision") != expected_revision
+        or service.get("latestReadyRevision") != expected_revision
+    ):
+        raise SupplyChainError("DEPLOYMENT_REVISION_MISMATCH")
+    statuses = [
+        row for row in (service.get("trafficStatuses") or [])
+        if isinstance(row, dict) and int(row.get("percent") or 0) > 0
+    ]
+    if (
+        len(statuses) != 1
+        or statuses[0].get("revision") != expected_revision
+        or statuses[0].get("percent") != 100
+    ):
+        raise SupplyChainError("DEPLOYMENT_TRAFFIC_MISMATCH")
+    uri = str(service.get("uri") or "")
+    if not uri.startswith("https://"):
+        raise SupplyChainError("DEPLOYMENT_URI_INVALID")
+    return {"revision": expected_revision, "uri": uri}
+
+
 def _load_json(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -850,6 +1335,17 @@ def main() -> int:
     p = commands.add_parser("bind-sbom"); p.add_argument("--sbom-json", required=True); p.add_argument("--metadata-json", required=True); p.add_argument("--content-file", required=True)
     p = commands.add_parser("make-transition"); p.add_argument("--build-result", required=True); p.add_argument("--source-tree-sha", required=True); p.add_argument("--provenance-occurrence", required=True); p.add_argument("--sbom-json", required=True); p.add_argument("--output", required=True)
     p = commands.add_parser("validate-transition"); p.add_argument("--manifest", required=True)
+    p = commands.add_parser("validate-deployment-envelope"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True)
+    p = commands.add_parser("validate-deployment-authority"); p.add_argument("--comment-json", required=True); p.add_argument("--authority-comment-id", required=True)
+    p = commands.add_parser("deployment-consumption-available"); p.add_argument("--comments-json", required=True); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True)
+    p = commands.add_parser("deployment-consumption-body"); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", required=True, type=int)
+    p = commands.add_parser("verify-deployment-consumption"); p.add_argument("--comments-json", required=True); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", required=True, type=int)
+    p = commands.add_parser("verify-deployment-consumption-comment"); p.add_argument("--comment-json", required=True); p.add_argument("--consumption-comment-id", required=True); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", required=True, type=int)
+    p = commands.add_parser("verify-deployment-risk-comments"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--decision-comment", required=True); p.add_argument("--acceptance-comment", required=True); p.add_argument("--consumption-comment", required=True)
+    p = commands.add_parser("verify-deployment-transition"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--transition-json", required=True)
+    p = commands.add_parser("deployment-create-request"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--output", required=True)
+    p = commands.add_parser("deployment-operation-outcome"); p.add_argument("--operation-json", required=True); p.add_argument("--expected-operation", required=True)
+    p = commands.add_parser("verify-deployment-service"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--expected-revision", required=True)
     p = commands.add_parser("service-request"); p.add_argument("--image", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--output", required=True)
     p = commands.add_parser("verify-service"); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--expected-image", required=True); p.add_argument("--expected-source", required=True)
     p = commands.add_parser("verify-revision"); p.add_argument("--revision-json", required=True); p.add_argument("--expected-image", required=True)
@@ -886,6 +1382,32 @@ def main() -> int:
             Path(args.output).write_bytes(canonical_json_bytes(manifest) + b"\n")
         elif args.command == "validate-transition":
             validate_transition_manifest(_load_json(args.manifest))
+        elif args.command == "validate-deployment-envelope":
+            load_deployment_envelope(args.envelope, args.release_id)
+        elif args.command == "validate-deployment-authority":
+            print(json.dumps(validate_deployment_authority_comment(_load_json(args.comment_json), args.authority_comment_id), sort_keys=True, separators=(",", ":")))
+        elif args.command == "deployment-consumption-available":
+            deployment_consumption_available(_load_json(args.comments_json), args.authority_comment_id, args.release_id)
+        elif args.command == "deployment-consumption-body":
+            print(deployment_consumption_body(args.authority_comment_id, args.release_id, args.run_id, args.run_attempt))
+        elif args.command == "verify-deployment-consumption":
+            print(json.dumps(verify_deployment_consumption(_load_json(args.comments_json), args.authority_comment_id, args.release_id, args.run_id, args.run_attempt), sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-deployment-consumption-comment":
+            print(json.dumps(verify_deployment_consumption_comment(_load_json(args.comment_json), args.consumption_comment_id, args.authority_comment_id, args.release_id, args.run_id, args.run_attempt), sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-deployment-risk-comments":
+            envelope = load_deployment_envelope(args.envelope, args.release_id)
+            verify_deployment_risk_comments(envelope, _load_json(args.decision_comment), _load_json(args.acceptance_comment), _load_json(args.consumption_comment))
+        elif args.command == "verify-deployment-transition":
+            envelope = load_deployment_envelope(args.envelope, args.release_id)
+            validate_deployment_transition_binding(envelope, _load_json(args.transition_json))
+        elif args.command == "deployment-create-request":
+            envelope = load_deployment_envelope(args.envelope, args.release_id)
+            Path(args.output).write_bytes(canonical_json_bytes(deployment_cloud_run_create_request(envelope)))
+        elif args.command == "deployment-operation-outcome":
+            print(json.dumps(deployment_operation_outcome(_load_json(args.operation_json), args.expected_operation), sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-deployment-service":
+            envelope = load_deployment_envelope(args.envelope, args.release_id)
+            print(json.dumps(verify_deployment_cloud_run_service(envelope, _load_json(args.service_json), _load_json(args.policy_json), args.expected_revision), sort_keys=True, separators=(",", ":")))
         elif args.command == "service-request":
             Path(args.output).write_bytes(canonical_json_bytes(cloud_run_service_request(args.image, args.source_sha)) + b"\n")
         elif args.command == "verify-service":
