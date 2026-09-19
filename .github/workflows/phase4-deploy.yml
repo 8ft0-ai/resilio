@@ -1,0 +1,134 @@
+name: Phase 4 deployment
+
+run-name: phase4-deploy-authority-${{ inputs.authority_comment_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      authority_comment_id:
+        description: Owner deployment-authority comment ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase4-deployment-authority-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    name: validate-and-consume-owner-authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      release_id: ${{ steps.consume.outputs.release_id }}
+      envelope_commit: ${{ steps.consume.outputs.envelope_commit }}
+      consumption_comment_id: ${{ steps.consume.outputs.consumption_comment_id }}
+    steps:
+      - name: Require protected main and first workflow attempt
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+
+      - name: Check out protected caller control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Validate and consume exact owner authority once
+        id: consume
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+        run: |
+          set -euo pipefail
+          [[ "$AUTHORITY_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+
+          AUTHORITY="$RUNNER_TEMP/deployment-authority.json"
+          AUTHORITY_VALID="$RUNNER_TEMP/deployment-authority-valid.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$AUTHORITY_COMMENT_ID" > "$AUTHORITY"
+          python3 scripts/phase4_supply_chain.py validate-deployment-authority \
+            --comment-json "$AUTHORITY" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" > "$AUTHORITY_VALID"
+
+          RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$AUTHORITY_VALID")"
+          ENVELOPE_COMMIT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["envelope_commit"])' "$AUTHORITY_VALID")"
+          ISSUE_NUMBER="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_number"])' "$AUTHORITY_VALID")"
+          [[ "$RELEASE_ID" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ENVELOPE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]]
+
+          ENVELOPE="$RUNNER_TEMP/deployment-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-deployment-envelope \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
+
+          COMMENTS_BEFORE="$RUNNER_TEMP/deployment-comments-before.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" > "$COMMENTS_BEFORE"
+          python3 scripts/phase4_supply_chain.py deployment-consumption-available \
+            --comments-json "$COMMENTS_BEFORE" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" \
+            --release-id "$RELEASE_ID"
+
+          CONSUMPTION_BODY="$RUNNER_TEMP/deployment-consumption-body.txt"
+          python3 scripts/phase4_supply_chain.py deployment-consumption-body \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" \
+            --release-id "$RELEASE_ID" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" > "$CONSUMPTION_BODY"
+          IFS= read -r BODY < "$CONSUMPTION_BODY"
+          test -n "$BODY"
+
+          CREATE_RESPONSE="$RUNNER_TEMP/deployment-consumption-create.json"
+          set +e
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" \
+            -f body="$BODY" > "$CREATE_RESPONSE"
+          CREATE_RC=$?
+          set -e
+          if test "$CREATE_RC" -ne 0; then
+            printf 'DEPLOYMENT_CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE\n'
+          fi
+
+          COMMENTS_AFTER="$RUNNER_TEMP/deployment-comments-after.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" > "$COMMENTS_AFTER"
+          CONSUMPTION_VALID="$RUNNER_TEMP/deployment-consumption-valid.json"
+          python3 scripts/phase4_supply_chain.py verify-deployment-consumption \
+            --comments-json "$COMMENTS_AFTER" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" \
+            --release-id "$RELEASE_ID" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" > "$CONSUMPTION_VALID"
+          CONSUMPTION_COMMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["comment_id"])' "$CONSUMPTION_VALID")"
+          [[ "$CONSUMPTION_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+
+          printf 'release_id=%s\n' "$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          printf 'envelope_commit=%s\n' "$ENVELOPE_COMMIT" >> "$GITHUB_OUTPUT"
+          printf 'consumption_comment_id=%s\n' "$CONSUMPTION_COMMENT_ID" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: deploy-exact-authorised-release
+    needs: control
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@288a0fb525a3e4914d59dc4702914eaa066f061b
+    with:
+      authority_comment_id: ${{ inputs.authority_comment_id }}
+      release_id: ${{ needs.control.outputs.release_id }}
+      envelope_commit: ${{ needs.control.outputs.envelope_commit }}
+      consumption_comment_id: ${{ needs.control.outputs.consumption_comment_id }}

@@ -411,5 +411,218 @@ class FoundationPhase4ContractTests(unittest.TestCase):
         )
 
 
+class Phase4DeploymentEnvelopeTests(unittest.TestCase):
+    def _envelope(self) -> dict:
+        return copy.deepcopy(p4.PHASE4_DEPLOYMENT_ENVELOPE_EXPECTED)
+
+    def _release(self, envelope: dict | None = None) -> str:
+        value = envelope if envelope is not None else self._envelope()
+        return p4.sha256_bytes(p4.canonical_json_bytes(value))
+
+    def _write_envelope(self, directory: str, envelope: dict | None = None) -> tuple[str, str]:
+        value = envelope if envelope is not None else self._envelope()
+        path = Path(directory) / "envelope.json"
+        path.write_bytes(p4.canonical_json_bytes(value))
+        return str(path), self._release(value)
+
+    def test_envelope_requires_exact_canonical_bytes_and_release_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path, release = self._write_envelope(directory)
+            self.assertEqual(
+                p4.load_deployment_envelope(path, release),
+                p4.PHASE4_DEPLOYMENT_ENVELOPE_EXPECTED,
+            )
+            Path(path).write_bytes(Path(path).read_bytes() + b"\n")
+            with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_ENVELOPE_NOT_CANONICAL"):
+                p4.load_deployment_envelope(path, release)
+
+    def test_envelope_rejects_release_and_risk_identity_substitution(self) -> None:
+        envelope = self._envelope()
+        with tempfile.TemporaryDirectory() as directory:
+            path, _ = self._write_envelope(directory, envelope)
+            with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RELEASE_ID_MISMATCH"):
+                p4.load_deployment_envelope(path, "0" * 64)
+            bad = self._envelope()
+            bad["evidence"]["vulnerability"]["decision"]["comment_id"] += 1
+            bad_path = Path(directory) / "bad.json"
+            bad_path.write_bytes(p4.canonical_json_bytes(bad))
+            bad_release = p4.sha256_bytes(bad_path.read_bytes())
+            with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_ENVELOPE_MISMATCH"):
+                p4.load_deployment_envelope(str(bad_path), bad_release)
+
+    def test_owner_authority_and_attempt_bound_consumption_fail_closed(self) -> None:
+        release = self._release()
+        authority_id = 6000000001
+        authority = {
+            "id": authority_id,
+            "issue_url": "https://api.github.com/repos/8ft0-ai/resilio/issues/90",
+            "user": {"login": p4.OWNER_LOGIN, "id": p4.OWNER_ID},
+            "body": (
+                f"{p4.DEPLOYMENT_AUTHORITY_PREFIX} release_id={release} "
+                f"envelope_commit={'a' * 40} service={p4.DEPLOYMENT_SERVICE} "
+                "transition=CREATE_IF_ABSENT"
+            ),
+        }
+        parsed = p4.validate_deployment_authority_comment(authority, authority_id)
+        self.assertEqual(parsed["release_id"], release)
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RUN_ATTEMPT_NOT_FIRST"):
+            p4.deployment_consumption_body(authority_id, release, 123, 2)
+        body = p4.deployment_consumption_body(authority_id, release, 123, 1)
+        consumption = {
+            "id": 6000000002,
+            "user": {"login": p4.GITHUB_ACTIONS_LOGIN, "id": 41898282},
+            "body": body,
+        }
+        result = p4.verify_deployment_consumption([[consumption]], authority_id, release, 123, 1)
+        self.assertEqual(result["comment_id"], 6000000002)
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_CONSUMPTION_NOT_UNIQUE"):
+            p4.verify_deployment_consumption(
+                [[consumption, copy.deepcopy(consumption)]], authority_id, release, 123, 1
+            )
+
+    def test_risk_comment_substitution_is_rejected(self) -> None:
+        envelope = self._envelope()
+        decision = envelope["evidence"]["vulnerability"]["decision"]
+        acceptance = envelope["evidence"]["vulnerability"]["acceptance"]
+        consumption = envelope["evidence"]["vulnerability"]["consumption"]
+        wrong = {
+            "id": decision["comment_id"],
+            "user": {"login": p4.OWNER_LOGIN, "id": p4.OWNER_ID},
+            "body": "substituted",
+        }
+        acceptance_shape = {
+            "id": acceptance["comment_id"],
+            "user": {"login": p4.OWNER_LOGIN, "id": p4.OWNER_ID},
+            "body": "irrelevant",
+        }
+        consumption_shape = {
+            "id": consumption["comment_id"],
+            "user": {"login": p4.GITHUB_ACTIONS_LOGIN, "id": 41898282},
+            "body": "irrelevant",
+        }
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RISK_COMMENT_BODY_MISMATCH"):
+            p4.verify_deployment_risk_comments(
+                envelope, wrong, acceptance_shape, consumption_shape
+            )
+
+    def test_transition_must_bind_exact_envelope_tuple(self) -> None:
+        envelope = self._envelope()
+        artifact = envelope["artifact"]
+        sbom = envelope["evidence"]["sbom"]
+        transition = {
+            "contract": "resilio-phase4-transition/v1",
+            "build_id": artifact["build_id"],
+            "source_sha": artifact["source_sha"],
+            "source_tree_sha": artifact["source_tree_sha"],
+            "workflow_sha": artifact["build_control_sha"],
+            "build_request_sha256": artifact["build_request_sha256"],
+            "image": artifact["image"],
+            "provenance": {"occurrence": artifact["provenance_occurrence"]},
+            "vulnerability": {"result": "PASS"},
+            "sbom": {
+                "occurrence": "projects/resilio-control-e882d4/occurrences/sbom",
+                "location": sbom["object"],
+                "sha256": sbom["sha256"],
+                "generation": sbom["generation"],
+            },
+            "adjudication": "PASS",
+        }
+        p4.validate_deployment_transition_binding(envelope, transition)
+        transition["source_sha"] = "b" * 40
+        with self.assertRaises(p4.SupplyChainError):
+            p4.validate_deployment_transition_binding(envelope, transition)
+
+    def test_provider_operation_outcome_supports_read_only_reconciliation(self) -> None:
+        operation = (
+            "projects/resilio-reference-e882d4/locations/us-central1/"
+            "operations/phase4-create-1"
+        )
+        self.assertEqual(
+            p4.deployment_operation_outcome({"name": operation}, operation),
+            {"disposition": "PENDING", "revision": None},
+        )
+        revision = (
+            "projects/resilio-reference-e882d4/locations/us-central1/services/"
+            "phase4-proof/revisions/phase4-proof-00001"
+        )
+        self.assertEqual(
+            p4.deployment_operation_outcome(
+                {
+                    "name": operation,
+                    "done": True,
+                    "response": {
+                        "latestCreatedRevision": revision,
+                        "latestReadyRevision": revision,
+                    },
+                },
+                operation,
+            ),
+            {"disposition": "PROVIDER_CREATED", "revision": revision},
+        )
+        self.assertEqual(
+            p4.deployment_operation_outcome(
+                {"name": operation, "done": True, "error": {"code": 13}},
+                operation,
+            ),
+            {"disposition": "CREATE_FAILED_KNOWN", "revision": None},
+        )
+        self.assertEqual(
+            p4.deployment_operation_outcome(
+                {
+                    "name": operation,
+                    "done": True,
+                    "response": {
+                        "latestCreatedRevision": revision,
+                        "latestReadyRevision": revision + "-other",
+                    },
+                },
+                operation,
+            ),
+            {"disposition": "CREATE_OUTCOME_UNKNOWN", "revision": None},
+        )
+        with self.assertRaisesRegex(
+            p4.SupplyChainError, "DEPLOYMENT_OPERATION_IDENTITY_MISMATCH"
+        ):
+            p4.deployment_operation_outcome(
+                {"name": operation + "-other", "done": False},
+                operation,
+            )
+
+    def test_create_request_and_verification_bind_exact_revision_and_traffic(self) -> None:
+        envelope = self._envelope()
+        request = p4.deployment_cloud_run_create_request(envelope)
+        self.assertNotIn("name", request)
+        self.assertEqual(
+            request["traffic"],
+            [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
+        )
+        revision = (
+            "projects/resilio-reference-e882d4/locations/us-central1/services/"
+            "phase4-proof/revisions/phase4-proof-00001"
+        )
+        service = copy.deepcopy(request)
+        service.update({
+            "name": p4.DEPLOYMENT_SERVICE,
+            "latestCreatedRevision": revision,
+            "latestReadyRevision": revision,
+            "trafficStatuses": [{"revision": revision, "percent": 100}],
+            "uri": "https://phase4-proof.example.run.app",
+        })
+        result = p4.verify_deployment_cloud_run_service(
+            envelope, service, {"bindings": []}, revision
+        )
+        self.assertEqual(result["revision"], revision)
+        wrong_traffic = copy.deepcopy(service)
+        wrong_traffic["trafficStatuses"] = [{"revision": revision, "percent": 99}]
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, wrong_traffic, {"bindings": []}, revision
+            )
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_PUBLIC_PRINCIPAL_FORBIDDEN"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, service, {"bindings": [{"members": ["allUsers"]}]}, revision
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

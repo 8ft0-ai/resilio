@@ -1,9 +1,18 @@
-name: Phase 4 exact-digest deploy reusable
+name: Phase 4 deployment reusable
 
 on:
   workflow_call:
     inputs:
-      evidence_object:
+      authority_comment_id:
+        required: true
+        type: string
+      release_id:
+        required: true
+        type: string
+      envelope_commit:
+        required: true
+        type: string
+      consumption_comment_id:
         required: true
         type: string
     outputs:
@@ -13,17 +22,29 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: phase4-cloud-run-provider-mutation
+  cancel-in-progress: false
+
 jobs:
-  deploy:
-    name: deploy-authorised-digest
+  preflight:
+    name: validate-release-and-execution
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
       contents: read
-      id-token: write
+      issues: read
     outputs:
-      source_sha: ${{ steps.deploy.outputs.source_sha }}
-      image: ${{ steps.deploy.outputs.image }}
+      image: ${{ steps.validated.outputs.image }}
+      source_sha: ${{ steps.validated.outputs.source_sha }}
+      transition_object: ${{ steps.validated.outputs.transition_object }}
+      transition_generation: ${{ steps.validated.outputs.transition_generation }}
+      transition_sha256: ${{ steps.validated.outputs.transition_sha256 }}
+      transition_size: ${{ steps.validated.outputs.transition_size }}
+      sbom_object: ${{ steps.validated.outputs.sbom_object }}
+      sbom_generation: ${{ steps.validated.outputs.sbom_generation }}
+      sbom_sha256: ${{ steps.validated.outputs.sbom_sha256 }}
+      sbom_size: ${{ steps.validated.outputs.sbom_size }}
     steps:
       - name: Check out immutable trusted control code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -32,6 +53,99 @@ jobs:
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
+      - name: Validate execution identity, release envelope and historical risk evidence
+        id: validated
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          ENVELOPE_COMMIT: ${{ inputs.envelope_commit }}
+          CONSUMPTION_COMMENT_ID: ${{ inputs.consumption_comment_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          [[ "$AUTHORITY_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$CONSUMPTION_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$RELEASE_ID" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ENVELOPE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+          AUTHORITY="$RUNNER_TEMP/deployment-authority.json"
+          CONSUMPTION="$RUNNER_TEMP/deployment-consumption.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$AUTHORITY_COMMENT_ID" > "$AUTHORITY"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$CONSUMPTION_COMMENT_ID" > "$CONSUMPTION"
+          AUTHORITY_VALID="$RUNNER_TEMP/deployment-authority-valid.json"
+          python3 scripts/phase4_supply_chain.py validate-deployment-authority \
+            --comment-json "$AUTHORITY" --authority-comment-id "$AUTHORITY_COMMENT_ID" > "$AUTHORITY_VALID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$AUTHORITY_VALID")" = "$RELEASE_ID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["envelope_commit"])' "$AUTHORITY_VALID")" = "$ENVELOPE_COMMIT"
+
+          python3 scripts/phase4_supply_chain.py verify-deployment-consumption-comment \
+            --comment-json "$CONSUMPTION" \
+            --consumption-comment-id "$CONSUMPTION_COMMENT_ID" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" \
+            --release-id "$RELEASE_ID" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/deployment-consumption-valid.json"
+
+          ENVELOPE="$RUNNER_TEMP/deployment-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-deployment-envelope \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
+
+          DECISION_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence"]["vulnerability"]["decision"]["comment_id"])' "$ENVELOPE")"
+          ACCEPTANCE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence"]["vulnerability"]["acceptance"]["comment_id"])' "$ENVELOPE")"
+          RISK_CONSUMPTION_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence"]["vulnerability"]["consumption"]["comment_id"])' "$ENVELOPE")"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$DECISION_ID" > "$RUNNER_TEMP/risk-decision.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$ACCEPTANCE_ID" > "$RUNNER_TEMP/risk-acceptance.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$RISK_CONSUMPTION_ID" > "$RUNNER_TEMP/risk-consumption.json"
+          python3 scripts/phase4_supply_chain.py verify-deployment-risk-comments \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID" \
+            --decision-comment "$RUNNER_TEMP/risk-decision.json" \
+            --acceptance-comment "$RUNNER_TEMP/risk-acceptance.json" \
+            --consumption-comment "$RUNNER_TEMP/risk-consumption.json"
+
+          python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); a=v["artifact"]; e=v["evidence"]; rows={"image":a["image"],"source_sha":a["source_sha"],"transition_object":e["transition"]["object"],"transition_generation":e["transition"]["generation"],"transition_sha256":e["transition"]["sha256"],"transition_size":e["transition"]["size"],"sbom_object":e["sbom"]["object"],"sbom_generation":e["sbom"]["generation"],"sbom_sha256":e["sbom"]["sha256"],"sbom_size":e["sbom"]["size"]}; out=open(sys.argv[2],"a"); [print(f"{k}={val}",file=out) for k,val in rows.items()]' "$ENVELOPE" "$GITHUB_OUTPUT"
+
+  deploy:
+    name: create-exact-service-once
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    outputs:
+      provider_operation: ${{ steps.reconcile.outputs.provider_operation }}
+      provider_mutation_disposition: ${{ steps.reconcile.outputs.provider_mutation_disposition }}
+      revision: ${{ steps.reconcile.outputs.revision }}
+    steps:
+      - name: Check out immutable trusted control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Recheck attempt-bound consumption before deployer OIDC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          CONSUMPTION_COMMENT_ID: ${{ inputs.consumption_comment_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$CONSUMPTION_COMMENT_ID" > "$RUNNER_TEMP/deployment-consumption.json"
+          python3 scripts/phase4_supply_chain.py verify-deployment-consumption-comment \
+            --comment-json "$RUNNER_TEMP/deployment-consumption.json" \
+            --consumption-comment-id "$CONSUMPTION_COMMENT_ID" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" \
+            --release-id "$RELEASE_ID" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
       - name: Authenticate as bounded deployer
         id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
@@ -39,53 +153,170 @@ jobs:
           workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
           service_account: github-p4-deployer@resilio-reference-e882d4.iam.gserviceaccount.com
           token_format: access_token
-          access_token_lifetime: 300s
+          access_token_lifetime: 600s
           create_credentials_file: false
           export_environment_variables: false
 
-      - name: Read immutable PASS evidence and deploy exact digest
-        id: deploy
+      - name: Fresh immutable-evidence, image and create-precondition checks
         env:
           TOKEN: ${{ steps.auth.outputs.access_token }}
-          OBJECT: ${{ inputs.evidence_object }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          ENVELOPE_COMMIT: ${{ inputs.envelope_commit }}
+          TRANSITION_OBJECT: ${{ needs.preflight.outputs.transition_object }}
+          TRANSITION_GENERATION: ${{ needs.preflight.outputs.transition_generation }}
+          TRANSITION_SHA256: ${{ needs.preflight.outputs.transition_sha256 }}
+          TRANSITION_SIZE: ${{ needs.preflight.outputs.transition_size }}
+          SBOM_OBJECT: ${{ needs.preflight.outputs.sbom_object }}
+          SBOM_GENERATION: ${{ needs.preflight.outputs.sbom_generation }}
+          SBOM_SHA256: ${{ needs.preflight.outputs.sbom_sha256 }}
+          SBOM_SIZE: ${{ needs.preflight.outputs.sbom_size }}
+          IMAGE: ${{ needs.preflight.outputs.image }}
         run: |
           set -euo pipefail
-          [[ "$OBJECT" =~ ^transitions/[0-9a-f-]{8,64}\.json$ ]]
-          ENCODED="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$OBJECT")"
-          MANIFEST="$RUNNER_TEMP/transition.json"
-          curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $TOKEN" \
-            "https://storage.googleapis.com/storage/v1/b/resilio-control-e882d4-phase4-evidence/o/$ENCODED?alt=media" > "$MANIFEST"
-          python3 scripts/phase4_supply_chain.py validate-transition --manifest "$MANIFEST"
-          SOURCE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$MANIFEST")"
-          IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$MANIFEST")"
-          CURRENT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
-          test "$CURRENT" = "$SOURCE_SHA"
+          ENVELOPE="$RUNNER_TEMP/deployment-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-deployment-envelope \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
 
-          SERVICE="projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
-          BODY="$RUNNER_TEMP/service.json"
-          python3 scripts/phase4_supply_chain.py service-request --image "$IMAGE" --source-sha "$SOURCE_SHA" --output "$BODY"
-          OP="$RUNNER_TEMP/op.json"
-          curl --fail-with-body --silent --show-error -X PATCH \
-            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-            --data-binary "@$BODY" \
-            "https://run.googleapis.com/v2/$SERVICE?allowMissing=true&updateMask=template,ingress" > "$OP"
-          OP_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$OP")"
-          for _ in $(seq 1 60); do
-            curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
-              "https://run.googleapis.com/v2/$OP_NAME" > "$OP"
-            DONE="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("done",False)).lower())' "$OP")"
-            test "$DONE" = true && break
-            sleep 5
-          done
-          python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); assert v.get("done") is True and "error" not in v, v' "$OP"
-          printf 'source_sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
-          printf 'image=%s\n' "$IMAGE" >> "$GITHUB_OUTPUT"
+          download_exact_object() {
+            local GS_URI="$1"
+            local GENERATION="$2"
+            local EXPECTED_SHA="$3"
+            local EXPECTED_SIZE="$4"
+            local OUT="$5"
+            local PREFIX="gs://resilio-control-e882d4-phase4-evidence/"
+            [[ "$GS_URI" == "$PREFIX"* ]]
+            local OBJECT_NAME
+            OBJECT_NAME="$(python3 -c 'import sys; p="gs://resilio-control-e882d4-phase4-evidence/"; assert sys.argv[1].startswith(p); print(sys.argv[1][len(p):])' "$GS_URI")"
+            local ENCODED
+            ENCODED="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$OBJECT_NAME")"
+            curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer $TOKEN" \
+              "https://storage.googleapis.com/download/storage/v1/b/resilio-control-e882d4-phase4-evidence/o/$ENCODED?alt=media&generation=$GENERATION" > "$OUT"
+            test "$(wc -c < "$OUT" | tr -d ' ')" = "$EXPECTED_SIZE"
+            test "$(sha256sum "$OUT" | cut -d' ' -f1)" = "$EXPECTED_SHA"
+          }
+
+          TRANSITION="$RUNNER_TEMP/transition.json"
+          SBOM="$RUNNER_TEMP/sbom.spdx.json"
+          download_exact_object "$TRANSITION_OBJECT" "$TRANSITION_GENERATION" "$TRANSITION_SHA256" "$TRANSITION_SIZE" "$TRANSITION"
+          download_exact_object "$SBOM_OBJECT" "$SBOM_GENERATION" "$SBOM_SHA256" "$SBOM_SIZE" "$SBOM"
+          python3 scripts/phase4_supply_chain.py verify-deployment-transition \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID" \
+            --transition-json "$TRANSITION"
+
+          DIGEST="$(printf '%s' "$IMAGE" | sed 's/.*@//')"
+          curl --fail-with-body --silent --show-error --head \
+            -u "oauth2accesstoken:$TOKEN" \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            "https://us-central1-docker.pkg.dev/v2/resilio-control-e882d4/resilio-phase4/phase4-proof/manifests/$DIGEST" \
+            > /dev/null
+
+          SERVICE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          SERVICE_PRE="$RUNNER_TEMP/service-pre.json"
+          set +e
+          SERVICE_HTTP="$(curl --silent --show-error --output "$SERVICE_PRE" --write-out '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" "$SERVICE_URL")"
+          SERVICE_RC=$?
+          set -e
+          test "$SERVICE_RC" -eq 0
+          if test "$SERVICE_HTTP" = "404"; then
+            :
+          elif [[ "$SERVICE_HTTP" =~ ^2[0-9][0-9]$ ]]; then
+            printf 'PHASE4_CREATE_IF_ABSENT_PRECONDITION_FAILED_SERVICE_EXISTS\n' >&2
+            exit 1
+          else
+            printf 'PHASE4_CREATE_IF_ABSENT_PRECONDITION_UNAVAILABLE=%s\n' "$SERVICE_HTTP" >&2
+            exit 1
+          fi
+
+          python3 scripts/phase4_supply_chain.py deployment-create-request \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID" \
+            --output "$RUNNER_TEMP/create-service.json"
+
+      - name: Submit exactly one create-only provider mutation
+        id: create
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          CREATE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services?serviceId=phase4-proof"
+          BODY="$RUNNER_TEMP/create-service.json"
+          RESPONSE="$RUNNER_TEMP/create-response.json"
+          set +e
+          CREATE_HTTP="$(curl --silent --show-error --output "$RESPONSE" --write-out '%{http_code}' \
+            -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary "@$BODY" "$CREATE_URL")"
+          CREATE_RC=$?
+          set -e
+
+          OPERATION="none"
+          DISPOSITION="CREATE_OUTCOME_UNKNOWN"
+          REVISION="none"
+
+          if test "$CREATE_RC" -eq 0 && [[ "$CREATE_HTTP" =~ ^2[0-9][0-9]$ ]]; then
+            OPERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("name",""))' "$RESPONSE")"
+            test -n "$OPERATION"
+          elif test "$CREATE_RC" -eq 0; then
+            DISPOSITION="CREATE_FAILED_KNOWN"
+          fi
+
+          printf 'provider_operation=%s\n' "$OPERATION" >> "$GITHUB_OUTPUT"
+          printf 'provider_mutation_disposition=%s\n' "$DISPOSITION" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
+          printf 'PHASE4_PROVIDER_MUTATION_DISPOSITION=%s\n' "$DISPOSITION"
+
+      - name: Reconcile exact known provider operation without mutation
+        id: reconcile
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          PROVIDER_OPERATION: ${{ steps.create.outputs.provider_operation }}
+          PROVIDER_DISPOSITION: ${{ steps.create.outputs.provider_mutation_disposition }}
+          EXPECTED_REVISION: ${{ steps.create.outputs.revision }}
+        run: |
+          set -euo pipefail
+          OPERATION="$PROVIDER_OPERATION"
+          DISPOSITION="$PROVIDER_DISPOSITION"
+          REVISION="$EXPECTED_REVISION"
+
+          if test "$OPERATION" != "none" && test "$DISPOSITION" = "CREATE_OUTCOME_UNKNOWN"; then
+            OP_JSON="$RUNNER_TEMP/create-operation-reconcile.json"
+            OUTCOME="$RUNNER_TEMP/create-operation-outcome.json"
+            for _ in $(seq 1 60); do
+              set +e
+              OP_HTTP="$(curl --silent --show-error --output "$OP_JSON" --write-out '%{http_code}' \
+                -H "Authorization: Bearer $TOKEN" "https://run.googleapis.com/v2/$OPERATION")"
+              OP_RC=$?
+              set -e
+              if test "$OP_RC" -ne 0 || ! [[ "$OP_HTTP" =~ ^2[0-9][0-9]$ ]]; then
+                sleep 5
+                continue
+              fi
+              python3 scripts/phase4_supply_chain.py deployment-operation-outcome \
+                --operation-json "$OP_JSON" --expected-operation "$OPERATION" > "$OUTCOME"
+              DISPOSITION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["disposition"])' "$OUTCOME")"
+              REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("revision") or "none")' "$OUTCOME")"
+              if test "$DISPOSITION" = "PENDING"; then
+                DISPOSITION="CREATE_OUTCOME_UNKNOWN"
+                REVISION="none"
+                sleep 5
+                continue
+              fi
+              break
+            done
+          fi
+
+          printf 'provider_operation=%s\n' "$OPERATION" >> "$GITHUB_OUTPUT"
+          printf 'provider_mutation_disposition=%s\n' "$DISPOSITION" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
+          printf 'PHASE4_PROVIDER_RECONCILIATION_DISPOSITION=%s\n' "$DISPOSITION"
 
   verify:
     name: independent-readback-and-probe
-    needs: deploy
+    needs: [preflight, deploy]
+    if: ${{ always() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -112,31 +343,60 @@ jobs:
           create_credentials_file: false
           export_environment_variables: false
 
-      - name: Verify provider state
+      - name: Verify exact created revision, configuration, traffic and IAM
         id: readback
         env:
           TOKEN: ${{ steps.auth.outputs.access_token }}
-          EXPECTED_IMAGE: ${{ needs.deploy.outputs.image }}
-          EXPECTED_SOURCE: ${{ needs.deploy.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          ENVELOPE_COMMIT: ${{ inputs.envelope_commit }}
+          PROVIDER_OPERATION: ${{ needs.deploy.outputs.provider_operation }}
+          PROVIDER_DISPOSITION: ${{ needs.deploy.outputs.provider_mutation_disposition }}
+          EXPECTED_REVISION: ${{ needs.deploy.outputs.revision }}
+          EXPECTED_IMAGE: ${{ needs.preflight.outputs.image }}
         run: |
           set -euo pipefail
-          SERVICE="projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          ENVELOPE="$RUNNER_TEMP/deployment-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-deployment-envelope \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
+
+          SERVICE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
           SERVICE_JSON="$RUNNER_TEMP/service.json"
+          set +e
+          SERVICE_HTTP="$(curl --silent --show-error --output "$SERVICE_JSON" --write-out '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" "$SERVICE_URL")"
+          SERVICE_RC=$?
+          set -e
+          if test "$SERVICE_RC" -eq 0 && test "$SERVICE_HTTP" = "404"; then
+            printf 'NO_MUTATION_CONFIRMED\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          test "$SERVICE_RC" -eq 0
+          [[ "$SERVICE_HTTP" =~ ^2[0-9][0-9]$ ]]
+          if test "$PROVIDER_DISPOSITION" != "PROVIDER_CREATED" || test "$PROVIDER_OPERATION" = "none" || test "$EXPECTED_REVISION" = "none"; then
+            printf 'OUTCOME_AMBIGUOUS\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
           POLICY_JSON="$RUNNER_TEMP/policy.json"
-          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
-            "https://run.googleapis.com/v2/$SERVICE" > "$SERVICE_JSON"
-          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
-            "https://run.googleapis.com/v2/$SERVICE:getIamPolicy" > "$POLICY_JSON"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" "$SERVICE_URL:getIamPolicy" > "$POLICY_JSON"
           READBACK="$RUNNER_TEMP/readback.json"
-          python3 scripts/phase4_supply_chain.py verify-service \
+          python3 scripts/phase4_supply_chain.py verify-deployment-service \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID" \
             --service-json "$SERVICE_JSON" --policy-json "$POLICY_JSON" \
-            --expected-image "$EXPECTED_IMAGE" --expected-source "$EXPECTED_SOURCE" > "$READBACK"
-          REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$READBACK")"
+            --expected-revision "$EXPECTED_REVISION" > "$READBACK"
           URI="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uri"])' "$READBACK")"
+          REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$READBACK")"
+
           REVISION_JSON="$RUNNER_TEMP/revision.json"
-          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
             "https://run.googleapis.com/v2/$REVISION" > "$REVISION_JSON"
-          python3 scripts/phase4_supply_chain.py verify-revision --revision-json "$REVISION_JSON" --expected-image "$EXPECTED_IMAGE"
+          python3 scripts/phase4_supply_chain.py verify-revision \
+            --revision-json "$REVISION_JSON" --expected-image "$EXPECTED_IMAGE"
           printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
           printf 'uri=%s\n' "$URI" >> "$GITHUB_OUTPUT"
 
@@ -152,13 +412,25 @@ jobs:
           create_credentials_file: false
           export_environment_variables: false
 
-      - name: Probe authenticated health endpoint
+      - name: Probe authenticated health endpoint and record verified outcome
         env:
           ID_TOKEN: ${{ steps.idauth.outputs.id_token }}
           URI: ${{ steps.readback.outputs.uri }}
-          EXPECTED_SOURCE: ${{ needs.deploy.outputs.source_sha }}
+          EXPECTED_SOURCE: ${{ needs.preflight.outputs.source_sha }}
         run: |
           set -euo pipefail
           RESPONSE="$RUNNER_TEMP/health.json"
-          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $ID_TOKEN" "$URI/healthz" > "$RESPONSE"
-          python3 scripts/phase4_supply_chain.py verify-health --response-json "$RESPONSE" --expected-source "$EXPECTED_SOURCE"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $ID_TOKEN" "$URI/healthz" > "$RESPONSE"
+          python3 scripts/phase4_supply_chain.py verify-health \
+            --response-json "$RESPONSE" --expected-source "$EXPECTED_SOURCE"
+          {
+            printf 'DEPLOYMENT_VERIFIED\n'
+            printf 'release_id=%s\n' '${{ inputs.release_id }}'
+            printf 'authority_comment_id=%s\n' '${{ inputs.authority_comment_id }}'
+            printf 'consumption_comment_id=%s\n' '${{ inputs.consumption_comment_id }}'
+            printf 'github_run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'github_run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'provider_operation=%s\n' '${{ needs.deploy.outputs.provider_operation }}'
+            printf 'revision=%s\n' '${{ steps.readback.outputs.revision }}'
+          } >> "$GITHUB_STEP_SUMMARY"
