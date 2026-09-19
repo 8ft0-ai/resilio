@@ -27,7 +27,8 @@ CALLERS = (
     ".github/workflows/phase4-build.yml",
     ".github/workflows/phase4-evidence.yml",
 )
-REQUIRED = REUSABLE + CALLERS + (
+DEPLOY_CALLER = ".github/workflows/phase4-deploy.yml"
+REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER,) + (
     "scripts/phase4_supply_chain.py",
     "scripts/phase4_repository_sbom.py",
     "tests/test_phase4_supply_chain.py",
@@ -181,6 +182,97 @@ def main() -> int:
         if forbidden in evidence_caller:
             errors.append(f"Phase 4 evidence caller contains forbidden build/digest authority surface: {forbidden}")
 
+    deploy_caller_path = ROOT / DEPLOY_CALLER
+    deploy_caller = deploy_caller_path.read_text(encoding="utf-8") if deploy_caller_path.is_file() else ""
+    if workflow_events(deploy_caller) != ["workflow_dispatch"]:
+        errors.append("Phase 4 deploy caller must remain workflow_dispatch-only")
+    deploy_dispatch = indented_block(deploy_caller, "workflow_dispatch", 2)
+    if direct_mapping_keys(deploy_dispatch, 2) != ["inputs"]:
+        errors.append("Phase 4 deploy caller workflow_dispatch must expose only the inputs mapping")
+    deploy_inputs = indented_block(deploy_dispatch or "", "inputs", 4)
+    if direct_mapping_keys(deploy_inputs, 4) != ["authority_comment_id"]:
+        errors.append("Phase 4 deploy caller must expose exactly one authority_comment_id input")
+    authority_input = indented_block(deploy_inputs or "", "authority_comment_id", 6)
+    authority_properties = direct_mapping_keys(authority_input, 6)
+    if (
+        authority_properties is None
+        or authority_properties.count("required") != 1
+        or authority_properties.count("type") != 1
+        or authority_properties.count("description") > 1
+        or any(key not in {"description", "required", "type"} for key in authority_properties)
+    ):
+        errors.append("Phase 4 deploy authority_comment_id may contain only description, required and type properties")
+    if authority_input is None or "        required: true" not in authority_input.splitlines():
+        errors.append("Phase 4 deploy authority_comment_id must remain required")
+    if authority_input is None or "        type: string" not in authority_input.splitlines():
+        errors.append("Phase 4 deploy authority_comment_id must remain a string")
+    if "run-name: phase4-deploy-authority-" not in deploy_caller or "inputs.authority_comment_id" not in deploy_caller:
+        errors.append("Phase 4 deploy caller run name must bind the authority comment ID")
+    for token in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$GITHUB_REF_PROTECTED" = "true"',
+        'test "$GITHUB_RUN_ATTEMPT" = "1"',
+        "group: phase4-deployment-authority-control",
+        "cancel-in-progress: false",
+        "deployment-consumption-available",
+        "deployment-consumption-body",
+        "verify-deployment-consumption",
+        "gh api --paginate --slurp",
+        "DEPLOYMENT_CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE",
+    ):
+        if token not in deploy_caller:
+            errors.append(f"Phase 4 deploy caller missing authority/replay control: {token}")
+    if deploy_caller.count("gh api --paginate --slurp") != 2:
+        errors.append("Phase 4 deploy caller must completely enumerate comments before and after the one consumption attempt")
+    if deploy_caller.count("--method POST") != 1:
+        errors.append("Phase 4 deploy caller must attempt exactly one durable authority-consumption POST")
+    control_block = indented_block(deploy_caller, "control", 2)
+    if control_block is None:
+        errors.append("Phase 4 deploy caller control job is missing")
+    else:
+        for token in ("contents: read", "issues: write"):
+            if token not in control_block:
+                errors.append(f"Phase 4 deploy control job missing permission: {token}")
+        if "id-token: write" in control_block:
+            errors.append("Phase 4 deploy authority-control job must not receive OIDC")
+        if f"actions/checkout@{CHECKOUT_SHA}" not in control_block or "persist-credentials: false" not in control_block:
+            errors.append("Phase 4 deploy authority-control job must use credential-free pinned checkout")
+    deploy_call_block = indented_block(deploy_caller, "deploy", 2)
+    if deploy_call_block is None:
+        errors.append("Phase 4 deploy reusable-call job is missing")
+    else:
+        expected_deploy_use = (
+            "uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@"
+            "288a0fb525a3e4914d59dc4702914eaa066f061b"
+        )
+        if expected_deploy_use not in deploy_call_block:
+            errors.append("Phase 4 deploy caller must pin the exact immutable reviewed-candidate reusable identity")
+        for token in ("contents: read", "issues: read", "id-token: write"):
+            if token not in deploy_call_block:
+                errors.append(f"Phase 4 deploy reusable-call job missing permission: {token}")
+        with_block = indented_block(deploy_call_block, "with", 4)
+        if direct_mapping_keys(with_block, 4) != [
+            "authority_comment_id", "release_id", "envelope_commit", "consumption_comment_id"
+        ]:
+            errors.append("Phase 4 deploy reusable call must pass only validated authority/release/consumption identities")
+    for forbidden in (
+        "image_digest:",
+        "source_sha:",
+        "service_account:",
+        "runtime_service_account:",
+        "region:",
+        "traffic:",
+        "build_id:",
+        "evidence_object:",
+        "allowMissing=true",
+        "phase4-build-reusable.yml",
+    ):
+        if forbidden in deploy_caller:
+            errors.append(f"Phase 4 deploy caller contains forbidden mutable deployment input/surface: {forbidden}")
+    if deploy_caller.count("id-token: write") != 1:
+        errors.append("Phase 4 deploy caller must grant OIDC only to the immutable reusable-workflow call")
+    if "${{ secrets." in deploy_caller or "pull_request:" in deploy_caller or "push:" in deploy_caller or "schedule:" in deploy_caller:
+        errors.append("Phase 4 deploy caller contains an unauthorised trigger/secret surface")
     build = (ROOT / ".github/workflows/phase4-build-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-build-reusable.yml").is_file() else ""
     for token in (
         "github-p4-build@resilio-control-e882d4.iam.gserviceaccount.com",
