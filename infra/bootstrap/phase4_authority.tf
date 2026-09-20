@@ -318,26 +318,6 @@ resource "google_service_account_iam_member" "github_phase4_evidence" {
   ]
 }
 
-resource "google_service_account_iam_member" "github_phase4_deployer" {
-  service_account_id = google_service_account.phase4_deployer.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}"
-
-  depends_on = [
-    google_iam_workload_identity_pool_provider.github,
-  ]
-}
-
-resource "google_service_account_iam_member" "github_phase4_verifier" {
-  service_account_id = google_service_account.phase4_verifier.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}"
-
-  depends_on = [
-    google_iam_workload_identity_pool_provider.github,
-  ]
-}
-
 resource "google_service_account_iam_member" "phase4_build_act_as_builder" {
   service_account_id = google_service_account.phase4_builder.name
   role               = "roles/iam.serviceAccountUser"
