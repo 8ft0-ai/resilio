@@ -27,9 +27,9 @@ PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
 PHASE4_BUILD_WORKFLOW_SHA = "5a800f8216f52effc216b3ef77f2c95aa20010a5"
 PHASE4_EVIDENCE_WORKFLOW_SHA = "b3aebc9b2069b09b0d972a5319df0b1f97a8d8f2"
 FOUNDATION_DRIFT_CONTROL_SEED_SHA = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
-PHASE4_DEPLOY_WORKFLOW_SHA = "288a0fb525a3e4914d59dc4702914eaa066f061b"
-PHASE4_DEPLOY_OLD_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
-PHASE4_DEPLOY_TARGET_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
+PHASE4_DEPLOY_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
+PHASE4_DEPLOY_OLD_WORKFLOW_SHA = "288a0fb525a3e4914d59dc4702914eaa066f061b"
+PHASE4_DEPLOY_SUPERSEDED_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -86,9 +86,9 @@ PHASE4_DEPLOY_WORKFLOW_REF = (
 EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
-    "outputs.tf": "75e84635db463929149fea96b6aed73f5baf38a8",
+    "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "65898625f86874f77261bc279fe822a1a47d8fc6",
+    "phase4_authority.tf": "967cea295c3ee19f9b38b43172a582695288bfd0",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -412,10 +412,14 @@ def check_phase4_authority(errors: list[str]) -> None:
         if token not in text:
             errors.append(f"Phase 4 authority is missing exact activation local: {token}")
 
-    if PHASE4_DEPLOY_OLD_WORKFLOW_SHA in text or PHASE4_DEPLOY_OLD_WORKFLOW_SHA in outputs_text:
-        errors.append(
-            "Phase 4 revoke state must reject the superseded deployment workflow identity"
-        )
+    for forbidden_workflow_sha in (
+        PHASE4_DEPLOY_OLD_WORKFLOW_SHA,
+        PHASE4_DEPLOY_SUPERSEDED_WORKFLOW_SHA,
+    ):
+        if forbidden_workflow_sha in text or forbidden_workflow_sha in outputs_text:
+            errors.append(
+                "Phase 4 NEW_ONLY state must reject non-active deployment workflow identities"
+            )
 
     expected_accounts = (
         "github-p4-build",
@@ -598,6 +602,16 @@ def check_phase4_authority(errors: list[str]) -> None:
             'role               = "roles/iam.workloadIdentityUser"',
             "attribute.job_workflow_ref/${local.phase4_evidence_workflow_ref}",
         ),
+        "github_phase4_deployer": (
+            "service_account_id = google_service_account.phase4_deployer.name",
+            'role               = "roles/iam.workloadIdentityUser"',
+            "attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}",
+        ),
+        "github_phase4_verifier": (
+            "service_account_id = google_service_account.phase4_verifier.name",
+            'role               = "roles/iam.workloadIdentityUser"',
+            "attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}",
+        ),
     }
     for name, tokens in wif_bindings.items():
         require_tokens(
@@ -607,18 +621,13 @@ def check_phase4_authority(errors: list[str]) -> None:
             errors,
         )
 
-    for revoked_name in ("github_phase4_deployer", "github_phase4_verifier"):
-        if resource_block(text, "google_service_account_iam_member", revoked_name) is not None:
-            errors.append(
-                f"Phase 4 revoke state must not declare deployment WIF member: {revoked_name}"
-            )
-    if "${local.phase4_deploy_workflow_ref}" in text:
+    if text.count("attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}") != 2:
         errors.append(
-            "Phase 4 revoke state must keep the deploy workflow ref inert and unbound from WIF membership"
+            "Phase 4 NEW_ONLY state must bind exactly deployer and verifier to the active deploy workflow identity"
         )
-    if PHASE4_DEPLOY_TARGET_WORKFLOW_SHA in text:
+    if text.count(PHASE4_DEPLOY_WORKFLOW_SHA) != 1:
         errors.append(
-            "Phase 4 revoke state must not introduce the future target deploy workflow identity"
+            "Phase 4 NEW_ONLY state must declare the exact active deployment workflow identity exactly once"
         )
 
     act_as_bindings = {
@@ -640,10 +649,10 @@ def check_phase4_authority(errors: list[str]) -> None:
             f"google_service_account_iam_member.{name}",
             errors,
         )
-    if text.count('resource "google_service_account_iam_member"') != 4:
-        errors.append("Phase 4 revoke state must contain exactly two WIF and two service-account-user bindings")
-    if text.count('role               = "roles/iam.workloadIdentityUser"') != 2:
-        errors.append("Phase 4 revoke state must contain exactly two immutable build/evidence WIF bindings")
+    if text.count('resource "google_service_account_iam_member"') != 6:
+        errors.append("Phase 4 NEW_ONLY state must contain exactly four WIF and two service-account-user bindings")
+    if text.count('role               = "roles/iam.workloadIdentityUser"') != 4:
+        errors.append("Phase 4 NEW_ONLY state must contain exactly four immutable reusable-workflow WIF bindings")
     if text.count('role               = "roles/iam.serviceAccountUser"') != 2:
         errors.append("Phase 4 must contain exactly two narrowly scoped serviceAccountUser bindings")
 
@@ -769,12 +778,12 @@ def check_phase4_authority(errors: list[str]) -> None:
     phase4_deploy_output_tokens = (
         'output "phase4_deploy_workflow_ref" {',
         "  value       = local.phase4_deploy_workflow_ref",
-        '  description = "Retained Phase 4 deploy-workflow transition provenance reference; no deployer/verifier federation is active in Phase A."',
+        '  description = "Exact immutable Phase 4 reusable deploy-workflow identity authorised for deployer and verifier federation."',
     )
     for token in phase4_deploy_output_tokens:
         if token not in outputs_text:
             errors.append(
-                f"Phase 4 revoke output must preserve truthful transition provenance semantics: {token}"
+                f"Phase 4 NEW_ONLY output must describe active deployer/verifier federation truthfully: {token}"
             )
 
     for workflow_ref in (
