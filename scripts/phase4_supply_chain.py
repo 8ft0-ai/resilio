@@ -1229,7 +1229,7 @@ def deployment_cloud_run_create_request(envelope: dict[str, Any]) -> dict[str, A
             "containers": [{
                 "image": artifact["image"],
                 "env": [{"name": "SOURCE_SHA", "value": artifact["source_sha"]}],
-                "resources": {"limits": dict(target["resources"])},
+                "resources": {"limits": dict(target["resources"]), "cpuIdle": True},
             }],
         },
         "traffic": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
@@ -1287,7 +1287,12 @@ def verify_deployment_cloud_run_service(
     container = containers[0]
     if container.get("image") != artifact["image"]:
         raise SupplyChainError("DEPLOYMENT_IMAGE_MISMATCH")
-    if container.get("resources", {}).get("limits") != wanted["containers"][0]["resources"]["limits"]:
+    resources = container.get("resources") or {}
+    wanted_resources = wanted["containers"][0]["resources"]
+    if (
+        resources.get("limits") != wanted_resources["limits"]
+        or resources.get("cpuIdle") is not True
+    ):
         raise SupplyChainError("DEPLOYMENT_RESOURCES_MISMATCH")
     if container.get("env") != wanted["containers"][0]["env"]:
         raise SupplyChainError("DEPLOYMENT_ENVIRONMENT_MISMATCH")
