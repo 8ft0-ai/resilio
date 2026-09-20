@@ -126,7 +126,7 @@ jobs:
       contents: read
       issues: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@288a0fb525a3e4914d59dc4702914eaa066f061b
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@6c630f34e3594600acd51164530d1400554dbc5f
     with:
       authority_comment_id: ${{ inputs.authority_comment_id }}
       release_id: ${{ needs.control.outputs.release_id }}
