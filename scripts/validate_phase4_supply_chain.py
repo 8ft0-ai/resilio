@@ -89,6 +89,27 @@ def direct_mapping_keys(block: str | None, indent: int) -> list[str] | None:
     return keys
 
 
+INLINE_PYTHON_C = re.compile(r"python3 -c '([^'\n]*)'")
+
+
+def validate_reconciliation_inline_python(text: str, errors: list[str]) -> None:
+    marker_count = text.count("python3 -c ")
+    snippets = INLINE_PYTHON_C.findall(text)
+    if marker_count != len(snippets):
+        errors.append(
+            "Phase 4 verifier reconciliation reusable contains an uncaptured python3 -c command"
+        )
+        return
+    for index, snippet in enumerate(snippets, start=1):
+        try:
+            compile(snippet, f"<phase4-reconcile-inline-python-{index}>", "exec")
+        except SyntaxError as exc:
+            errors.append(
+                "Phase 4 verifier reconciliation reusable contains invalid inline Python "
+                f"command {index}: {exc.msg}"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     for relative in REQUIRED:
@@ -305,6 +326,7 @@ def main() -> int:
             errors.append(f"Phase 4 verifier reconciliation caller contains mutation/recovery surface: {forbidden}")
 
     reconcile = (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").is_file() else ""
+    validate_reconciliation_inline_python(reconcile, errors)
     reconcile_call = indented_block(reconcile, "workflow_call", 2)
     if direct_mapping_keys(reconcile_call, 2) not in ([], None):
         errors.append("Phase 4 verifier reconciliation reusable must expose no inputs")

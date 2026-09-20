@@ -11,7 +11,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import phase4_supply_chain as p4  # noqa: E402
+import validate_phase4_supply_chain as p4v  # noqa: E402
 import terraform_control_core as tfc  # noqa: E402
+
+
+class ReconciliationInlinePythonValidationTests(unittest.TestCase):
+    def test_rejects_literal_backslash_escaped_json_key_quotes(self) -> None:
+        errors: list[str] = []
+        p4v.validate_reconciliation_inline_python(
+            r"""python3 -c 'import json; print({}[\"release_id\"])'""",
+            errors,
+        )
+        self.assertEqual(len(errors), 1)
+        self.assertIn("invalid inline Python command", errors[0])
+
+    def test_accepts_normal_json_key_quotes(self) -> None:
+        errors: list[str] = []
+        p4v.validate_reconciliation_inline_python(
+            """python3 -c 'import json; print({}["release_id"])'""",
+            errors,
+        )
+        self.assertEqual(errors, [])
 
 
 class BuildContractTests(unittest.TestCase):
