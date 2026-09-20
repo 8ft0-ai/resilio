@@ -243,7 +243,7 @@ def main() -> int:
     else:
         expected_deploy_use = (
             "uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@"
-            "288a0fb525a3e4914d59dc4702914eaa066f061b"
+            "6c630f34e3594600acd51164530d1400554dbc5f"
         )
         if expected_deploy_use not in deploy_call_block:
             errors.append("Phase 4 deploy caller must pin the exact immutable reviewed-candidate reusable identity")
