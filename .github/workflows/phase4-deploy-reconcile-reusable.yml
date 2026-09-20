@@ -46,8 +46,8 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN_ID" > "$RUNNER_TEMP/original-run.json"
           python3 scripts/phase4_supply_chain.py validate-deployment-authority \
             --comment-json "$RUNNER_TEMP/authority.json" --authority-comment-id "$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority-valid.json"
-          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"release_id\"])' "$RUNNER_TEMP/authority-valid.json")" = "$RELEASE_ID"
-          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"envelope_commit\"])' "$RUNNER_TEMP/authority-valid.json")" = "$ENVELOPE_COMMIT"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/authority-valid.json")" = "$RELEASE_ID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["envelope_commit"])' "$RUNNER_TEMP/authority-valid.json")" = "$ENVELOPE_COMMIT"
           python3 scripts/phase4_supply_chain.py verify-deployment-consumption-comment \
             --comment-json "$RUNNER_TEMP/consumption.json" --consumption-comment-id "$CONSUMPTION_COMMENT_ID" \
             --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID" \
@@ -84,8 +84,8 @@ jobs:
             --envelope "$RUNNER_TEMP/deployment-envelope.json" --release-id "$RELEASE_ID" \
             --service-json "$RUNNER_TEMP/service.json" --policy-json "$RUNNER_TEMP/policy.json" \
             --expected-revision "$EXPECTED_REVISION" > "$RUNNER_TEMP/readback.json"
-          URI="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"uri\"])' "$RUNNER_TEMP/readback.json")"
-          REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"revision\"])' "$RUNNER_TEMP/readback.json")"
+          URI="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uri"])' "$RUNNER_TEMP/readback.json")"
+          REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$RUNNER_TEMP/readback.json")"
           test "$REVISION" = "$EXPECTED_REVISION"
           curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
             "https://run.googleapis.com/v2/$REVISION" > "$RUNNER_TEMP/revision.json"
