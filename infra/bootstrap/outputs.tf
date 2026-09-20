@@ -80,7 +80,7 @@ output "phase4_evidence_workflow_ref" {
 
 output "phase4_deploy_workflow_ref" {
   value       = local.phase4_deploy_workflow_ref
-  description = "Exact immutable Phase 4 reusable deploy-workflow identity authorised for deployer and verifier federation."
+  description = "Retained Phase 4 deploy-workflow transition provenance reference; no deployer/verifier federation is active in Phase A."
 }
 
 output "phase4_build_initiator_service_account" {
