@@ -310,7 +310,7 @@ def main() -> int:
         'test "$GITHUB_RUN_ATTEMPT" = "1"',
         "group: phase4-deployment-verifier-reconciliation-caller",
         "cancel-in-progress: false",
-        "uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@8ac2f9125d68048a4a86e4edc6ed2fbc544dd738",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@7ff8545fd8e094aef7340095e38112227282cb54",
         "contents: read",
         "issues: read",
         "id-token: write",
