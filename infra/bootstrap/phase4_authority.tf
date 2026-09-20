@@ -4,7 +4,7 @@ locals {
   phase4_evidence_workflow_sha             = "b3aebc9b2069b09b0d972a5319df0b1f97a8d8f2"
   phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_build_workflow_sha}"
   phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"
-  phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@288a0fb525a3e4914d59dc4702914eaa066f061b"
+  phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@6c630f34e3594600acd51164530d1400554dbc5f"
   phase4_transition_object_resource_prefix = "projects/_/buckets/resilio-control-e882d4-phase4-evidence/objects/transitions/"
 }
 
@@ -312,6 +312,26 @@ resource "google_service_account_iam_member" "github_phase4_evidence" {
   service_account_id = google_service_account.phase4_evidence.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_evidence_workflow_ref}"
+
+  depends_on = [
+    google_iam_workload_identity_pool_provider.github,
+  ]
+}
+
+resource "google_service_account_iam_member" "github_phase4_deployer" {
+  service_account_id = google_service_account.phase4_deployer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}"
+
+  depends_on = [
+    google_iam_workload_identity_pool_provider.github,
+  ]
+}
+
+resource "google_service_account_iam_member" "github_phase4_verifier" {
+  service_account_id = google_service_account.phase4_verifier.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}"
 
   depends_on = [
     google_iam_workload_identity_pool_provider.github,
