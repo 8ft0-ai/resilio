@@ -1,0 +1,127 @@
+name: Phase 4 deployment verifier reconciliation reusable
+
+on:
+  workflow_call:
+
+concurrency:
+  group: phase4-deployment-verifier-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    env:
+      RELEASE_ID: cb2b63843599c0b2a4373505f985fb58f7678a2688455e62e747cbec7fe996c0
+      ENVELOPE_COMMIT: a711e12ffbed698f78209b14518a7f60fa7a57c1
+      AUTHORITY_COMMENT_ID: "5749669816"
+      CONSUMPTION_COMMENT_ID: "5749673554"
+      ORIGINAL_RUN_ID: "35509520357"
+      ORIGINAL_RUN_ATTEMPT: "1"
+      ORIGINAL_RUN_HEAD: 1485f1cb5cdee9cc949d569369e6b1a85e33a12c
+      PROVIDER_OPERATION: projects/resilio-reference-e882d4/locations/us-central1/operations/6d5cd26e-5c76-4f17-9d13-3cf1f22a60f4
+      EXPECTED_REVISION: projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof/revisions/phase4-proof-00001-9lh
+      EXPECTED_IMAGE: us-central1-docker.pkg.dev/resilio-control-e882d4/resilio-phase4/phase4-proof@sha256:409333b0a48bc3d2c1f8fea8f99c66c64c14c8f9db1469f0349807e91329f60e
+      EXPECTED_SOURCE: 5a800f8216f52effc216b3ef77f2c95aa20010a5
+    steps:
+      - name: Check out immutable verifier control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Bind original deployment authority and execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$CONSUMPTION_COMMENT_ID" > "$RUNNER_TEMP/consumption.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ORIGINAL_RUN_ID" > "$RUNNER_TEMP/original-run.json"
+          python3 scripts/phase4_supply_chain.py validate-deployment-authority \
+            --comment-json "$RUNNER_TEMP/authority.json" --authority-comment-id "$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority-valid.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"release_id\"])' "$RUNNER_TEMP/authority-valid.json")" = "$RELEASE_ID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"envelope_commit\"])' "$RUNNER_TEMP/authority-valid.json")" = "$ENVELOPE_COMMIT"
+          python3 scripts/phase4_supply_chain.py verify-deployment-consumption-comment \
+            --comment-json "$RUNNER_TEMP/consumption.json" --consumption-comment-id "$CONSUMPTION_COMMENT_ID" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID" \
+            --run-id "$ORIGINAL_RUN_ID" --run-attempt "$ORIGINAL_RUN_ATTEMPT"
+          python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); assert str(j["id"])==sys.argv[2]; assert j["run_attempt"]==1; assert j["head_sha"]==sys.argv[3]; assert j["event"]=="workflow_dispatch"; assert j["status"]=="completed"; assert j["conclusion"]=="failure"' \
+            "$RUNNER_TEMP/original-run.json" "$ORIGINAL_RUN_ID" "$ORIGINAL_RUN_HEAD"
+          ENVELOPE="$RUNNER_TEMP/deployment-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-deployment-envelope \
+            --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
+
+      - name: Authenticate bounded verifier for readback
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Verify exact existing service without mutation
+        id: readback
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          SERVICE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" "$SERVICE_URL" > "$RUNNER_TEMP/service.json"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" "$SERVICE_URL:getIamPolicy" > "$RUNNER_TEMP/policy.json"
+          python3 scripts/phase4_supply_chain.py verify-deployment-service \
+            --envelope "$RUNNER_TEMP/deployment-envelope.json" --release-id "$RELEASE_ID" \
+            --service-json "$RUNNER_TEMP/service.json" --policy-json "$RUNNER_TEMP/policy.json" \
+            --expected-revision "$EXPECTED_REVISION" > "$RUNNER_TEMP/readback.json"
+          URI="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"uri\"])' "$RUNNER_TEMP/readback.json")"
+          REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"revision\"])' "$RUNNER_TEMP/readback.json")"
+          test "$REVISION" = "$EXPECTED_REVISION"
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+            "https://run.googleapis.com/v2/$REVISION" > "$RUNNER_TEMP/revision.json"
+          python3 scripts/phase4_supply_chain.py verify-revision \
+            --revision-json "$RUNNER_TEMP/revision.json" --expected-image "$EXPECTED_IMAGE"
+          printf 'uri=%s\n' "$URI" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate bounded verifier for private health probe
+        id: idauth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: id_token
+          id_token_audience: ${{ steps.readback.outputs.uri }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Probe authenticated health endpoint
+        env:
+          ID_TOKEN: ${{ steps.idauth.outputs.id_token }}
+          URI: ${{ steps.readback.outputs.uri }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $ID_TOKEN" "$URI/healthz" > "$RUNNER_TEMP/health.json"
+          python3 scripts/phase4_supply_chain.py verify-health \
+            --response-json "$RUNNER_TEMP/health.json" --expected-source "$EXPECTED_SOURCE"
+          {
+            printf 'PHASE4_DEPLOYMENT_RECONCILIATION_VERIFIED\n'
+            printf 'release_id=%s\n' "$RELEASE_ID"
+            printf 'original_authority_comment_id=%s\n' "$AUTHORITY_COMMENT_ID"
+            printf 'original_consumption_comment_id=%s\n' "$CONSUMPTION_COMMENT_ID"
+            printf 'original_github_run_id=%s\n' "$ORIGINAL_RUN_ID"
+            printf 'original_github_run_attempt=%s\n' "$ORIGINAL_RUN_ATTEMPT"
+            printf 'provider_operation=%s\n' "$PROVIDER_OPERATION"
+            printf 'revision=%s\n' '${{ steps.readback.outputs.revision }}'
+          } >> "$GITHUB_STEP_SUMMARY"

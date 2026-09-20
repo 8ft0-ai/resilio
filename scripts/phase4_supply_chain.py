@@ -1305,14 +1305,47 @@ def verify_deployment_cloud_run_service(
         or service.get("latestReadyRevision") != expected_revision
     ):
         raise SupplyChainError("DEPLOYMENT_REVISION_MISMATCH")
+    generation = service.get("generation")
+    observed_generation = service.get("observedGeneration")
+    if (
+        (generation is None) != (observed_generation is None)
+        or (
+            generation is not None
+            and observed_generation is not None
+            and generation != observed_generation
+        )
+        or service.get("reconciling") is True
+    ):
+        raise SupplyChainError("DEPLOYMENT_RECONCILIATION_MISMATCH")
+    terminal = service.get("terminalCondition")
+    if terminal is not None and (
+        not isinstance(terminal, dict)
+        or terminal.get("type") != "Ready"
+        or terminal.get("state") != "CONDITION_SUCCEEDED"
+    ):
+        raise SupplyChainError("DEPLOYMENT_RECONCILIATION_MISMATCH")
+
+    traffic = [
+        row for row in (service.get("traffic") or [])
+        if isinstance(row, dict) and int(row.get("percent") or 0) > 0
+    ]
     statuses = [
         row for row in (service.get("trafficStatuses") or [])
         if isinstance(row, dict) and int(row.get("percent") or 0) > 0
     ]
+    if len(traffic) != 1 or len(statuses) != 1:
+        raise SupplyChainError("DEPLOYMENT_TRAFFIC_MISMATCH")
+    desired = traffic[0]
+    status = statuses[0]
     if (
-        len(statuses) != 1
-        or statuses[0].get("revision") != expected_revision
-        or statuses[0].get("percent") != 100
+        desired.get("type") != "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+        or desired.get("percent") != 100
+        or desired.get("revision") not in (None, "")
+        or desired.get("tag") not in (None, "")
+        or status.get("type") != "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+        or status.get("percent") != 100
+        or status.get("tag") not in (None, "")
+        or status.get("revision") not in (None, "", expected_revision)
     ):
         raise SupplyChainError("DEPLOYMENT_TRAFFIC_MISMATCH")
     uri = str(service.get("uri") or "")

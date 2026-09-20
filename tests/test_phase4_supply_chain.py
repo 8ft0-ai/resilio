@@ -609,13 +609,29 @@ class Phase4DeploymentEnvelopeTests(unittest.TestCase):
             "name": p4.DEPLOYMENT_SERVICE,
             "latestCreatedRevision": revision,
             "latestReadyRevision": revision,
-            "trafficStatuses": [{"revision": revision, "percent": 100}],
+            "generation": "1",
+            "observedGeneration": "1",
+            "terminalCondition": {"type": "Ready", "state": "CONDITION_SUCCEEDED"},
+            "trafficStatuses": [{
+                "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+                "percent": 100,
+            }],
             "uri": "https://phase4-proof.example.run.app",
         })
         result = p4.verify_deployment_cloud_run_service(
             envelope, service, {"bindings": []}, revision
         )
         self.assertEqual(result["revision"], revision)
+
+        status_with_revision = copy.deepcopy(service)
+        status_with_revision["trafficStatuses"][0]["revision"] = revision
+        self.assertEqual(
+            p4.verify_deployment_cloud_run_service(
+                envelope, status_with_revision, {"bindings": []}, revision
+            )["revision"],
+            revision,
+        )
+
         missing_cpu_idle = copy.deepcopy(service)
         del missing_cpu_idle["template"]["containers"][0]["resources"]["cpuIdle"]
         with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RESOURCES_MISMATCH"):
@@ -628,12 +644,60 @@ class Phase4DeploymentEnvelopeTests(unittest.TestCase):
             p4.verify_deployment_cloud_run_service(
                 envelope, unthrottled_cpu, {"bindings": []}, revision
             )
+
+        for stale in ("latestCreatedRevision", "latestReadyRevision"):
+            bad = copy.deepcopy(service)
+            bad[stale] = revision + "-other"
+            with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_REVISION_MISMATCH"):
+                p4.verify_deployment_cloud_run_service(
+                    envelope, bad, {"bindings": []}, revision
+                )
+
+        reconciling = copy.deepcopy(service)
+        reconciling["reconciling"] = True
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RECONCILIATION_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, reconciling, {"bindings": []}, revision
+            )
+
+        wrong_generation = copy.deepcopy(service)
+        wrong_generation["observedGeneration"] = "0"
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RECONCILIATION_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, wrong_generation, {"bindings": []}, revision
+            )
+
         wrong_traffic = copy.deepcopy(service)
-        wrong_traffic["trafficStatuses"] = [{"revision": revision, "percent": 99}]
+        wrong_traffic["trafficStatuses"][0]["percent"] = 99
         with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
             p4.verify_deployment_cloud_run_service(
                 envelope, wrong_traffic, {"bindings": []}, revision
             )
+
+        split_traffic = copy.deepcopy(service)
+        split_traffic["traffic"] = [
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 99},
+            {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 1},
+        ]
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, split_traffic, {"bindings": []}, revision
+            )
+
+        explicit_other_revision = copy.deepcopy(service)
+        explicit_other_revision["trafficStatuses"][0]["revision"] = revision + "-other"
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, explicit_other_revision, {"bindings": []}, revision
+            )
+
+        tagged = copy.deepcopy(service)
+        tagged["trafficStatuses"][0]["tag"] = "canary"
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, tagged, {"bindings": []}, revision
+            )
+
         with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_PUBLIC_PRINCIPAL_FORBIDDEN"):
             p4.verify_deployment_cloud_run_service(
                 envelope, service, {"bindings": [{"members": ["allUsers"]}]}, revision
