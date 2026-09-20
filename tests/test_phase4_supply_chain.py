@@ -698,6 +698,50 @@ class Phase4DeploymentEnvelopeTests(unittest.TestCase):
                 envelope, tagged, {"bindings": []}, revision
             )
 
+        zero_tagged_desired = copy.deepcopy(service)
+        zero_tagged_desired["traffic"].append({
+            "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+            "percent": 0,
+            "tag": "canary",
+        })
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, zero_tagged_desired, {"bindings": []}, revision
+            )
+
+        zero_tagged_status = copy.deepcopy(service)
+        zero_tagged_status["trafficStatuses"].append({
+            "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
+            "percent": 0,
+            "tag": "canary",
+        })
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, zero_tagged_status, {"bindings": []}, revision
+            )
+
+        zero_explicit_desired = copy.deepcopy(service)
+        zero_explicit_desired["traffic"].append({
+            "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION",
+            "revision": revision + "-other",
+            "percent": 0,
+        })
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, zero_explicit_desired, {"bindings": []}, revision
+            )
+
+        zero_explicit_status = copy.deepcopy(service)
+        zero_explicit_status["trafficStatuses"].append({
+            "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION",
+            "revision": revision + "-other",
+            "percent": 0,
+        })
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, zero_explicit_status, {"bindings": []}, revision
+            )
+
         with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_PUBLIC_PRINCIPAL_FORBIDDEN"):
             p4.verify_deployment_cloud_run_service(
                 envelope, service, {"bindings": [{"members": ["allUsers"]}]}, revision

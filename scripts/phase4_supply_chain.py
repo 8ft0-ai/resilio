@@ -1325,13 +1325,36 @@ def verify_deployment_cloud_run_service(
     ):
         raise SupplyChainError("DEPLOYMENT_RECONCILIATION_MISMATCH")
 
+    traffic_all = service.get("traffic") or []
+    statuses_all = service.get("trafficStatuses") or []
+    if (
+        not isinstance(traffic_all, list)
+        or not isinstance(statuses_all, list)
+        or any(not isinstance(row, dict) for row in traffic_all)
+        or any(not isinstance(row, dict) for row in statuses_all)
+    ):
+        raise SupplyChainError("DEPLOYMENT_TRAFFIC_MISMATCH")
+    for row in traffic_all:
+        if (
+            row.get("tag") not in (None, "")
+            or row.get("revision") not in (None, "")
+            or row.get("type") == "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+        ):
+            raise SupplyChainError("DEPLOYMENT_TRAFFIC_MISMATCH")
+    for row in statuses_all:
+        if (
+            row.get("tag") not in (None, "")
+            or row.get("revision") not in (None, "", expected_revision)
+            or row.get("type") == "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"
+        ):
+            raise SupplyChainError("DEPLOYMENT_TRAFFIC_MISMATCH")
     traffic = [
-        row for row in (service.get("traffic") or [])
-        if isinstance(row, dict) and int(row.get("percent") or 0) > 0
+        row for row in traffic_all
+        if int(row.get("percent") or 0) > 0
     ]
     statuses = [
-        row for row in (service.get("trafficStatuses") or [])
-        if isinstance(row, dict) and int(row.get("percent") or 0) > 0
+        row for row in statuses_all
+        if int(row.get("percent") or 0) > 0
     ]
     if len(traffic) != 1 or len(statuses) != 1:
         raise SupplyChainError("DEPLOYMENT_TRAFFIC_MISMATCH")
