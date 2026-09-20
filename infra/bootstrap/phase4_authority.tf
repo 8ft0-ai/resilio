@@ -5,6 +5,7 @@ locals {
   phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_build_workflow_sha}"
   phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"
   phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@6c630f34e3594600acd51164530d1400554dbc5f"
+  phase4_reconcile_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@8ac2f9125d68048a4a86e4edc6ed2fbc544dd738"
   phase4_transition_object_resource_prefix = "projects/_/buckets/resilio-control-e882d4-phase4-evidence/objects/transitions/"
 }
 
@@ -331,7 +332,7 @@ resource "google_service_account_iam_member" "github_phase4_deployer" {
 resource "google_service_account_iam_member" "github_phase4_verifier" {
   service_account_id = google_service_account.phase4_verifier.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase4_reconcile_workflow_ref}"
 
   depends_on = [
     google_iam_workload_identity_pool_provider.github,

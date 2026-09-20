@@ -1,0 +1,34 @@
+name: Phase 4 deployment verifier reconciliation
+
+run-name: phase4-deploy-reconcile
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: phase4-deployment-verifier-reconciliation-caller
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require protected main and first workflow attempt
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+
+  reconcile:
+    needs: guard
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@8ac2f9125d68048a4a86e4edc6ed2fbc544dd738
