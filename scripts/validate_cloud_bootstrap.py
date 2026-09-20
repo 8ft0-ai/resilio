@@ -29,6 +29,7 @@ PHASE4_EVIDENCE_WORKFLOW_SHA = "b3aebc9b2069b09b0d972a5319df0b1f97a8d8f2"
 FOUNDATION_DRIFT_CONTROL_SEED_SHA = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
 PHASE4_DEPLOY_WORKFLOW_SHA = "288a0fb525a3e4914d59dc4702914eaa066f061b"
 PHASE4_DEPLOY_OLD_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
+PHASE4_DEPLOY_TARGET_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -85,9 +86,9 @@ PHASE4_DEPLOY_WORKFLOW_REF = (
 EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
-    "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
+    "outputs.tf": "75e84635db463929149fea96b6aed73f5baf38a8",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "bdf8a0bc90c15d633ca6e446c558b7ad1de1f2cb",
+    "phase4_authority.tf": "65898625f86874f77261bc279fe822a1a47d8fc6",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -413,7 +414,7 @@ def check_phase4_authority(errors: list[str]) -> None:
 
     if PHASE4_DEPLOY_OLD_WORKFLOW_SHA in text or PHASE4_DEPLOY_OLD_WORKFLOW_SHA in outputs_text:
         errors.append(
-            "Phase 4 target-grant state must reject the superseded deployment workflow identity"
+            "Phase 4 revoke state must reject the superseded deployment workflow identity"
         )
 
     expected_accounts = (
@@ -597,16 +598,6 @@ def check_phase4_authority(errors: list[str]) -> None:
             'role               = "roles/iam.workloadIdentityUser"',
             "attribute.job_workflow_ref/${local.phase4_evidence_workflow_ref}",
         ),
-        "github_phase4_deployer": (
-            "service_account_id = google_service_account.phase4_deployer.name",
-            'role               = "roles/iam.workloadIdentityUser"',
-            "attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}",
-        ),
-        "github_phase4_verifier": (
-            "service_account_id = google_service_account.phase4_verifier.name",
-            'role               = "roles/iam.workloadIdentityUser"',
-            "attribute.job_workflow_ref/${local.phase4_deploy_workflow_ref}",
-        ),
     }
     for name, tokens in wif_bindings.items():
         require_tokens(
@@ -614,6 +605,20 @@ def check_phase4_authority(errors: list[str]) -> None:
             tokens,
             f"google_service_account_iam_member.{name}",
             errors,
+        )
+
+    for revoked_name in ("github_phase4_deployer", "github_phase4_verifier"):
+        if resource_block(text, "google_service_account_iam_member", revoked_name) is not None:
+            errors.append(
+                f"Phase 4 revoke state must not declare deployment WIF member: {revoked_name}"
+            )
+    if "${local.phase4_deploy_workflow_ref}" in text:
+        errors.append(
+            "Phase 4 revoke state must keep the deploy workflow ref inert and unbound from WIF membership"
+        )
+    if PHASE4_DEPLOY_TARGET_WORKFLOW_SHA in text:
+        errors.append(
+            "Phase 4 revoke state must not introduce the future target deploy workflow identity"
         )
 
     act_as_bindings = {
@@ -635,10 +640,10 @@ def check_phase4_authority(errors: list[str]) -> None:
             f"google_service_account_iam_member.{name}",
             errors,
         )
-    if text.count('resource "google_service_account_iam_member"') != 6:
-        errors.append("Phase 4 must contain exactly four WIF and two service-account-user bindings")
-    if text.count('role               = "roles/iam.workloadIdentityUser"') != 4:
-        errors.append("Phase 4 must contain exactly four immutable reusable-workflow WIF bindings")
+    if text.count('resource "google_service_account_iam_member"') != 4:
+        errors.append("Phase 4 revoke state must contain exactly two WIF and two service-account-user bindings")
+    if text.count('role               = "roles/iam.workloadIdentityUser"') != 2:
+        errors.append("Phase 4 revoke state must contain exactly two immutable build/evidence WIF bindings")
     if text.count('role               = "roles/iam.serviceAccountUser"') != 2:
         errors.append("Phase 4 must contain exactly two narrowly scoped serviceAccountUser bindings")
 
@@ -760,6 +765,17 @@ def check_phase4_authority(errors: list[str]) -> None:
     ):
         if f'output "{output_name}"' not in outputs_text:
             errors.append(f"bootstrap outputs must expose non-sensitive Phase 4 identity: {output_name}")
+
+    phase4_deploy_output_tokens = (
+        'output "phase4_deploy_workflow_ref" {',
+        "  value       = local.phase4_deploy_workflow_ref",
+        '  description = "Retained Phase 4 deploy-workflow transition provenance reference; no deployer/verifier federation is active in Phase A."',
+    )
+    for token in phase4_deploy_output_tokens:
+        if token not in outputs_text:
+            errors.append(
+                f"Phase 4 revoke output must preserve truthful transition provenance semantics: {token}"
+            )
 
     for workflow_ref in (
         PHASE4_BUILD_WORKFLOW_REF,
