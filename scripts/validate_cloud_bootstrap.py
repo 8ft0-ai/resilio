@@ -86,9 +86,9 @@ PHASE4_DEPLOY_WORKFLOW_REF = (
 EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
-    "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
+    "outputs.tf": "75e84635db463929149fea96b6aed73f5baf38a8",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "bdf8a0bc90c15d633ca6e446c558b7ad1de1f2cb",
+    "phase4_authority.tf": "65898625f86874f77261bc279fe822a1a47d8fc6",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
