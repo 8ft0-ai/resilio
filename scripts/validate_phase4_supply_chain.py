@@ -22,13 +22,15 @@ REUSABLE = (
     ".github/workflows/phase4-build-reusable.yml",
     ".github/workflows/phase4-evidence-reusable.yml",
     ".github/workflows/phase4-deploy-reusable.yml",
+    ".github/workflows/phase4-deploy-reconcile-reusable.yml",
 )
 CALLERS = (
     ".github/workflows/phase4-build.yml",
     ".github/workflows/phase4-evidence.yml",
 )
 DEPLOY_CALLER = ".github/workflows/phase4-deploy.yml"
-REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER,) + (
+DEPLOY_RECONCILE_CALLER = ".github/workflows/phase4-deploy-reconcile.yml"
+REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER, DEPLOY_RECONCILE_CALLER) + (
     "scripts/phase4_supply_chain.py",
     "scripts/phase4_repository_sbom.py",
     "tests/test_phase4_supply_chain.py",
@@ -273,6 +275,59 @@ def main() -> int:
         errors.append("Phase 4 deploy caller must grant OIDC only to the immutable reusable-workflow call")
     if "${{ secrets." in deploy_caller or "pull_request:" in deploy_caller or "push:" in deploy_caller or "schedule:" in deploy_caller:
         errors.append("Phase 4 deploy caller contains an unauthorised trigger/secret surface")
+
+    reconcile_caller_path = ROOT / DEPLOY_RECONCILE_CALLER
+    reconcile_caller = reconcile_caller_path.read_text(encoding="utf-8") if reconcile_caller_path.is_file() else ""
+    if workflow_events(reconcile_caller) != ["workflow_dispatch"]:
+        errors.append("Phase 4 verifier reconciliation caller must remain workflow_dispatch-only")
+    reconcile_dispatch = indented_block(reconcile_caller, "workflow_dispatch", 2)
+    if direct_mapping_keys(reconcile_dispatch, 2) not in ([], None):
+        errors.append("Phase 4 verifier reconciliation caller must expose no inputs")
+    for token in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$GITHUB_REF_PROTECTED" = "true"',
+        'test "$GITHUB_RUN_ATTEMPT" = "1"',
+        "group: phase4-deployment-verifier-reconciliation-caller",
+        "cancel-in-progress: false",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@4c27a95b48977125ec6d2028e5b8f48df5b86770",
+        "contents: read",
+        "issues: read",
+        "id-token: write",
+    ):
+        if token not in reconcile_caller:
+            errors.append(f"Phase 4 verifier reconciliation caller missing fixed control: {token}")
+    if "inputs:" in reconcile_caller or "with:" in reconcile_caller:
+        errors.append("Phase 4 verifier reconciliation caller must accept no caller-controlled values")
+    if reconcile_caller.count("id-token: write") != 1:
+        errors.append("Phase 4 verifier reconciliation caller must grant OIDC only to the immutable verifier reusable")
+    for forbidden in ("github-p4-deployer@", "serviceId=phase4-proof", "-X POST", "-X PATCH", "-X DELETE", "allowMissing=true", "setIamPolicy", "terraform"):
+        if forbidden in reconcile_caller:
+            errors.append(f"Phase 4 verifier reconciliation caller contains mutation/recovery surface: {forbidden}")
+
+    reconcile = (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").is_file() else ""
+    reconcile_call = indented_block(reconcile, "workflow_call", 2)
+    if direct_mapping_keys(reconcile_call, 2) not in ([], None):
+        errors.append("Phase 4 verifier reconciliation reusable must expose no inputs")
+    for token in (
+        "github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com",
+        "5749669816", "5749673554", "35509520357",
+        "6d5cd26e-5c76-4f17-9d13-3cf1f22a60f4",
+        "phase4-proof-00001-9lh",
+        "verify-deployment-consumption-comment",
+        "validate-deployment-envelope",
+        "verify-deployment-service",
+        "verify-revision",
+        "verify-health",
+        "token_format: id_token",
+        "PHASE4_DEPLOYMENT_RECONCILIATION_VERIFIED",
+        "phase4-deployment-verifier-reconciliation",
+    ):
+        if token not in reconcile:
+            errors.append(f"Phase 4 verifier reconciliation reusable missing read-only control: {token}")
+    for forbidden in ("github-p4-deployer@", "serviceId=phase4-proof", "-X POST", "-X PATCH", "-X DELETE", "allowMissing=true", "setIamPolicy", "terraform ", "cloudbuild.googleapis.com"):
+        if forbidden in reconcile:
+            errors.append(f"Phase 4 verifier reconciliation reusable contains mutation/recovery surface: {forbidden}")
+
     build = (ROOT / ".github/workflows/phase4-build-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-build-reusable.yml").is_file() else ""
     for token in (
         "github-p4-build@resilio-control-e882d4.iam.gserviceaccount.com",
@@ -414,6 +469,7 @@ def main() -> int:
         "DEPLOYMENT_TRANSITION_BINDING_MISMATCH",
         "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST",
         "DEPLOYMENT_TRAFFIC_MISMATCH",
+        "DEPLOYMENT_RECONCILIATION_MISMATCH",
         "DEPLOYMENT_PUBLIC_PRINCIPAL_FORBIDDEN",
     ):
         if required not in helper:
