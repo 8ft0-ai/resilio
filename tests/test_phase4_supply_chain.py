@@ -593,6 +593,10 @@ class Phase4DeploymentEnvelopeTests(unittest.TestCase):
         request = p4.deployment_cloud_run_create_request(envelope)
         self.assertNotIn("name", request)
         self.assertEqual(
+            request["template"]["containers"][0]["resources"],
+            {"limits": {"cpu": "1", "memory": "256Mi"}, "cpuIdle": True},
+        )
+        self.assertEqual(
             request["traffic"],
             [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
         )
@@ -612,6 +616,18 @@ class Phase4DeploymentEnvelopeTests(unittest.TestCase):
             envelope, service, {"bindings": []}, revision
         )
         self.assertEqual(result["revision"], revision)
+        missing_cpu_idle = copy.deepcopy(service)
+        del missing_cpu_idle["template"]["containers"][0]["resources"]["cpuIdle"]
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RESOURCES_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, missing_cpu_idle, {"bindings": []}, revision
+            )
+        unthrottled_cpu = copy.deepcopy(service)
+        unthrottled_cpu["template"]["containers"][0]["resources"]["cpuIdle"] = False
+        with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_RESOURCES_MISMATCH"):
+            p4.verify_deployment_cloud_run_service(
+                envelope, unthrottled_cpu, {"bindings": []}, revision
+            )
         wrong_traffic = copy.deepcopy(service)
         wrong_traffic["trafficStatuses"] = [{"revision": revision, "percent": 99}]
         with self.assertRaisesRegex(p4.SupplyChainError, "DEPLOYMENT_TRAFFIC_MISMATCH"):
