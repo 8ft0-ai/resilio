@@ -94,6 +94,32 @@ class BuildContractTests(unittest.TestCase):
             "a" * 40,
         )
 
+    def test_provider_materialised_artifacts_images_must_match_exactly(self) -> None:
+        build = self._build()
+        build["artifacts"] = {"images": list(build["images"])}
+        self.assertEqual(
+            p4.validate_build(build, "a" * 40, "b" * 40)["source_sha"],
+            "a" * 40,
+        )
+
+        mismatched = self._build()
+        mismatched["artifacts"] = {"images": ["latest"]}
+        with self.assertRaisesRegex(p4.SupplyChainError, "BUILD_ARTIFACTS_MISMATCH"):
+            p4.validate_build(mismatched, "a" * 40, "b" * 40)
+
+        extra = self._build()
+        extra["artifacts"] = {
+            "images": list(extra["images"]),
+            "objects": {"location": "gs://unexpected"},
+        }
+        with self.assertRaisesRegex(p4.SupplyChainError, "BUILD_ARTIFACTS_MISMATCH"):
+            p4.validate_build(extra, "a" * 40, "b" * 40)
+
+        malformed = self._build()
+        malformed["artifacts"] = []
+        with self.assertRaisesRegex(p4.SupplyChainError, "BUILD_ARTIFACTS_MISMATCH"):
+            p4.validate_build(malformed, "a" * 40, "b" * 40)
+
     def test_build_request_mutation_fails(self) -> None:
         for key, value in (
             ("serviceAccount", "projects/x/serviceAccounts/wide@example.iam.gserviceaccount.com"),
