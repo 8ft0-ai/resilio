@@ -33,6 +33,21 @@ class ReconciliationInlinePythonValidationTests(unittest.TestCase):
         )
         self.assertEqual(errors, [])
 
+    def test_reserved_cloud_run_path_guard_is_generic(self) -> None:
+        cases = {
+            "GET /z": ["/z"],
+            "GET /readyz": ["/readyz"],
+            "GET /health": [],
+            "GET /fooz/bar": [],
+            "GET /fooz?x=1": ["/fooz"],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(
+                    p4v.governed_cloud_run_reserved_paths(text),
+                    expected,
+                )
+
 
 class BuildContractTests(unittest.TestCase):
     def test_build_request_is_fixed_and_digest_pinned(self) -> None:
@@ -766,6 +781,339 @@ class Phase4DeploymentEnvelopeTests(unittest.TestCase):
             p4.verify_deployment_cloud_run_service(
                 envelope, service, {"bindings": [{"members": ["allUsers"]}]}, revision
             )
+
+
+
+class RevisionTransitionTests(unittest.TestCase):
+    def _envelope(self) -> dict:
+        build_id = "abcdef12-3456"
+        source = "c" * 40
+        return {
+            "contract": p4.REVISION_TRANSITION_CONTRACT,
+            "repository": p4.REPOSITORY,
+            "phase": 4,
+            "artifact": {
+                "source_sha": source,
+                "source_tree_sha": "d" * 40,
+                "build_id": build_id,
+                "build_control_sha": "e" * 40,
+                "build_request_sha256": "f" * 64,
+                "image": p4.IMAGE_PREFIX + "@sha256:" + "1" * 64,
+                "provenance_occurrence": "projects/resilio-control-e882d4/occurrences/prov",
+            },
+            "evidence": {
+                "run_id": "123456789",
+                "run_attempt": 1,
+                "workflow_ref": (
+                    "8ft0-ai/resilio/.github/workflows/"
+                    "phase4-evidence-reusable.yml@" + "2" * 40
+                ),
+                "transition": {
+                    "contract": "resilio-phase4-transition/v1",
+                    "object": (
+                        "gs://resilio-control-e882d4-phase4-evidence/"
+                        f"transitions/{build_id}.json"
+                    ),
+                    "generation": "123",
+                    "sha256": "3" * 64,
+                    "size": 321,
+                },
+                "sbom": {
+                    "object": (
+                        "gs://resilio-control-e882d4-phase4-evidence/"
+                        f"transitions/{build_id}.sbom.spdx.json"
+                    ),
+                    "generation": "124",
+                    "sha256": "4" * 64,
+                    "size": 654,
+                },
+            },
+            "target": {
+                "service": p4.DEPLOYMENT_SERVICE,
+                "region": p4.REGION,
+                "transition_kind": "UPDATE_EXISTING_REVISION",
+                "expected_previous_revision": p4.REVISION_PREVIOUS_REVISION,
+                "expected_previous_image": p4.REVISION_PREVIOUS_IMAGE,
+                "expected_previous_source": p4.REVISION_PREVIOUS_SOURCE,
+                "runtime_service_account": p4.RUNTIME,
+                "ingress": "INGRESS_TRAFFIC_ALL",
+                "authentication": "IAM_REQUIRED",
+                "public_principals_forbidden": True,
+                "timeout": "10s",
+                "max_instance_request_concurrency": 10,
+                "scaling": {"min_instances": 0, "max_instances": 1},
+                "resources": {"cpu": "1", "memory": "256Mi"},
+                "environment": {"SOURCE_SHA": source},
+                "secrets": [],
+                "traffic": {"mode": "LATEST_CREATED_REVISION", "percent": 100},
+            },
+            "execution_policy": {
+                "rebuild_forbidden": True,
+                "image_substitution_forbidden": True,
+                "single_mutation_attempt": True,
+                "automatic_retry_after_unknown_forbidden": True,
+                "rollback_requires_separate_owner_authority": True,
+            },
+        }
+    def _service(self, image: str, source: str, revision: str, generation: str, etag: str) -> dict:
+        return {
+            "name": p4.DEPLOYMENT_SERVICE,
+            "ingress": "INGRESS_TRAFFIC_ALL",
+            "template": p4._revision_template(image, source),
+            "latestCreatedRevision": revision,
+            "latestReadyRevision": revision,
+            "generation": generation,
+            "observedGeneration": generation,
+            "terminalCondition": {"type": "Ready", "state": "CONDITION_SUCCEEDED"},
+            "traffic": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
+            "trafficStatuses": [{"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "percent": 100}],
+            "uri": "https://phase4-proof.example.run.app",
+            "etag": etag,
+        }
+
+    def test_revision_envelope_is_content_addressed_and_strict(self) -> None:
+        value = self._envelope()
+        self.assertEqual(p4.validate_revision_transition_envelope(value), value)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "revision.json"
+            path.write_bytes(p4.canonical_json_bytes(value))
+            release = p4.sha256_bytes(path.read_bytes())
+            self.assertEqual(p4.load_revision_transition_envelope(str(path), release), value)
+            path.write_bytes(path.read_bytes() + b"\n")
+            with self.assertRaisesRegex(p4.SupplyChainError, "REVISION_ENVELOPE_NOT_CANONICAL"):
+                p4.load_revision_transition_envelope(str(path), release)
+    def test_revision_authority_consumption_is_one_shot(self) -> None:
+        value = self._envelope()
+        release = p4.sha256_bytes(p4.canonical_json_bytes(value))
+        authority = {
+            "id": 7000000001,
+            "issue_url": "https://api.github.com/repos/8ft0-ai/resilio/issues/98",
+            "user": {"login": p4.OWNER_LOGIN, "id": p4.OWNER_ID},
+            "body": (
+                f"{p4.REVISION_TRANSITION_AUTHORITY_PREFIX} release_id={release} "
+                f"envelope_commit={'a' * 40} service={p4.DEPLOYMENT_SERVICE} "
+                "transition=UPDATE_EXISTING_REVISION"
+            ),
+        }
+        parsed = p4.validate_revision_transition_authority_comment(authority, authority["id"])
+        self.assertEqual(parsed["release_id"], release)
+        body = p4.revision_transition_consumption_body(authority["id"], release, 99, 1)
+        consumption = {
+            "id": 7000000002,
+            "user": {"login": p4.GITHUB_ACTIONS_LOGIN},
+            "body": body,
+        }
+        result = p4.verify_revision_transition_consumption(
+            [[consumption]], authority["id"], release, 99, 1
+        )
+        self.assertEqual(result["comment_id"], consumption["id"])
+        with self.assertRaisesRegex(p4.SupplyChainError, "REVISION_AUTHORITY_ALREADY_CONSUMED"):
+            p4.revision_transition_consumption_available(
+                [[consumption]], authority["id"], release
+            )
+    def test_revision_precondition_patch_and_postcondition(self) -> None:
+        envelope = self._envelope()
+        before = self._service(
+            p4.REVISION_PREVIOUS_IMAGE,
+            p4.REVISION_PREVIOUS_SOURCE,
+            p4.REVISION_PREVIOUS_REVISION,
+            "1",
+            "etag-before",
+        )
+        pre = p4.verify_revision_transition_precondition(envelope, before, {"bindings": []})
+        self.assertEqual(pre["etag"], "etag-before")
+
+        missing_name = copy.deepcopy(before)
+        missing_name.pop("name")
+        with self.assertRaisesRegex(p4.SupplyChainError, "REVISION_SERVICE_IDENTITY_MISMATCH"):
+            p4.verify_revision_transition_precondition(
+                envelope, missing_name, {"bindings": []}
+            )
+        wrong_name = copy.deepcopy(before)
+        wrong_name["name"] = p4.DEPLOYMENT_SERVICE + "-other"
+        with self.assertRaisesRegex(p4.SupplyChainError, "REVISION_SERVICE_IDENTITY_MISMATCH"):
+            p4.verify_revision_transition_precondition(
+                envelope, wrong_name, {"bindings": []}
+            )
+
+        patch = p4.revision_transition_patch_request(envelope, pre["etag"])
+        self.assertEqual(set(patch), {"name", "etag", "template"})
+        self.assertEqual(patch["etag"], "etag-before")
+        self.assertEqual(
+            patch["template"]["containers"][0]["image"],
+            envelope["artifact"]["image"],
+        )
+
+        new_revision = (
+            "projects/resilio-reference-e882d4/locations/us-central1/services/"
+            "phase4-proof/revisions/phase4-proof-00002-test"
+        )
+        after = self._service(
+            envelope["artifact"]["image"],
+            envelope["artifact"]["source_sha"],
+            new_revision,
+            "2",
+            "etag-after",
+        )
+        post = p4.verify_revision_transition_postcondition(
+            envelope, after, {"bindings": []}, new_revision, "etag-before", "1"
+        )
+        self.assertEqual(post["revision"], new_revision)
+
+        same_etag = copy.deepcopy(after)
+        same_etag["etag"] = "etag-before"
+        with self.assertRaisesRegex(p4.SupplyChainError, "REVISION_ETAG_DID_NOT_CHANGE"):
+            p4.verify_revision_transition_postcondition(
+                envelope, same_etag, {"bindings": []}, new_revision, "etag-before", "1"
+            )
+
+        public = copy.deepcopy(after)
+        with self.assertRaisesRegex(p4.SupplyChainError, "REVISION_PUBLIC_PRINCIPAL_FORBIDDEN"):
+            p4.verify_revision_transition_postcondition(
+                envelope,
+                public,
+                {"bindings": [{"members": ["allUsers"]}]},
+                new_revision,
+                "etag-before",
+                "1",
+            )
+
+    def test_revision_patch_response_classification_preserves_ambiguity(self) -> None:
+        op = "projects/resilio-reference-e882d4/locations/us-central1/operations/update-1"
+        revision = (
+            "projects/resilio-reference-e882d4/locations/us-central1/services/"
+            "phase4-proof/revisions/phase4-proof-00002-test"
+        )
+        unknown = {
+            "operation": None,
+            "disposition": "UPDATE_OUTCOME_UNKNOWN",
+            "revision": None,
+        }
+
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(b"", "000", 7),
+            unknown,
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(
+                json.dumps({"error": {"code": 500}}).encode(), "500", 0
+            ),
+            unknown,
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(b"{", "200", 0),
+            unknown,
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(
+                json.dumps({"done": False}).encode(), "200", 0
+            ),
+            unknown,
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(
+                json.dumps({"name": "operations/update-1"}).encode(), "200", 0
+            ),
+            unknown,
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(
+                json.dumps({"name": op}).encode(), "200", 0
+            ),
+            {"operation": op, "disposition": "PENDING", "revision": None},
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(
+                json.dumps({"name": op, "done": True, "error": {"code": 13}}).encode(),
+                "200",
+                0,
+            ),
+            {
+                "operation": op,
+                "disposition": "UPDATE_FAILED_KNOWN",
+                "revision": None,
+            },
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(
+                json.dumps({
+                    "name": op,
+                    "done": True,
+                    "response": {
+                        "latestCreatedRevision": revision,
+                        "latestReadyRevision": revision,
+                    },
+                }).encode(),
+                "200",
+                0,
+            ),
+            {
+                "operation": op,
+                "disposition": "PROVIDER_UPDATED",
+                "revision": revision,
+            },
+        )
+        self.assertEqual(
+            p4.revision_transition_patch_response_outcome(
+                json.dumps({"name": op, "done": True, "response": []}).encode(),
+                "200",
+                0,
+            ),
+            {
+                "operation": op,
+                "disposition": "UPDATE_OUTCOME_UNKNOWN",
+                "revision": None,
+            },
+        )
+
+    def test_revision_operation_outcome_is_fail_closed(self) -> None:
+        op = "projects/resilio-reference-e882d4/locations/us-central1/operations/update-1"
+        revision = (
+            "projects/resilio-reference-e882d4/locations/us-central1/services/"
+            "phase4-proof/revisions/phase4-proof-00002-test"
+        )
+        self.assertEqual(
+            p4.revision_transition_operation_outcome({"name": op}, op),
+            {"disposition": "PENDING", "revision": None},
+        )
+        self.assertEqual(
+            p4.revision_transition_operation_outcome(
+                {"name": op, "done": True, "error": {"code": 13}}, op
+            ),
+            {"disposition": "UPDATE_FAILED_KNOWN", "revision": None},
+        )
+        self.assertEqual(
+            p4.revision_transition_operation_outcome(
+                {
+                    "name": op,
+                    "done": True,
+                    "response": {
+                        "latestCreatedRevision": revision,
+                        "latestReadyRevision": revision,
+                    },
+                },
+                op,
+            ),
+            {"disposition": "PROVIDER_UPDATED", "revision": revision},
+        )
+        self.assertEqual(
+            p4.revision_transition_operation_outcome(
+                {"name": op, "done": True, "response": "malformed"},
+                op,
+            ),
+            {"disposition": "UPDATE_OUTCOME_UNKNOWN", "revision": None},
+        )
+
+    def test_revision_caller_pins_exact_immutable_reusables(self) -> None:
+        caller = (ROOT / ".github/workflows/phase4-revision-transition.yml").read_text()
+        sha = "ad6d81b18eed7467f6d1b6fb35710af6f2462465"
+        verify = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@{sha}"
+        update = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@{sha}"
+        self.assertEqual(caller.count(verify), 2)
+        self.assertEqual(caller.count(update), 1)
+        self.assertNotIn("/healthz", caller)
+        self.assertNotIn("serviceId=phase4-proof", caller)
+
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ def health_payload() -> bytes:
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path != "/healthz":
+        if self.path != "/health":
             self.send_response(404)
             self.end_headers()
             return

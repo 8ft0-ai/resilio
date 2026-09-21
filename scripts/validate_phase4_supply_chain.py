@@ -17,12 +17,15 @@ PROOF_RUNTIME_DIGEST = "f2b206661cee3edb44f132d7f054a9ced96f671d8a973de0db750895
 DOCKER_BUILDER_DIGEST = "154fcd4d2d65c6a35b06b98053a0829c581e223d530be5719326f5d85d680e8d"
 SYFT_VERSION = "1.51.1"
 SYFT_ARCHIVE_SHA256 = "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3"
+GOVERNED_CLOUD_RUN_PATH_TOKEN = re.compile(r"/[A-Za-z0-9._/-]+")
 
 REUSABLE = (
     ".github/workflows/phase4-build-reusable.yml",
     ".github/workflows/phase4-evidence-reusable.yml",
     ".github/workflows/phase4-deploy-reusable.yml",
     ".github/workflows/phase4-deploy-reconcile-reusable.yml",
+    ".github/workflows/phase4-revision-update-reusable.yml",
+    ".github/workflows/phase4-revision-verify-reusable.yml",
 )
 CALLERS = (
     ".github/workflows/phase4-build.yml",
@@ -30,7 +33,8 @@ CALLERS = (
 )
 DEPLOY_CALLER = ".github/workflows/phase4-deploy.yml"
 DEPLOY_RECONCILE_CALLER = ".github/workflows/phase4-deploy-reconcile.yml"
-REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER, DEPLOY_RECONCILE_CALLER) + (
+REVISION_TRANSITION_CALLER = ".github/workflows/phase4-revision-transition.yml"
+REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER, DEPLOY_RECONCILE_CALLER, REVISION_TRANSITION_CALLER) + (
     "scripts/phase4_supply_chain.py",
     "scripts/phase4_repository_sbom.py",
     "tests/test_phase4_supply_chain.py",
@@ -40,6 +44,14 @@ REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER, DEPLOY_RECONCILE_CALLER) + (
     "services/phase4-proof/test_app.py",
     "services/phase4-proof/Dockerfile",
 )
+
+
+def governed_cloud_run_reserved_paths(text: str) -> list[str]:
+    return [
+        path
+        for path in GOVERNED_CLOUD_RUN_PATH_TOKEN.findall(text)
+        if path.endswith("z")
+    ]
 
 
 def workflow_events(text: str) -> list[str]:
@@ -325,6 +337,64 @@ def main() -> int:
         if forbidden in reconcile_caller:
             errors.append(f"Phase 4 verifier reconciliation caller contains mutation/recovery surface: {forbidden}")
 
+    revision_caller_path = ROOT / REVISION_TRANSITION_CALLER
+    revision_caller = revision_caller_path.read_text(encoding="utf-8") if revision_caller_path.is_file() else ""
+    if workflow_events(revision_caller) != ["workflow_dispatch"]:
+        errors.append("Phase 4 revision transition caller must remain workflow_dispatch-only")
+    revision_dispatch = indented_block(revision_caller, "workflow_dispatch", 2)
+    if direct_mapping_keys(revision_dispatch, 2) != ["inputs"]:
+        errors.append("Phase 4 revision transition caller must expose only the inputs mapping")
+    revision_inputs = indented_block(revision_dispatch or "", "inputs", 4)
+    if direct_mapping_keys(revision_inputs, 4) != ["authority_comment_id"]:
+        errors.append("Phase 4 revision transition caller must expose exactly one authority_comment_id input")
+    revision_authority = indented_block(revision_inputs or "", "authority_comment_id", 6)
+    props = direct_mapping_keys(revision_authority, 6)
+    if (
+        props is None
+        or props.count("required") != 1
+        or props.count("type") != 1
+        or props.count("description") > 1
+        or any(key not in {"description", "required", "type"} for key in props)
+    ):
+        errors.append("Phase 4 revision authority input may contain only description, required and type")
+    if revision_authority is None or "        required: true" not in revision_authority.splitlines():
+        errors.append("Phase 4 revision authority input must remain required")
+    if revision_authority is None or "        type: string" not in revision_authority.splitlines():
+        errors.append("Phase 4 revision authority input must remain a string")
+    for token in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$GITHUB_REF_PROTECTED" = "true"',
+        'test "$GITHUB_RUN_ATTEMPT" = "1"',
+        "group: phase4-revision-transition-authority-control",
+        "cancel-in-progress: false",
+        "validate-revision-authority",
+        "revision-consumption-available",
+        "revision-consumption-body",
+        "verify-revision-consumption",
+        "REVISION_CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465",
+    ):
+        if token not in revision_caller:
+            errors.append(f"Phase 4 revision transition caller missing fixed control: {token}")
+    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465") != 2:
+        errors.append("Phase 4 revision caller must invoke the exact verifier reusable for pre and post stages")
+    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465") != 1:
+        errors.append("Phase 4 revision caller must invoke the exact updater reusable once")
+    if revision_caller.count("gh api --paginate --slurp") != 2:
+        errors.append("Phase 4 revision caller must enumerate authority comments before and after consumption")
+    if revision_caller.count("gh api --method POST") != 1:
+        errors.append("Phase 4 revision caller must attempt exactly one durable authority-consumption POST")
+    if revision_caller.count("id-token: write") != 3:
+        errors.append("Phase 4 revision caller must grant OIDC only to the two verifier calls and one updater call")
+    for forbidden in (
+        "image_digest:", "source_sha:", "service_account:", "runtime_service_account:",
+        "region:", "traffic:", "build_id:", "evidence_object:", "/healthz",
+        "-X PATCH", "-X DELETE", "serviceId=phase4-proof",
+    ):
+        if forbidden in revision_caller:
+            errors.append(f"Phase 4 revision caller contains forbidden mutable/consequence surface: {forbidden}")
+
     reconcile = (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").is_file() else ""
     validate_reconciliation_inline_python(reconcile, errors)
     reconcile_call = indented_block(reconcile, "workflow_call", 2)
@@ -349,6 +419,52 @@ def main() -> int:
     for forbidden in ("github-p4-deployer@", "serviceId=phase4-proof", "-X POST", "-X PATCH", "-X DELETE", "allowMissing=true", "setIamPolicy", "terraform ", "cloudbuild.googleapis.com"):
         if forbidden in reconcile:
             errors.append(f"Phase 4 verifier reconciliation reusable contains mutation/recovery surface: {forbidden}")
+
+    revision_verify = (ROOT / ".github/workflows/phase4-revision-verify-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-revision-verify-reusable.yml").is_file() else ""
+    for token in (
+        "github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com",
+        "validate-revision-authority", "verify-revision-consumption-comment",
+        "validate-revision-envelope", "revision-precondition", "revision-postcondition",
+        "verify-revision", "verify-health", "token_format: id_token",
+        '"$URI/health"', "phase4-revision-transition-verifier",
+    ):
+        if token not in revision_verify:
+            errors.append(f"Phase 4 revision verifier reusable missing fixed control: {token}")
+    for forbidden in (
+        "/healthz", "github-p4-deployer@", "-X POST", "-X PATCH", "-X DELETE",
+        "allowMissing=true", "setIamPolicy", "terraform ", "cloudbuild.googleapis.com",
+    ):
+        if forbidden in revision_verify:
+            errors.append(f"Phase 4 revision verifier reusable contains forbidden mutation/reserved-path surface: {forbidden}")
+
+    revision_update = (ROOT / ".github/workflows/phase4-revision-update-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-revision-update-reusable.yml").is_file() else ""
+    for token in (
+        "github-p4-deployer@resilio-reference-e882d4.iam.gserviceaccount.com",
+        "validate-revision-authority", "verify-revision-consumption-comment",
+        "validate-revision-envelope", "revision-precondition",
+        "verify-revision-transition", "revision-patch-request",
+        "revision-patch-response-outcome", "revision-operation-outcome",
+        "updateMask=template&allowMissing=false",
+        "phase4-revision-transition-provider-mutation",
+        "Reconcile exact known provider operation without mutation",
+    ):
+        if token not in revision_update:
+            errors.append(f"Phase 4 revision update reusable missing fixed control: {token}")
+    for forbidden in (
+        "/healthz", "github-p4-verifier@", "serviceId=phase4-proof",
+        "-X POST", "-X DELETE", "allowMissing=true", "setIamPolicy",
+        "terraform ", "cloudbuild.googleapis.com",
+    ):
+        if forbidden in revision_update:
+            errors.append(f"Phase 4 revision update reusable contains forbidden create/delete/broadening surface: {forbidden}")
+    if revision_update.count("-X PATCH") != 1:
+        errors.append("Phase 4 revision update reusable must contain exactly one provider mutation PATCH")
+    if revision_update.count("https://run.googleapis.com/v2/$OPERATION") != 1:
+        errors.append("Phase 4 revision update reusable must reconcile exactly the returned provider operation")
+    if revision_update.count("allowMissing=false") != 1:
+        errors.append("Phase 4 revision update reusable must fail closed rather than create a missing service")
+    if 'DISPOSITION="UPDATE_FAILED_KNOWN"' in revision_update:
+        errors.append("Phase 4 revision update reusable must not infer a known failure directly from PATCH transport/HTTP status")
 
     build = (ROOT / ".github/workflows/phase4-build-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-build-reusable.yml").is_file() else ""
     for token in (
@@ -493,9 +609,33 @@ def main() -> int:
         "DEPLOYMENT_TRAFFIC_MISMATCH",
         "DEPLOYMENT_RECONCILIATION_MISMATCH",
         "DEPLOYMENT_PUBLIC_PRINCIPAL_FORBIDDEN",
+        "resilio-phase4-revision-transition/v1",
+        "PHASE4_REVISION_TRANSITION_AUTHORISED_V1",
+        "PHASE4_REVISION_TRANSITION_AUTHORITY_CONSUMED_V1",
+        "UPDATE_EXISTING_REVISION",
+        "REVISION_ENVELOPE_NOT_CANONICAL",
+        "REVISION_RELEASE_ID_MISMATCH",
+        "REVISION_RUN_ATTEMPT_NOT_FIRST",
+        "REVISION_CONSUMPTION_NOT_UNIQUE",
+        "REVISION_TRANSITION_BINDING_MISMATCH",
+        "REVISION_ETAG_DID_NOT_CHANGE",
+        "REVISION_GENERATION_DID_NOT_ADVANCE",
+        "PENDING",
+        "UPDATE_FAILED_KNOWN",
+        "UPDATE_OUTCOME_UNKNOWN",
+        "PROVIDER_UPDATED",
     ):
         if required not in helper:
             errors.append(f"Phase 4 helper missing deployment-envelope/authority control: {required}")
+
+    app = (ROOT / "services/phase4-proof/app.py").read_text(encoding="utf-8") if (ROOT / "services/phase4-proof/app.py").is_file() else ""
+    if 'self.path != "/health"' not in app:
+        errors.append("Phase 4 proof service must expose the non-reserved /health path")
+    if "/healthz" in app:
+        errors.append("Phase 4 proof service must not retain the Cloud Run-reserved /healthz path")
+    for governed in (revision_verify, revision_update, app):
+        for match in governed_cloud_run_reserved_paths(governed):
+            errors.append(f"Phase 4 new governed path must not end in z: {match}")
 
     dockerfile = (ROOT / "services/phase4-proof/Dockerfile").read_text(encoding="utf-8") if (ROOT / "services/phase4-proof/Dockerfile").is_file() else ""
     if not dockerfile.startswith("FROM gcr.io/distroless/python3-debian13@sha256:" + PROOF_RUNTIME_DIGEST + "\n"):
