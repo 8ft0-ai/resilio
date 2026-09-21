@@ -33,7 +33,8 @@ CALLERS = (
 )
 DEPLOY_CALLER = ".github/workflows/phase4-deploy.yml"
 DEPLOY_RECONCILE_CALLER = ".github/workflows/phase4-deploy-reconcile.yml"
-REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER, DEPLOY_RECONCILE_CALLER) + (
+REVISION_TRANSITION_CALLER = ".github/workflows/phase4-revision-transition.yml"
+REQUIRED = REUSABLE + CALLERS + (DEPLOY_CALLER, DEPLOY_RECONCILE_CALLER, REVISION_TRANSITION_CALLER) + (
     "scripts/phase4_supply_chain.py",
     "scripts/phase4_repository_sbom.py",
     "tests/test_phase4_supply_chain.py",
@@ -335,6 +336,64 @@ def main() -> int:
     for forbidden in ("github-p4-deployer@", "serviceId=phase4-proof", "-X POST", "-X PATCH", "-X DELETE", "allowMissing=true", "setIamPolicy", "terraform"):
         if forbidden in reconcile_caller:
             errors.append(f"Phase 4 verifier reconciliation caller contains mutation/recovery surface: {forbidden}")
+
+    revision_caller_path = ROOT / REVISION_TRANSITION_CALLER
+    revision_caller = revision_caller_path.read_text(encoding="utf-8") if revision_caller_path.is_file() else ""
+    if workflow_events(revision_caller) != ["workflow_dispatch"]:
+        errors.append("Phase 4 revision transition caller must remain workflow_dispatch-only")
+    revision_dispatch = indented_block(revision_caller, "workflow_dispatch", 2)
+    if direct_mapping_keys(revision_dispatch, 2) != ["inputs"]:
+        errors.append("Phase 4 revision transition caller must expose only the inputs mapping")
+    revision_inputs = indented_block(revision_dispatch or "", "inputs", 4)
+    if direct_mapping_keys(revision_inputs, 4) != ["authority_comment_id"]:
+        errors.append("Phase 4 revision transition caller must expose exactly one authority_comment_id input")
+    revision_authority = indented_block(revision_inputs or "", "authority_comment_id", 6)
+    props = direct_mapping_keys(revision_authority, 6)
+    if (
+        props is None
+        or props.count("required") != 1
+        or props.count("type") != 1
+        or props.count("description") > 1
+        or any(key not in {"description", "required", "type"} for key in props)
+    ):
+        errors.append("Phase 4 revision authority input may contain only description, required and type")
+    if revision_authority is None or "        required: true" not in revision_authority.splitlines():
+        errors.append("Phase 4 revision authority input must remain required")
+    if revision_authority is None or "        type: string" not in revision_authority.splitlines():
+        errors.append("Phase 4 revision authority input must remain a string")
+    for token in (
+        'test "$GITHUB_REF" = "refs/heads/main"',
+        'test "$GITHUB_REF_PROTECTED" = "true"',
+        'test "$GITHUB_RUN_ATTEMPT" = "1"',
+        "group: phase4-revision-transition-authority-control",
+        "cancel-in-progress: false",
+        "validate-revision-authority",
+        "revision-consumption-available",
+        "revision-consumption-body",
+        "verify-revision-consumption",
+        "REVISION_CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465",
+    ):
+        if token not in revision_caller:
+            errors.append(f"Phase 4 revision transition caller missing fixed control: {token}")
+    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465") != 2:
+        errors.append("Phase 4 revision caller must invoke the exact verifier reusable for pre and post stages")
+    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465") != 1:
+        errors.append("Phase 4 revision caller must invoke the exact updater reusable once")
+    if revision_caller.count("gh api --paginate --slurp") != 2:
+        errors.append("Phase 4 revision caller must enumerate authority comments before and after consumption")
+    if revision_caller.count("gh api --method POST") != 1:
+        errors.append("Phase 4 revision caller must attempt exactly one durable authority-consumption POST")
+    if revision_caller.count("id-token: write") != 3:
+        errors.append("Phase 4 revision caller must grant OIDC only to the two verifier calls and one updater call")
+    for forbidden in (
+        "image_digest:", "source_sha:", "service_account:", "runtime_service_account:",
+        "region:", "traffic:", "build_id:", "evidence_object:", "/healthz",
+        "-X PATCH", "-X DELETE", "serviceId=phase4-proof",
+    ):
+        if forbidden in revision_caller:
+            errors.append(f"Phase 4 revision caller contains forbidden mutable/consequence surface: {forbidden}")
 
     reconcile = (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/phase4-deploy-reconcile-reusable.yml").is_file() else ""
     validate_reconciliation_inline_python(reconcile, errors)

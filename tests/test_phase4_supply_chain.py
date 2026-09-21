@@ -1104,6 +1104,17 @@ class RevisionTransitionTests(unittest.TestCase):
             {"disposition": "UPDATE_OUTCOME_UNKNOWN", "revision": None},
         )
 
+    def test_revision_caller_pins_exact_immutable_reusables(self) -> None:
+        caller = (ROOT / ".github/workflows/phase4-revision-transition.yml").read_text()
+        sha = "ad6d81b18eed7467f6d1b6fb35710af6f2462465"
+        verify = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@{sha}"
+        update = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@{sha}"
+        self.assertEqual(caller.count(verify), 2)
+        self.assertEqual(caller.count(update), 1)
+        self.assertNotIn("/healthz", caller)
+        self.assertNotIn("serviceId=phase4-proof", caller)
+
+
 
 if __name__ == "__main__":
     unittest.main()

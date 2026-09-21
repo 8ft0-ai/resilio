@@ -1,0 +1,135 @@
+name: Phase 4 revision transition
+
+run-name: phase4-revision-transition-authority-${{ inputs.authority_comment_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      authority_comment_id:
+        description: Owner revision-transition authority comment ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase4-revision-transition-authority-control
+  cancel-in-progress: false
+
+jobs:
+  control:
+    name: validate-and-consume-revision-authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      release_id: ${{ steps.consume.outputs.release_id }}
+      envelope_commit: ${{ steps.consume.outputs.envelope_commit }}
+      consumption_comment_id: ${{ steps.consume.outputs.consumption_comment_id }}
+    steps:
+      - name: Require protected main and first workflow attempt
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+      - name: Check out protected caller control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Validate and consume exact owner revision authority once
+        id: consume
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+        run: |
+          set -euo pipefail
+          [[ "$AUTHORITY_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/revision-authority.json"
+          python3 scripts/phase4_supply_chain.py validate-revision-authority             --comment-json "$RUNNER_TEMP/revision-authority.json"             --authority-comment-id "$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/revision-authority-valid.json"
+          RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/revision-authority-valid.json")"
+          ENVELOPE_COMMIT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["envelope_commit"])' "$RUNNER_TEMP/revision-authority-valid.json")"
+          ISSUE_NUMBER="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_number"])' "$RUNNER_TEMP/revision-authority-valid.json")"
+          ENVELOPE="$RUNNER_TEMP/revision-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json"             "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/revisions/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-revision-envelope             --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
+
+          gh api --paginate --slurp             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" > "$RUNNER_TEMP/comments-before.json"
+          python3 scripts/phase4_supply_chain.py revision-consumption-available             --comments-json "$RUNNER_TEMP/comments-before.json"             --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID"
+
+          python3 scripts/phase4_supply_chain.py revision-consumption-body             --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID"             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/consumption-body.txt"
+          IFS= read -r BODY < "$RUNNER_TEMP/consumption-body.txt"
+          test -n "$BODY"
+
+          set +e
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments"             -f body="$BODY" > "$RUNNER_TEMP/consumption-create.json"
+          CREATE_RC=$?
+          set -e
+          if test "$CREATE_RC" -ne 0; then
+            printf 'REVISION_CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE\n'
+          fi
+          gh api --paginate --slurp             "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments?per_page=100" > "$RUNNER_TEMP/comments-after.json"
+          python3 scripts/phase4_supply_chain.py verify-revision-consumption             --comments-json "$RUNNER_TEMP/comments-after.json"             --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID"             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/consumption-valid.json"
+          CONSUMPTION_COMMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["comment_id"])' "$RUNNER_TEMP/consumption-valid.json")"
+          [[ "$CONSUMPTION_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+
+          printf 'release_id=%s\n' "$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          printf 'envelope_commit=%s\n' "$ENVELOPE_COMMIT" >> "$GITHUB_OUTPUT"
+          printf 'consumption_comment_id=%s\n' "$CONSUMPTION_COMMENT_ID" >> "$GITHUB_OUTPUT"
+
+  precondition:
+    needs: control
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465
+    with:
+      stage: pre
+      authority_comment_id: ${{ inputs.authority_comment_id }}
+      release_id: ${{ needs.control.outputs.release_id }}
+      envelope_commit: ${{ needs.control.outputs.envelope_commit }}
+      consumption_comment_id: ${{ needs.control.outputs.consumption_comment_id }}
+
+  update:
+    needs: [control, precondition]
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465
+    with:
+      authority_comment_id: ${{ inputs.authority_comment_id }}
+      release_id: ${{ needs.control.outputs.release_id }}
+      envelope_commit: ${{ needs.control.outputs.envelope_commit }}
+      consumption_comment_id: ${{ needs.control.outputs.consumption_comment_id }}
+      previous_etag: ${{ needs.precondition.outputs.etag }}
+      previous_revision: ${{ needs.precondition.outputs.revision }}
+      previous_generation: ${{ needs.precondition.outputs.generation }}
+
+  postcondition:
+    needs: [control, precondition, update]
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465
+    with:
+      stage: post
+      authority_comment_id: ${{ inputs.authority_comment_id }}
+      release_id: ${{ needs.control.outputs.release_id }}
+      envelope_commit: ${{ needs.control.outputs.envelope_commit }}
+      consumption_comment_id: ${{ needs.control.outputs.consumption_comment_id }}
+      provider_operation: ${{ needs.update.outputs.provider_operation }}
+      provider_disposition: ${{ needs.update.outputs.provider_mutation_disposition }}
+      expected_revision: ${{ needs.update.outputs.revision }}
+      previous_etag: ${{ needs.precondition.outputs.etag }}
+      previous_generation: ${{ needs.precondition.outputs.generation }}
