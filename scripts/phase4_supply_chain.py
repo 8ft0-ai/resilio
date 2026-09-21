@@ -103,7 +103,6 @@ BUILD_BEHAVIOUR_FIELDS = {
     "serviceAccount", "availableSecrets", "gitConfig", "dependencies",
 }
 EMPTY_BUILD_BEHAVIOUR = {
-    "artifacts": (None, {}),
     "logsBucket": (None, ""),
     "substitutions": (None, {}),
     "secrets": (None, []),
@@ -449,6 +448,16 @@ def _validate_build_steps(build: dict[str, Any], expected: dict[str, Any]) -> No
             _require_default(actual.get(key), allowed, "BUILD_STEPS_MISMATCH")
 
 
+def _validate_build_artifacts(build: dict[str, Any], expected: dict[str, Any]) -> None:
+    artifacts = build.get("artifacts")
+    if artifacts in (None, {}):
+        return
+    if not isinstance(artifacts, dict) or set(artifacts) != {"images"}:
+        raise SupplyChainError("BUILD_ARTIFACTS_MISMATCH")
+    if artifacts.get("images") != expected["images"]:
+        raise SupplyChainError("BUILD_ARTIFACTS_MISMATCH")
+
+
 def _validate_build_options(build: dict[str, Any], expected: dict[str, Any]) -> None:
     options = build.get("options") or {}
     if not isinstance(options, dict):
@@ -498,6 +507,7 @@ def validate_build(build: dict[str, Any], source_sha: str, workflow_sha: str) ->
     _validate_build_steps(build, expected)
     if build.get("images") != expected["images"]:
         raise SupplyChainError("BUILD_IMAGES_MISMATCH")
+    _validate_build_artifacts(build, expected)
     if build.get("serviceAccount") != expected["serviceAccount"]:
         raise SupplyChainError("BUILD_SERVICEACCOUNT_MISMATCH")
     _validate_build_options(build, expected)
