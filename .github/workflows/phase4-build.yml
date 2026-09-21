@@ -21,4 +21,4 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@5a800f8216f52effc216b3ef77f2c95aa20010a5
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@f3d4fbb4496dea195808191e3f105e40b4fe0779

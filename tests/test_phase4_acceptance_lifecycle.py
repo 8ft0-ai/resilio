@@ -431,7 +431,7 @@ class AcceptanceWorkflowTests(unittest.TestCase):
     def test_activation_remains_pinned_to_current_production_reusable(self) -> None:
         self.assertIn(
             "uses: 8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@"
-            "b3aebc9b2069b09b0d972a5319df0b1f97a8d8f2",
+            "f3d4fbb4496dea195808191e3f105e40b4fe0779",
             self.caller,
         )
 

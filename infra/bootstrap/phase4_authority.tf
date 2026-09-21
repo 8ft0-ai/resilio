@@ -1,7 +1,7 @@
 locals {
   phase4_control_seed_sha                  = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
-  phase4_build_workflow_sha                = "5a800f8216f52effc216b3ef77f2c95aa20010a5"
-  phase4_evidence_workflow_sha             = "b3aebc9b2069b09b0d972a5319df0b1f97a8d8f2"
+  phase4_build_workflow_sha                = "f3d4fbb4496dea195808191e3f105e40b4fe0779"
+  phase4_evidence_workflow_sha             = "f3d4fbb4496dea195808191e3f105e40b4fe0779"
   phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_build_workflow_sha}"
   phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"
   phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465"
