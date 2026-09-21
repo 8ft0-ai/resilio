@@ -27,12 +27,11 @@ PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
 PHASE4_BUILD_WORKFLOW_SHA = "f3d4fbb4496dea195808191e3f105e40b4fe0779"
 PHASE4_EVIDENCE_WORKFLOW_SHA = "f3d4fbb4496dea195808191e3f105e40b4fe0779"
 FOUNDATION_DRIFT_CONTROL_SEED_SHA = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
-PHASE4_DEPLOY_WORKFLOW_SHA = "ad6d81b18eed7467f6d1b6fb35710af6f2462465"
-PHASE4_RECONCILE_WORKFLOW_SHA = "ad6d81b18eed7467f6d1b6fb35710af6f2462465"
+PHASE4_DEPLOY_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
+PHASE4_RECONCILE_WORKFLOW_SHA = "7ff8545fd8e094aef7340095e38112227282cb54"
 PHASE4_DEPLOY_OLD_WORKFLOW_SHA = "288a0fb525a3e4914d59dc4702914eaa066f061b"
 PHASE4_DEPLOY_SUPERSEDED_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
-PHASE4_DEPLOY_PREVIOUS_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
-PHASE4_RECONCILE_PREVIOUS_WORKFLOW_SHA = "7ff8545fd8e094aef7340095e38112227282cb54"
+PHASE4_REVISION_FUTURE_WORKFLOW_SHA = "ad6d81b18eed7467f6d1b6fb35710af6f2462465"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -82,20 +81,20 @@ PHASE4_EVIDENCE_WORKFLOW_REF = (
     + PHASE4_EVIDENCE_WORKFLOW_SHA
 )
 PHASE4_DEPLOY_WORKFLOW_REF = (
-    "8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@"
+    "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@"
     + PHASE4_DEPLOY_WORKFLOW_SHA
 )
 PHASE4_RECONCILE_WORKFLOW_REF = (
-    "8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@"
+    "8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@"
     + PHASE4_RECONCILE_WORKFLOW_SHA
 )
 
 EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "backend.tf": "97127a22fed31347ecadd6bea5f8b097deb6c517",
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
-    "outputs.tf": "7543e62223d83b69e5beeee7c8326cf41f6deedb",
+    "outputs.tf": "af76ce84728a514d0a1811563fbcf85621b5cd03",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "944638890f010a19a3fe1d408fa004daff1ded49",
+    "phase4_authority.tf": "f478028b93d93dfa6181981bd88bab588185704c",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -412,8 +411,8 @@ def check_phase4_authority(errors: list[str]) -> None:
         f'phase4_evidence_workflow_sha             = "{PHASE4_EVIDENCE_WORKFLOW_SHA}"',
         'phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_build_workflow_sha}"',
         'phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"',
-        f'phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@{PHASE4_DEPLOY_WORKFLOW_SHA}"',
-        f'phase4_reconcile_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@{PHASE4_RECONCILE_WORKFLOW_SHA}"',
+        f'phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@{PHASE4_DEPLOY_WORKFLOW_SHA}"',
+        f'phase4_reconcile_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@{PHASE4_RECONCILE_WORKFLOW_SHA}"',
         f'phase4_transition_object_resource_prefix = "{PHASE4_TRANSITION_PREFIX}"',
     )
     for token in exact_locals:
@@ -423,12 +422,11 @@ def check_phase4_authority(errors: list[str]) -> None:
     for forbidden_workflow_sha in (
         PHASE4_DEPLOY_OLD_WORKFLOW_SHA,
         PHASE4_DEPLOY_SUPERSEDED_WORKFLOW_SHA,
-        PHASE4_DEPLOY_PREVIOUS_WORKFLOW_SHA,
-        PHASE4_RECONCILE_PREVIOUS_WORKFLOW_SHA,
+        PHASE4_REVISION_FUTURE_WORKFLOW_SHA,
     ):
         if forbidden_workflow_sha in text or forbidden_workflow_sha in outputs_text:
             errors.append(
-                "Phase 4 NEW_ONLY state must reject non-active deployment workflow identities"
+                "Phase 4 staged WIF state must reject inactive deployment workflow identities"
             )
 
     expected_accounts = (
@@ -660,9 +658,9 @@ def check_phase4_authority(errors: list[str]) -> None:
             errors,
         )
     if text.count('resource "google_service_account_iam_member"') != 6:
-        errors.append("Phase 4 NEW_ONLY state must contain exactly four WIF and two service-account-user bindings")
+        errors.append("Phase 4 staged WIF state must contain exactly four WIF and two service-account-user bindings")
     if text.count('role               = "roles/iam.workloadIdentityUser"') != 4:
-        errors.append("Phase 4 NEW_ONLY state must contain exactly four immutable reusable-workflow WIF bindings")
+        errors.append("Phase 4 staged WIF state must contain exactly four immutable reusable-workflow WIF bindings")
     if text.count('role               = "roles/iam.serviceAccountUser"') != 2:
         errors.append("Phase 4 must contain exactly two narrowly scoped serviceAccountUser bindings")
 
@@ -788,12 +786,12 @@ def check_phase4_authority(errors: list[str]) -> None:
     phase4_deploy_output_tokens = (
         'output "phase4_deploy_workflow_ref" {',
         "  value       = local.phase4_deploy_workflow_ref",
-        '  description = "Exact immutable Phase 4 reusable deploy-workflow identity authorised for deployer and verifier federation."',
+        '  description = "Exact immutable Phase 4 reusable deploy-workflow identity authorised for deployer federation."',
     )
     for token in phase4_deploy_output_tokens:
         if token not in outputs_text:
             errors.append(
-                f"Phase 4 NEW_ONLY output must describe active deployer/verifier federation truthfully: {token}"
+                f"Phase 4 staged output must describe active deployer federation truthfully: {token}"
             )
 
     for workflow_ref in (
