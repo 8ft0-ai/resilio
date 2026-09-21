@@ -67,7 +67,7 @@ The evidence contract is deliberately separate from build and deployment authori
 
 The deployment contract accepts only a previously adjudicated PASS transition manifest. It derives the exact `@sha256:` image itself, fixes the reference project/region/service/runtime identity and scale bounds, and never builds or pushes an image. The deploy request updates only the service template and ingress; it does not write `invokerIamDisabled` or mutate Cloud Run IAM. The provider-default enforced Invoker IAM check is therefore preserved, while independent readback rejects `invokerIamDisabled=true` or public principals, verifies the service/revision image digest and runtime posture, and treats the application health response as supplemental evidence rather than proof of the serving digest.
 
-The proof service itself is deliberately trivial Python standard-library HTTP code with no application dependency or secret. `/healthz` exposes only non-sensitive health/source metadata supplied through the deployment contract. This remains Phase 4 proof infrastructure and does not introduce Phase 5 product semantics.
+The proof service itself is deliberately trivial Python standard-library HTTP code with no application dependency or secret. `/health` exposes only non-sensitive health/source metadata supplied through the deployment contract. This remains Phase 4 proof infrastructure and does not introduce Phase 5 product semantics.
 
 ## Workload Identity Federation authority
 

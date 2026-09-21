@@ -1,0 +1,205 @@
+name: Phase 4 revision update reusable
+
+on:
+  workflow_call:
+    inputs:
+      authority_comment_id:
+        required: true
+        type: string
+      release_id:
+        required: true
+        type: string
+      envelope_commit:
+        required: true
+        type: string
+      consumption_comment_id:
+        required: true
+        type: string
+      previous_etag:
+        required: true
+        type: string
+      previous_revision:
+        required: true
+        type: string
+      previous_generation:
+        required: true
+        type: string
+    outputs:
+      provider_operation:
+        value: ${{ jobs.update.outputs.provider_operation }}
+      provider_mutation_disposition:
+        value: ${{ jobs.update.outputs.provider_mutation_disposition }}
+      revision:
+        value: ${{ jobs.update.outputs.revision }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase4-revision-transition-provider-mutation
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    outputs:
+      provider_operation: ${{ steps.reconcile.outputs.provider_operation }}
+      provider_mutation_disposition: ${{ steps.reconcile.outputs.provider_mutation_disposition }}
+      revision: ${{ steps.reconcile.outputs.revision }}
+    steps:
+      - name: Check out immutable revision-update control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Bind exact owner authority, consumption and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          ENVELOPE_COMMIT: ${{ inputs.envelope_commit }}
+          CONSUMPTION_COMMENT_ID: ${{ inputs.consumption_comment_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$CONSUMPTION_COMMENT_ID" > "$RUNNER_TEMP/consumption.json"
+          python3 scripts/phase4_supply_chain.py validate-revision-authority             --comment-json "$RUNNER_TEMP/authority.json" --authority-comment-id "$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority-valid.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/authority-valid.json")" = "$RELEASE_ID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["envelope_commit"])' "$RUNNER_TEMP/authority-valid.json")" = "$ENVELOPE_COMMIT"
+          python3 scripts/phase4_supply_chain.py verify-revision-consumption-comment             --comment-json "$RUNNER_TEMP/consumption.json"             --consumption-comment-id "$CONSUMPTION_COMMENT_ID"             --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID"             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+          ENVELOPE="$RUNNER_TEMP/revision-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json"             "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/revisions/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-revision-envelope             --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
+
+      - name: Authenticate bounded revision deployer
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-deployer@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 600s
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Recheck exact precondition and immutable evidence before mutation
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          PREVIOUS_ETAG: ${{ inputs.previous_etag }}
+          PREVIOUS_REVISION: ${{ inputs.previous_revision }}
+          PREVIOUS_GENERATION: ${{ inputs.previous_generation }}
+        run: |
+          set -euo pipefail
+          SERVICE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $TOKEN" "$SERVICE_URL" > "$RUNNER_TEMP/service-pre.json"
+          python3 scripts/phase4_supply_chain.py revision-precondition             --envelope "$RUNNER_TEMP/revision-envelope.json" --release-id "$RELEASE_ID"             --service-json "$RUNNER_TEMP/service-pre.json" > "$RUNNER_TEMP/precondition.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["etag"])' "$RUNNER_TEMP/precondition.json")" = "$PREVIOUS_ETAG"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$RUNNER_TEMP/precondition.json")" = "$PREVIOUS_REVISION"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$RUNNER_TEMP/precondition.json")" = "$PREVIOUS_GENERATION"
+
+          TRANSITION_OBJECT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence"]["transition"]["object"])' "$RUNNER_TEMP/revision-envelope.json")"
+          TRANSITION_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence"]["transition"]["generation"])' "$RUNNER_TEMP/revision-envelope.json")"
+          TRANSITION_SHA256="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence"]["transition"]["sha256"])' "$RUNNER_TEMP/revision-envelope.json")"
+          TRANSITION_SIZE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence"]["transition"]["size"])' "$RUNNER_TEMP/revision-envelope.json")"
+          PREFIX="gs://resilio-control-e882d4-phase4-evidence/"
+          [[ "$TRANSITION_OBJECT" == "$PREFIX"* ]]
+          OBJECT_NAME="${TRANSITION_OBJECT#"$PREFIX"}"
+          ENCODED="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$OBJECT_NAME")"
+          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $TOKEN"             "https://storage.googleapis.com/download/storage/v1/b/resilio-control-e882d4-phase4-evidence/o/$ENCODED?alt=media&generation=$TRANSITION_GENERATION"             > "$RUNNER_TEMP/transition.json"
+          test "$(wc -c < "$RUNNER_TEMP/transition.json" | tr -d ' ')" = "$TRANSITION_SIZE"
+          test "$(sha256sum "$RUNNER_TEMP/transition.json" | cut -d' ' -f1)" = "$TRANSITION_SHA256"
+          python3 scripts/phase4_supply_chain.py verify-revision-transition             --envelope "$RUNNER_TEMP/revision-envelope.json" --release-id "$RELEASE_ID"             --transition-json "$RUNNER_TEMP/transition.json"
+
+          IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact"]["image"])' "$RUNNER_TEMP/revision-envelope.json")"
+          DIGEST="${IMAGE##*@}"
+          curl --fail-with-body --silent --show-error --head             -u "oauth2accesstoken:$TOKEN"             -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"             "https://us-central1-docker.pkg.dev/v2/resilio-control-e882d4/resilio-phase4/phase4-proof/manifests/$DIGEST"             > /dev/null
+
+          python3 scripts/phase4_supply_chain.py revision-patch-request             --envelope "$RUNNER_TEMP/revision-envelope.json" --release-id "$RELEASE_ID"             --etag "$PREVIOUS_ETAG" --output "$RUNNER_TEMP/patch-service.json"
+
+      - name: Submit exactly one existing-service revision mutation
+        id: patch
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          SERVICE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          RESPONSE="$RUNNER_TEMP/patch-response.json"
+          set +e
+          PATCH_HTTP="$(curl --silent --show-error --output "$RESPONSE" --write-out '%{http_code}'             -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"             --data-binary "@$RUNNER_TEMP/patch-service.json"             "$SERVICE_URL?updateMask=template&allowMissing=false")"
+          PATCH_RC=$?
+          set -e
+
+          OUTCOME="$RUNNER_TEMP/patch-response-outcome.json"
+          python3 scripts/phase4_supply_chain.py revision-patch-response-outcome \
+            --response-json "$RESPONSE" --http-status "$PATCH_HTTP" \
+            --curl-exit-code "$PATCH_RC" > "$OUTCOME"
+          OPERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("operation") or "none")' "$OUTCOME")"
+          DISPOSITION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["disposition"])' "$OUTCOME")"
+          REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("revision") or "none")' "$OUTCOME")"
+          printf 'provider_operation=%s\n' "$OPERATION" >> "$GITHUB_OUTPUT"
+          printf 'provider_mutation_disposition=%s\n' "$DISPOSITION" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
+          printf 'PHASE4_REVISION_PROVIDER_MUTATION_DISPOSITION=%s\n' "$DISPOSITION"
+
+      - name: Reconcile exact known provider operation without mutation
+        id: reconcile
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          PROVIDER_OPERATION: ${{ steps.patch.outputs.provider_operation }}
+          PROVIDER_DISPOSITION: ${{ steps.patch.outputs.provider_mutation_disposition }}
+          EXPECTED_REVISION: ${{ steps.patch.outputs.revision }}
+        run: |
+          set -euo pipefail
+          OPERATION="$PROVIDER_OPERATION"
+          DISPOSITION="$PROVIDER_DISPOSITION"
+          REVISION="$EXPECTED_REVISION"
+
+          if test "$OPERATION" != "none" && { test "$DISPOSITION" = "PENDING" || test "$DISPOSITION" = "UPDATE_OUTCOME_UNKNOWN"; }; then
+            OP_JSON="$RUNNER_TEMP/update-operation-reconcile.json"
+            OUTCOME="$RUNNER_TEMP/update-operation-outcome.json"
+            RECONCILED="false"
+            for _ in $(seq 1 60); do
+              set +e
+              OP_HTTP="$(curl --silent --show-error --output "$OP_JSON" --write-out '%{http_code}'                 -H "Authorization: Bearer $TOKEN" "https://run.googleapis.com/v2/$OPERATION")"
+              OP_RC=$?
+              set -e
+              if test "$OP_RC" -ne 0 || ! [[ "$OP_HTTP" =~ ^2[0-9][0-9]$ ]]; then
+                sleep 5
+                continue
+              fi
+              set +e
+              python3 scripts/phase4_supply_chain.py revision-operation-outcome                 --operation-json "$OP_JSON" --expected-operation "$OPERATION" > "$OUTCOME"
+              OUTCOME_RC=$?
+              set -e
+              if test "$OUTCOME_RC" -ne 0; then
+                sleep 5
+                continue
+              fi
+              DISPOSITION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["disposition"])' "$OUTCOME")"
+              REVISION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("revision") or "none")' "$OUTCOME")"
+              if test "$DISPOSITION" = "PENDING" || test "$DISPOSITION" = "UPDATE_OUTCOME_UNKNOWN"; then
+                REVISION="none"
+                sleep 5
+                continue
+              fi
+              RECONCILED="true"
+              break
+            done
+            if test "$RECONCILED" != "true"; then
+              DISPOSITION="UPDATE_OUTCOME_UNKNOWN"
+              REVISION="none"
+            fi
+          fi
+
+          printf 'provider_operation=%s\n' "$OPERATION" >> "$GITHUB_OUTPUT"
+          printf 'provider_mutation_disposition=%s\n' "$DISPOSITION" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$REVISION" >> "$GITHUB_OUTPUT"
+          printf 'PHASE4_REVISION_PROVIDER_RECONCILIATION_DISPOSITION=%s\n' "$DISPOSITION"

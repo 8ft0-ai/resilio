@@ -1,0 +1,196 @@
+name: Phase 4 revision transition verifier reusable
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        required: true
+        type: string
+      authority_comment_id:
+        required: true
+        type: string
+      release_id:
+        required: true
+        type: string
+      envelope_commit:
+        required: true
+        type: string
+      consumption_comment_id:
+        required: true
+        type: string
+      provider_operation:
+        required: false
+        type: string
+        default: ""
+      provider_disposition:
+        required: false
+        type: string
+        default: ""
+      expected_revision:
+        required: false
+        type: string
+        default: ""
+      previous_etag:
+        required: false
+        type: string
+        default: ""
+      previous_generation:
+        required: false
+        type: string
+        default: ""
+    outputs:
+      etag:
+        value: ${{ jobs.verify.outputs.etag }}
+      revision:
+        value: ${{ jobs.verify.outputs.revision }}
+      generation:
+        value: ${{ jobs.verify.outputs.generation }}
+      uri:
+        value: ${{ jobs.verify.outputs.uri }}
+
+permissions:
+  contents: read
+concurrency:
+  group: phase4-revision-transition-verifier
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    outputs:
+      etag: ${{ steps.pre.outputs.etag }}
+      revision: ${{ steps.pre.outputs.revision }}
+      generation: ${{ steps.pre.outputs.generation }}
+      uri: ${{ steps.pre.outputs.uri }}
+    steps:
+      - name: Check out immutable verifier control code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Bind exact owner authority, consumption and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGE: ${{ inputs.stage }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          ENVELOPE_COMMIT: ${{ inputs.envelope_commit }}
+          CONSUMPTION_COMMENT_ID: ${{ inputs.consumption_comment_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          case "$STAGE" in pre|post) ;; *) exit 1 ;; esac
+          [[ "$AUTHORITY_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$CONSUMPTION_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$RELEASE_ID" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ENVELOPE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$CONSUMPTION_COMMENT_ID" > "$RUNNER_TEMP/consumption.json"
+          python3 scripts/phase4_supply_chain.py validate-revision-authority             --comment-json "$RUNNER_TEMP/authority.json" --authority-comment-id "$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority-valid.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/authority-valid.json")" = "$RELEASE_ID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["envelope_commit"])' "$RUNNER_TEMP/authority-valid.json")" = "$ENVELOPE_COMMIT"
+          python3 scripts/phase4_supply_chain.py verify-revision-consumption-comment             --comment-json "$RUNNER_TEMP/consumption.json"             --consumption-comment-id "$CONSUMPTION_COMMENT_ID"             --authority-comment-id "$AUTHORITY_COMMENT_ID"             --release-id "$RELEASE_ID"             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+          ENVELOPE="$RUNNER_TEMP/revision-envelope.json"
+          gh api -H "Accept: application/vnd.github.raw+json"             "repos/$GITHUB_REPOSITORY/contents/deployments/phase4/revisions/$RELEASE_ID.json?ref=$ENVELOPE_COMMIT" > "$ENVELOPE"
+          python3 scripts/phase4_supply_chain.py validate-revision-envelope             --envelope "$ENVELOPE" --release-id "$RELEASE_ID"
+
+      - name: Authenticate bounded verifier
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Read exact service and IAM
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          SERVICE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
+          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $TOKEN" "$SERVICE_URL" > "$RUNNER_TEMP/service.json"
+          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $TOKEN" "$SERVICE_URL:getIamPolicy" > "$RUNNER_TEMP/policy.json"
+
+      - name: Verify exact existing-service precondition
+        if: inputs.stage == 'pre'
+        id: pre
+        env:
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/precondition.json"
+          python3 scripts/phase4_supply_chain.py revision-precondition             --envelope "$RUNNER_TEMP/revision-envelope.json" --release-id "$RELEASE_ID"             --service-json "$RUNNER_TEMP/service.json" --policy-json "$RUNNER_TEMP/policy.json" > "$OUT"
+          printf 'etag=%s\n' "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["etag"])' "$OUT")" >> "$GITHUB_OUTPUT"
+          printf 'revision=%s\n' "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$OUT")" >> "$GITHUB_OUTPUT"
+          printf 'generation=%s\n' "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$OUT")" >> "$GITHUB_OUTPUT"
+          printf 'uri=%s\n' "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uri"])' "$OUT")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact updated-service postcondition
+        if: inputs.stage == 'post'
+        id: post
+        env:
+          RELEASE_ID: ${{ inputs.release_id }}
+          PROVIDER_OPERATION: ${{ inputs.provider_operation }}
+          PROVIDER_DISPOSITION: ${{ inputs.provider_disposition }}
+          EXPECTED_REVISION: ${{ inputs.expected_revision }}
+          PREVIOUS_ETAG: ${{ inputs.previous_etag }}
+          PREVIOUS_GENERATION: ${{ inputs.previous_generation }}
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          test "$PROVIDER_DISPOSITION" = "PROVIDER_UPDATED"
+          [[ "$PROVIDER_OPERATION" =~ ^projects/resilio-reference-e882d4/locations/us-central1/operations/ ]]
+          [[ "$EXPECTED_REVISION" =~ ^projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof/revisions/ ]]
+          test -n "$PREVIOUS_ETAG"
+          [[ "$PREVIOUS_GENERATION" =~ ^[1-9][0-9]*$ ]]
+
+          OUT="$RUNNER_TEMP/postcondition.json"
+          python3 scripts/phase4_supply_chain.py revision-postcondition             --envelope "$RUNNER_TEMP/revision-envelope.json" --release-id "$RELEASE_ID"             --service-json "$RUNNER_TEMP/service.json" --policy-json "$RUNNER_TEMP/policy.json"             --expected-revision "$EXPECTED_REVISION"             --previous-etag "$PREVIOUS_ETAG" --previous-generation "$PREVIOUS_GENERATION" > "$OUT"
+          printf 'uri=%s\n' "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uri"])' "$OUT")" >> "$GITHUB_OUTPUT"
+
+          curl --fail-with-body --silent --show-error             -H "Authorization: Bearer $TOKEN"             "https://run.googleapis.com/v2/$EXPECTED_REVISION" > "$RUNNER_TEMP/revision.json"
+          EXPECTED_IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact"]["image"])' "$RUNNER_TEMP/revision-envelope.json")"
+          python3 scripts/phase4_supply_chain.py verify-revision             --revision-json "$RUNNER_TEMP/revision.json" --expected-image "$EXPECTED_IMAGE"
+
+      - name: Authenticate bounded verifier for private health probe
+        if: inputs.stage == 'post'
+        id: idauth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p4-verifier@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: id_token
+          id_token_audience: ${{ steps.post.outputs.uri }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Probe authenticated non-reserved health endpoint
+        if: inputs.stage == 'post'
+        env:
+          ID_TOKEN: ${{ steps.idauth.outputs.id_token }}
+          URI: ${{ steps.post.outputs.uri }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $ID_TOKEN" "$URI/health" > "$RUNNER_TEMP/health.json"
+          EXPECTED_SOURCE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact"]["source_sha"])' "$RUNNER_TEMP/revision-envelope.json")"
+          python3 scripts/phase4_supply_chain.py verify-health \
+            --response-json "$RUNNER_TEMP/health.json" --expected-source "$EXPECTED_SOURCE"
+          {
+            printf 'PHASE4_REVISION_TRANSITION_VERIFIED\n'
+            printf 'release_id=%s\n' '${{ inputs.release_id }}'
+            printf 'provider_operation=%s\n' '${{ inputs.provider_operation }}'
+            printf 'revision=%s\n' '${{ inputs.expected_revision }}'
+          } >> "$GITHUB_STEP_SUMMARY"

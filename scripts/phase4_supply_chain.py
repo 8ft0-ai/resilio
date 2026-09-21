@@ -55,6 +55,10 @@ IMAGE_DIGEST_REF = re.compile(
     rf"^{re.escape(IMAGE_PREFIX)}@sha256:[0-9a-f]{{64}}$"
 )
 TRANSITION_OBJECT = re.compile(r"^transitions/[0-9a-f-]{8,64}\.json$")
+REVISION_OPERATION_NAME = re.compile(
+    rf"^projects/{re.escape(REFERENCE_PROJECT)}/locations/{re.escape(REGION)}/operations/"
+    r"[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$"
+)
 ALLOWED_BUILD_STATUSES = {"SUCCESS"}
 SEVERITY_RANK = {
     "SEVERITY_UNSPECIFIED": 0,
@@ -840,6 +844,19 @@ DEPLOYMENT_SERVICE = (
     "projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof"
 )
 
+REVISION_TRANSITION_CONTRACT = "resilio-phase4-revision-transition/v1"
+REVISION_TRANSITION_AUTHORITY_PREFIX = "PHASE4_REVISION_TRANSITION_AUTHORISED_V1"
+REVISION_TRANSITION_CONSUMPTION_PREFIX = "PHASE4_REVISION_TRANSITION_AUTHORITY_CONSUMED_V1"
+REVISION_PREVIOUS_REVISION = (
+    "projects/resilio-reference-e882d4/locations/us-central1/services/"
+    "phase4-proof/revisions/phase4-proof-00001-9lh"
+)
+REVISION_PREVIOUS_IMAGE = (
+    "us-central1-docker.pkg.dev/resilio-control-e882d4/resilio-phase4/"
+    "phase4-proof@sha256:409333b0a48bc3d2c1f8fea8f99c66c64c14c8f9db1469f0349807e91329f60e"
+)
+REVISION_PREVIOUS_SOURCE = "5a800f8216f52effc216b3ef77f2c95aa20010a5"
+
 PHASE4_DEPLOYMENT_ENVELOPE_EXPECTED: dict[str, Any] = {
     "contract": DEPLOYMENT_ENVELOPE_CONTRACT,
     "repository": REPOSITORY,
@@ -1377,6 +1394,419 @@ def verify_deployment_cloud_run_service(
     return {"revision": expected_revision, "uri": uri}
 
 
+
+def validate_revision_transition_envelope(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "contract", "repository", "phase", "artifact", "evidence", "target", "execution_policy"
+    }:
+        raise SupplyChainError("REVISION_ENVELOPE_SHAPE_INVALID")
+    if value["contract"] != REVISION_TRANSITION_CONTRACT or value["repository"] != REPOSITORY or value["phase"] != 4:
+        raise SupplyChainError("REVISION_ENVELOPE_IDENTITY_INVALID")
+
+    artifact = value.get("artifact")
+    if not isinstance(artifact, dict) or set(artifact) != {
+        "source_sha", "source_tree_sha", "build_id", "build_control_sha",
+        "build_request_sha256", "image", "provenance_occurrence",
+    }:
+        raise SupplyChainError("REVISION_ARTIFACT_SHAPE_INVALID")
+    require_full_sha(str(artifact["source_sha"]), "REVISION_SOURCE")
+    require_full_sha(str(artifact["source_tree_sha"]), "REVISION_SOURCE_TREE")
+    require_full_sha(str(artifact["build_control_sha"]), "REVISION_BUILD_CONTROL")
+    if not BUILD_ID.fullmatch(str(artifact["build_id"])):
+        raise SupplyChainError("REVISION_BUILD_ID_INVALID")
+    if not SHA256_HEX.fullmatch(str(artifact["build_request_sha256"])):
+        raise SupplyChainError("REVISION_BUILD_REQUEST_SHA_INVALID")
+    if not IMAGE_DIGEST_REF.fullmatch(str(artifact["image"])):
+        raise SupplyChainError("REVISION_IMAGE_INVALID")
+    if not str(artifact["provenance_occurrence"]).startswith("projects/resilio-control-e882d4/occurrences/"):
+        raise SupplyChainError("REVISION_PROVENANCE_INVALID")
+
+    evidence = value.get("evidence")
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "run_id", "run_attempt", "workflow_ref", "transition", "sbom"
+    }:
+        raise SupplyChainError("REVISION_EVIDENCE_SHAPE_INVALID")
+    _require_comment_id(evidence["run_id"], "REVISION_EVIDENCE_RUN")
+    if evidence["run_attempt"] != 1:
+        raise SupplyChainError("REVISION_EVIDENCE_ATTEMPT_INVALID")
+    workflow_ref = str(evidence["workflow_ref"])
+    prefix = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@"
+    if not workflow_ref.startswith(prefix):
+        raise SupplyChainError("REVISION_EVIDENCE_WORKFLOW_INVALID")
+    require_full_sha(workflow_ref[len(prefix):], "REVISION_EVIDENCE_WORKFLOW")
+
+    transition = evidence.get("transition")
+    if not isinstance(transition, dict) or set(transition) != {
+        "contract", "object", "generation", "sha256", "size"
+    }:
+        raise SupplyChainError("REVISION_TRANSITION_EVIDENCE_SHAPE_INVALID")
+    expected_object = (
+        "gs://resilio-control-e882d4-phase4-evidence/transitions/"
+        f"{artifact['build_id']}.json"
+    )
+    if transition["contract"] != "resilio-phase4-transition/v1" or transition["object"] != expected_object:
+        raise SupplyChainError("REVISION_TRANSITION_EVIDENCE_IDENTITY_INVALID")
+    if not str(transition["generation"]).isdigit() or int(str(transition["generation"])) <= 0:
+        raise SupplyChainError("REVISION_TRANSITION_GENERATION_INVALID")
+    if not SHA256_HEX.fullmatch(str(transition["sha256"])) or not isinstance(transition["size"], int) or transition["size"] <= 0:
+        raise SupplyChainError("REVISION_TRANSITION_EVIDENCE_METADATA_INVALID")
+
+    sbom = evidence.get("sbom")
+    if not isinstance(sbom, dict) or set(sbom) != {"object", "generation", "sha256", "size"}:
+        raise SupplyChainError("REVISION_SBOM_EVIDENCE_SHAPE_INVALID")
+    expected_sbom = (
+        "gs://resilio-control-e882d4-phase4-evidence/transitions/"
+        f"{artifact['build_id']}.sbom.spdx.json"
+    )
+    if sbom["object"] != expected_sbom:
+        raise SupplyChainError("REVISION_SBOM_EVIDENCE_IDENTITY_INVALID")
+    if not str(sbom["generation"]).isdigit() or int(str(sbom["generation"])) <= 0:
+        raise SupplyChainError("REVISION_SBOM_GENERATION_INVALID")
+    if not SHA256_HEX.fullmatch(str(sbom["sha256"])) or not isinstance(sbom["size"], int) or sbom["size"] <= 0:
+        raise SupplyChainError("REVISION_SBOM_EVIDENCE_METADATA_INVALID")
+    target = value.get("target")
+    expected_target = {
+        "service": DEPLOYMENT_SERVICE,
+        "region": REGION,
+        "transition_kind": "UPDATE_EXISTING_REVISION",
+        "expected_previous_revision": REVISION_PREVIOUS_REVISION,
+        "expected_previous_image": REVISION_PREVIOUS_IMAGE,
+        "expected_previous_source": REVISION_PREVIOUS_SOURCE,
+        "runtime_service_account": RUNTIME,
+        "ingress": "INGRESS_TRAFFIC_ALL",
+        "authentication": "IAM_REQUIRED",
+        "public_principals_forbidden": True,
+        "timeout": "10s",
+        "max_instance_request_concurrency": 10,
+        "scaling": {"min_instances": 0, "max_instances": 1},
+        "resources": {"cpu": "1", "memory": "256Mi"},
+        "environment": {"SOURCE_SHA": artifact["source_sha"]},
+        "secrets": [],
+        "traffic": {"mode": "LATEST_CREATED_REVISION", "percent": 100},
+    }
+    if target != expected_target:
+        raise SupplyChainError("REVISION_TARGET_MISMATCH")
+
+    expected_policy = {
+        "rebuild_forbidden": True,
+        "image_substitution_forbidden": True,
+        "single_mutation_attempt": True,
+        "automatic_retry_after_unknown_forbidden": True,
+        "rollback_requires_separate_owner_authority": True,
+    }
+    if value.get("execution_policy") != expected_policy:
+        raise SupplyChainError("REVISION_EXECUTION_POLICY_MISMATCH")
+    return value
+def load_revision_transition_envelope(path: str, expected_release_id: str) -> dict[str, Any]:
+    release_id = _require_release_id(expected_release_id, "REVISION_RELEASE_ID")
+    candidate = Path(path)
+    try:
+        if candidate.is_symlink() or not candidate.is_file():
+            raise SupplyChainError("REVISION_ENVELOPE_FILE_INVALID")
+        raw = candidate.read_bytes()
+    except OSError as exc:
+        raise SupplyChainError("REVISION_ENVELOPE_FILE_INVALID") from exc
+    try:
+        value = json.loads(raw.decode("utf-8"), parse_constant=_reject_non_json_constant)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise SupplyChainError("REVISION_ENVELOPE_JSON_INVALID") from exc
+    canonical = canonical_json_bytes(value)
+    if raw != canonical:
+        raise SupplyChainError("REVISION_ENVELOPE_NOT_CANONICAL")
+    if sha256_bytes(canonical) != release_id:
+        raise SupplyChainError("REVISION_RELEASE_ID_MISMATCH")
+    return validate_revision_transition_envelope(value)
+
+
+def validate_revision_transition_authority_comment(comment: dict[str, Any], authority_comment_id: Any) -> dict[str, Any]:
+    expected_id = _require_comment_id(authority_comment_id, "REVISION_AUTHORITY_COMMENT")
+    if _require_comment_id(comment.get("id"), "REVISION_AUTHORITY_COMMENT") != expected_id:
+        raise SupplyChainError("REVISION_AUTHORITY_COMMENT_MISMATCH")
+    if not _deployment_is_owner(comment):
+        raise SupplyChainError("REVISION_AUTHORITY_OWNER_INVALID")
+    fields = _deployment_parse_fields(
+        comment.get("body"), REVISION_TRANSITION_AUTHORITY_PREFIX,
+        ("release_id", "envelope_commit", "service", "transition"),
+    )
+    release_id = _require_release_id(fields["release_id"], "REVISION_RELEASE_ID")
+    envelope_commit = require_full_sha(fields["envelope_commit"], "REVISION_ENVELOPE_COMMIT")
+    if fields["service"] != DEPLOYMENT_SERVICE or fields["transition"] != "UPDATE_EXISTING_REVISION":
+        raise SupplyChainError("REVISION_AUTHORITY_TARGET_MISMATCH")
+    issue_url = str(comment.get("issue_url") or "")
+    prefix = f"https://api.github.com/repos/{REPOSITORY}/issues/"
+    if not issue_url.startswith(prefix) or not issue_url[len(prefix):].isdigit():
+        raise SupplyChainError("REVISION_AUTHORITY_ISSUE_INVALID")
+    return {
+        "authority_comment_id": expected_id,
+        "release_id": release_id,
+        "envelope_commit": envelope_commit,
+        "issue_number": int(issue_url[len(prefix):]),
+    }
+
+
+def revision_transition_consumption_body(authority_comment_id: Any, release_id: str, run_id: Any, run_attempt: int) -> str:
+    authority = _require_comment_id(authority_comment_id, "REVISION_AUTHORITY_COMMENT")
+    release = _require_release_id(release_id, "REVISION_RELEASE_ID")
+    run = _require_comment_id(run_id, "REVISION_RUN")
+    if run_attempt != 1:
+        raise SupplyChainError("REVISION_RUN_ATTEMPT_NOT_FIRST")
+    return (
+        f"{REVISION_TRANSITION_CONSUMPTION_PREFIX} authority={authority} "
+        f"release_id={release} run={run} attempt=1"
+    )
+
+
+def _parse_revision_transition_consumption(comment: dict[str, Any]) -> dict[str, Any] | None:
+    body = comment.get("body")
+    if not isinstance(body, str) or not body.startswith(REVISION_TRANSITION_CONSUMPTION_PREFIX):
+        return None
+    if not _deployment_is_consumption_actor(comment):
+        raise SupplyChainError("REVISION_CONSUMPTION_ACTOR_INVALID")
+    fields = _deployment_parse_fields(
+        body, REVISION_TRANSITION_CONSUMPTION_PREFIX,
+        ("authority", "release_id", "run", "attempt"),
+    )
+    if fields["attempt"] != "1":
+        raise SupplyChainError("REVISION_CONSUMPTION_ATTEMPT_INVALID")
+    return {
+        "comment_id": _require_comment_id(comment.get("id"), "REVISION_CONSUMPTION_COMMENT"),
+        "authority_comment_id": _require_comment_id(fields["authority"], "REVISION_AUTHORITY_COMMENT"),
+        "release_id": _require_release_id(fields["release_id"], "REVISION_RELEASE_ID"),
+        "run_id": _require_comment_id(fields["run"], "REVISION_RUN"),
+        "run_attempt": 1,
+    }
+
+
+def revision_transition_consumption_available(comments_payload: Any, authority_comment_id: Any, release_id: str) -> None:
+    authority = _require_comment_id(authority_comment_id, "REVISION_AUTHORITY_COMMENT")
+    release = _require_release_id(release_id, "REVISION_RELEASE_ID")
+    for comment in _flatten_github_comments(comments_payload):
+        parsed = _parse_revision_transition_consumption(comment)
+        if parsed is None:
+            continue
+        if parsed["authority_comment_id"] == authority:
+            if parsed["release_id"] != release:
+                raise SupplyChainError("REVISION_CONSUMPTION_CONFLICT")
+            raise SupplyChainError("REVISION_AUTHORITY_ALREADY_CONSUMED")
+
+
+def verify_revision_transition_consumption(
+    comments_payload: Any, authority_comment_id: Any, release_id: str,
+    run_id: Any, run_attempt: int,
+) -> dict[str, Any]:
+    authority = _require_comment_id(authority_comment_id, "REVISION_AUTHORITY_COMMENT")
+    release = _require_release_id(release_id, "REVISION_RELEASE_ID")
+    run = _require_comment_id(run_id, "REVISION_RUN")
+    if run_attempt != 1:
+        raise SupplyChainError("REVISION_RUN_ATTEMPT_NOT_FIRST")
+    matches = []
+    for comment in _flatten_github_comments(comments_payload):
+        parsed = _parse_revision_transition_consumption(comment)
+        if parsed is not None and parsed["authority_comment_id"] == authority:
+            matches.append(parsed)
+    if len(matches) != 1:
+        raise SupplyChainError("REVISION_CONSUMPTION_NOT_UNIQUE")
+    result = matches[0]
+    if result["release_id"] != release or result["run_id"] != run:
+        raise SupplyChainError("REVISION_CONSUMPTION_IDENTITY_MISMATCH")
+    return result
+def verify_revision_transition_consumption_comment(
+    comment: dict[str, Any], consumption_comment_id: Any, authority_comment_id: Any,
+    release_id: str, run_id: Any, run_attempt: int,
+) -> dict[str, Any]:
+    expected = _require_comment_id(consumption_comment_id, "REVISION_CONSUMPTION_COMMENT")
+    parsed = _parse_revision_transition_consumption(comment)
+    if parsed is None or parsed["comment_id"] != expected:
+        raise SupplyChainError("REVISION_CONSUMPTION_COMMENT_MISMATCH")
+    return verify_revision_transition_consumption(
+        [[comment]], authority_comment_id, release_id, run_id, run_attempt
+    )
+
+
+def validate_revision_transition_binding(envelope: dict[str, Any], transition: dict[str, Any]) -> None:
+    validate_revision_transition_envelope(envelope)
+    validate_transition_manifest(transition)
+    artifact = envelope["artifact"]
+    for key, expected in {
+        "build_id": artifact["build_id"],
+        "source_sha": artifact["source_sha"],
+        "source_tree_sha": artifact["source_tree_sha"],
+        "workflow_sha": artifact["build_control_sha"],
+        "build_request_sha256": artifact["build_request_sha256"],
+        "image": artifact["image"],
+    }.items():
+        if transition.get(key) != expected:
+            raise SupplyChainError("REVISION_TRANSITION_BINDING_MISMATCH")
+    if (transition.get("provenance") or {}).get("occurrence") != artifact["provenance_occurrence"]:
+        raise SupplyChainError("REVISION_TRANSITION_PROVENANCE_MISMATCH")
+    sbom = transition.get("sbom") or {}
+    expected_sbom = envelope["evidence"]["sbom"]
+    if (
+        sbom.get("location") != expected_sbom["object"]
+        or str(sbom.get("generation")) != str(expected_sbom["generation"])
+        or sbom.get("sha256") != expected_sbom["sha256"]
+    ):
+        raise SupplyChainError("REVISION_TRANSITION_SBOM_MISMATCH")
+
+
+def _revision_template(image: str, source_sha: str) -> dict[str, Any]:
+    if not IMAGE_DIGEST_REF.fullmatch(image):
+        raise SupplyChainError("REVISION_IMAGE_INVALID")
+    require_full_sha(source_sha, "REVISION_SOURCE")
+    return {
+        "serviceAccount": RUNTIME,
+        "timeout": "10s",
+        "maxInstanceRequestConcurrency": 10,
+        "scaling": {"minInstanceCount": 0, "maxInstanceCount": 1},
+        "containers": [{
+            "image": image,
+            "env": [{"name": "SOURCE_SHA", "value": source_sha}],
+            "resources": {"limits": {"cpu": "1", "memory": "256Mi"}, "cpuIdle": True},
+        }],
+    }
+
+
+def _verify_revision_service_base(
+    envelope: dict[str, Any], service: dict[str, Any], policy: dict[str, Any] | None,
+    *, image: str, source_sha: str, expected_revision: str,
+) -> dict[str, str]:
+    validate_revision_transition_envelope(envelope)
+    if service.get("name") != DEPLOYMENT_SERVICE:
+        raise SupplyChainError("REVISION_SERVICE_IDENTITY_MISMATCH")
+    if service.get("ingress") != "INGRESS_TRAFFIC_ALL" or service.get("invokerIamDisabled") is True:
+        raise SupplyChainError("REVISION_ACCESS_POSTURE_MISMATCH")
+    if service.get("template") != _revision_template(image, source_sha):
+        raise SupplyChainError("REVISION_TEMPLATE_MISMATCH")
+    if policy is not None:
+        for binding in policy.get("bindings") or []:
+            members = set(binding.get("members") or []) if isinstance(binding, dict) else set()
+            if {"allUsers", "allAuthenticatedUsers"} & members:
+                raise SupplyChainError("REVISION_PUBLIC_PRINCIPAL_FORBIDDEN")
+    if service.get("latestCreatedRevision") != expected_revision or service.get("latestReadyRevision") != expected_revision:
+        raise SupplyChainError("REVISION_IDENTITY_MISMATCH")
+    generation = str(service.get("generation") or "")
+    observed = str(service.get("observedGeneration") or "")
+    if not generation.isdigit() or generation != observed or service.get("reconciling") is True:
+        raise SupplyChainError("REVISION_RECONCILIATION_MISMATCH")
+    terminal = service.get("terminalCondition")
+    if terminal is not None and (
+        not isinstance(terminal, dict)
+        or terminal.get("type") != "Ready"
+        or terminal.get("state") != "CONDITION_SUCCEEDED"
+    ):
+        raise SupplyChainError("REVISION_RECONCILIATION_MISMATCH")
+    traffic = service.get("traffic") or []
+    statuses = service.get("trafficStatuses") or []
+    if len(traffic) != 1 or len(statuses) != 1:
+        raise SupplyChainError("REVISION_TRAFFIC_MISMATCH")
+    for row in (traffic[0], statuses[0]):
+        if (
+            not isinstance(row, dict)
+            or row.get("type") != "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+            or row.get("percent") != 100
+            or row.get("tag") not in (None, "")
+        ):
+            raise SupplyChainError("REVISION_TRAFFIC_MISMATCH")
+    if traffic[0].get("revision") not in (None, ""):
+        raise SupplyChainError("REVISION_TRAFFIC_MISMATCH")
+    if statuses[0].get("revision") not in (None, "", expected_revision):
+        raise SupplyChainError("REVISION_TRAFFIC_MISMATCH")
+    etag = str(service.get("etag") or "")
+    uri = str(service.get("uri") or "")
+    if not etag or not uri.startswith("https://"):
+        raise SupplyChainError("REVISION_READBACK_INCOMPLETE")
+    return {"etag": etag, "revision": expected_revision, "generation": generation, "uri": uri}
+
+
+def verify_revision_transition_precondition(
+    envelope: dict[str, Any], service: dict[str, Any], policy: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    target = envelope["target"]
+    return _verify_revision_service_base(
+        envelope, service, policy,
+        image=target["expected_previous_image"],
+        source_sha=target["expected_previous_source"],
+        expected_revision=target["expected_previous_revision"],
+    )
+def revision_transition_patch_request(envelope: dict[str, Any], expected_etag: str) -> dict[str, Any]:
+    validate_revision_transition_envelope(envelope)
+    if not isinstance(expected_etag, str) or not expected_etag:
+        raise SupplyChainError("REVISION_ETAG_INVALID")
+    artifact = envelope["artifact"]
+    return {
+        "name": DEPLOYMENT_SERVICE,
+        "etag": expected_etag,
+        "template": _revision_template(artifact["image"], artifact["source_sha"]),
+    }
+
+
+def revision_transition_operation_outcome(
+    operation: dict[str, Any], expected_operation: str,
+) -> dict[str, str | None]:
+    if not isinstance(operation, dict) or operation.get("name") != expected_operation:
+        raise SupplyChainError("REVISION_OPERATION_IDENTITY_MISMATCH")
+    if operation.get("done") is not True:
+        return {"disposition": "PENDING", "revision": None}
+    if isinstance(operation.get("error"), dict) and operation["error"]:
+        return {"disposition": "UPDATE_FAILED_KNOWN", "revision": None}
+    response = operation.get("response")
+    if not isinstance(response, dict):
+        return {"disposition": "UPDATE_OUTCOME_UNKNOWN", "revision": None}
+    created = response.get("latestCreatedRevision")
+    ready = response.get("latestReadyRevision")
+    if isinstance(created, str) and created and created == ready:
+        return {"disposition": "PROVIDER_UPDATED", "revision": created}
+    return {"disposition": "UPDATE_OUTCOME_UNKNOWN", "revision": None}
+
+def revision_transition_patch_response_outcome(
+    response_bytes: bytes, http_status: str, curl_exit_code: int,
+) -> dict[str, str | None]:
+    unknown = {
+        "operation": None,
+        "disposition": "UPDATE_OUTCOME_UNKNOWN",
+        "revision": None,
+    }
+    if curl_exit_code != 0 or re.fullmatch(r"[0-9]{3}", http_status) is None:
+        return unknown
+    if not http_status.startswith("2"):
+        return unknown
+    try:
+        operation = json.loads(response_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return unknown
+    if not isinstance(operation, dict):
+        return unknown
+    name = operation.get("name")
+    if not isinstance(name, str) or REVISION_OPERATION_NAME.fullmatch(name) is None:
+        return unknown
+    outcome = revision_transition_operation_outcome(operation, name)
+    return {
+        "operation": name,
+        "disposition": outcome["disposition"],
+        "revision": outcome["revision"],
+    }
+
+
+def verify_revision_transition_postcondition(
+    envelope: dict[str, Any], service: dict[str, Any], policy: dict[str, Any],
+    expected_revision: str, previous_etag: str, previous_generation: str,
+) -> dict[str, str]:
+    result = _verify_revision_service_base(
+        envelope, service, policy,
+        image=envelope["artifact"]["image"],
+        source_sha=envelope["artifact"]["source_sha"],
+        expected_revision=expected_revision,
+    )
+    if result["etag"] == previous_etag:
+        raise SupplyChainError("REVISION_ETAG_DID_NOT_CHANGE")
+    if (
+        not str(previous_generation).isdigit()
+        or int(result["generation"]) <= int(str(previous_generation))
+    ):
+        raise SupplyChainError("REVISION_GENERATION_DID_NOT_ADVANCE")
+    return result
+
+
 def _load_json(path: str) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -1407,6 +1837,18 @@ def main() -> int:
     p = commands.add_parser("deployment-create-request"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--output", required=True)
     p = commands.add_parser("deployment-operation-outcome"); p.add_argument("--operation-json", required=True); p.add_argument("--expected-operation", required=True)
     p = commands.add_parser("verify-deployment-service"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--expected-revision", required=True)
+    p = commands.add_parser("validate-revision-envelope"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True)
+    p = commands.add_parser("validate-revision-authority"); p.add_argument("--comment-json", required=True); p.add_argument("--authority-comment-id", required=True)
+    p = commands.add_parser("revision-consumption-available"); p.add_argument("--comments-json", required=True); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True)
+    p = commands.add_parser("revision-consumption-body"); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", required=True, type=int)
+    p = commands.add_parser("verify-revision-consumption"); p.add_argument("--comments-json", required=True); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", required=True, type=int)
+    p = commands.add_parser("verify-revision-consumption-comment"); p.add_argument("--comment-json", required=True); p.add_argument("--consumption-comment-id", required=True); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", required=True, type=int)
+    p = commands.add_parser("verify-revision-transition"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--transition-json", required=True)
+    p = commands.add_parser("revision-precondition"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service-json", required=True); p.add_argument("--policy-json")
+    p = commands.add_parser("revision-patch-request"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--etag", required=True); p.add_argument("--output", required=True)
+    p = commands.add_parser("revision-patch-response-outcome"); p.add_argument("--response-json", required=True); p.add_argument("--http-status", required=True); p.add_argument("--curl-exit-code", required=True, type=int)
+    p = commands.add_parser("revision-operation-outcome"); p.add_argument("--operation-json", required=True); p.add_argument("--expected-operation", required=True)
+    p = commands.add_parser("revision-postcondition"); p.add_argument("--envelope", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--expected-revision", required=True); p.add_argument("--previous-etag", required=True); p.add_argument("--previous-generation", required=True)
     p = commands.add_parser("service-request"); p.add_argument("--image", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--output", required=True)
     p = commands.add_parser("verify-service"); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--expected-image", required=True); p.add_argument("--expected-source", required=True)
     p = commands.add_parser("verify-revision"); p.add_argument("--revision-json", required=True); p.add_argument("--expected-image", required=True)
@@ -1469,6 +1911,37 @@ def main() -> int:
         elif args.command == "verify-deployment-service":
             envelope = load_deployment_envelope(args.envelope, args.release_id)
             print(json.dumps(verify_deployment_cloud_run_service(envelope, _load_json(args.service_json), _load_json(args.policy_json), args.expected_revision), sort_keys=True, separators=(",", ":")))
+        elif args.command == "validate-revision-envelope":
+            load_revision_transition_envelope(args.envelope, args.release_id)
+        elif args.command == "validate-revision-authority":
+            print(json.dumps(validate_revision_transition_authority_comment(_load_json(args.comment_json), args.authority_comment_id), sort_keys=True, separators=(",", ":")))
+        elif args.command == "revision-consumption-available":
+            revision_transition_consumption_available(_load_json(args.comments_json), args.authority_comment_id, args.release_id)
+        elif args.command == "revision-consumption-body":
+            print(revision_transition_consumption_body(args.authority_comment_id, args.release_id, args.run_id, args.run_attempt))
+        elif args.command == "verify-revision-consumption":
+            print(json.dumps(verify_revision_transition_consumption(_load_json(args.comments_json), args.authority_comment_id, args.release_id, args.run_id, args.run_attempt), sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-revision-consumption-comment":
+            print(json.dumps(verify_revision_transition_consumption_comment(_load_json(args.comment_json), args.consumption_comment_id, args.authority_comment_id, args.release_id, args.run_id, args.run_attempt), sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-revision-transition":
+            envelope = load_revision_transition_envelope(args.envelope, args.release_id)
+            validate_revision_transition_binding(envelope, _load_json(args.transition_json))
+        elif args.command == "revision-precondition":
+            envelope = load_revision_transition_envelope(args.envelope, args.release_id)
+            policy = _load_json(args.policy_json) if args.policy_json else None
+            print(json.dumps(verify_revision_transition_precondition(envelope, _load_json(args.service_json), policy), sort_keys=True, separators=(",", ":")))
+        elif args.command == "revision-patch-request":
+            envelope = load_revision_transition_envelope(args.envelope, args.release_id)
+            Path(args.output).write_bytes(canonical_json_bytes(revision_transition_patch_request(envelope, args.etag)))
+        elif args.command == "revision-patch-response-outcome":
+            response_path = Path(args.response_json)
+            response_bytes = response_path.read_bytes() if response_path.is_file() else b""
+            print(json.dumps(revision_transition_patch_response_outcome(response_bytes, args.http_status, args.curl_exit_code), sort_keys=True, separators=(",", ":")))
+        elif args.command == "revision-operation-outcome":
+            print(json.dumps(revision_transition_operation_outcome(_load_json(args.operation_json), args.expected_operation), sort_keys=True, separators=(",", ":")))
+        elif args.command == "revision-postcondition":
+            envelope = load_revision_transition_envelope(args.envelope, args.release_id)
+            print(json.dumps(verify_revision_transition_postcondition(envelope, _load_json(args.service_json), _load_json(args.policy_json), args.expected_revision, args.previous_etag, args.previous_generation), sort_keys=True, separators=(",", ":")))
         elif args.command == "service-request":
             Path(args.output).write_bytes(canonical_json_bytes(cloud_run_service_request(args.image, args.source_sha)) + b"\n")
         elif args.command == "verify-service":
