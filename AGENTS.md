@@ -38,9 +38,28 @@ Repository-local Resilio instructions and explicit task authority remain higher 
 
 ## Autonomous progression
 
-Routine planning, implementation, validation, bounded remediation and evidence capture should proceed without repeated human confirmation when current authority and evidence make the next action safely decidable.
+For one bounded governed objective, continue autonomously through all mechanically decidable internal stages when current authority and evidence make the next action safe. Routine planning, implementation, validation, bounded remediation and evidence capture should therefore proceed without repeated human confirmation.
 
-Escalate only when a genuine human decision or authority boundary is reached, including material scope or architecture changes, permission broadening, security weakening, destructive or production actions, material cost commitments, or acceptance of a known failed control.
+Use this outcome-sized transaction pattern by default:
+
+```text
+orient
+-> reconcile
+-> prepare / implement
+-> validate
+-> bounded remediation
+-> fresh substantive review where required
+-> genuine owner consequence boundary
+-> execute the exact authorised consequence
+-> independently verify
+-> terminal reconcile
+```
+
+An intermediate artefact, validation result, review, merge, saved plan, reconciliation or readiness check does not by itself require a human or session stop. Continue when the next action is mechanically decidable under current authority. A merge or other consequence still requires separate owner authority when the governing record says so.
+
+Keep objectively clear bounded remediation inside the same transaction when it does not materially change scope, architecture, authority or external consequence. Any candidate subject to a review gate must still be reviewed at its final exact identity after applicable remediation.
+
+Escalate only when a genuine human decision or authority boundary is reached, including a failed invariant, material scope or architecture change, permission broadening, security weakening, destructive or production action, material cost commitment, acceptance of a known failed control, or an ambiguous external consequence.
 
 ## Review independence
 
