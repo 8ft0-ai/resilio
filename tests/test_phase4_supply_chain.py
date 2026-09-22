@@ -1187,7 +1187,7 @@ class RevisionTransitionTests(unittest.TestCase):
 
     def test_revision_caller_pins_exact_immutable_reusables(self) -> None:
         caller = (ROOT / ".github/workflows/phase4-revision-transition.yml").read_text()
-        sha = "ad6d81b18eed7467f6d1b6fb35710af6f2462465"
+        sha = "5f8ae0f34ebc98538bfac6aedc3905373534e0a7"
         verify = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@{sha}"
         update = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@{sha}"
         self.assertEqual(caller.count(verify), 2)

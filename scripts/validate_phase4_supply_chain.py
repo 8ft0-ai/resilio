@@ -372,14 +372,14 @@ def main() -> int:
         "revision-consumption-body",
         "verify-revision-consumption",
         "REVISION_CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILE",
-        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465",
-        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7",
+        "uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7",
     ):
         if token not in revision_caller:
             errors.append(f"Phase 4 revision transition caller missing fixed control: {token}")
-    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465") != 2:
+    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7") != 2:
         errors.append("Phase 4 revision caller must invoke the exact verifier reusable for pre and post stages")
-    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465") != 1:
+    if revision_caller.count("uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7") != 1:
         errors.append("Phase 4 revision caller must invoke the exact updater reusable once")
     if revision_caller.count("gh api --paginate --slurp") != 2:
         errors.append("Phase 4 revision caller must enumerate authority comments before and after consumption")
