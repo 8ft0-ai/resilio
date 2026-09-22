@@ -4,8 +4,8 @@ locals {
   phase4_evidence_workflow_sha             = "f3d4fbb4496dea195808191e3f105e40b4fe0779"
   phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_build_workflow_sha}"
   phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"
-  phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@6c630f34e3594600acd51164530d1400554dbc5f"
-  phase4_reconcile_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@7ff8545fd8e094aef7340095e38112227282cb54"
+  phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7"
+  phase4_reconcile_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7"
   phase4_transition_object_resource_prefix = "projects/_/buckets/resilio-control-e882d4-phase4-evidence/objects/transitions/"
 }
 
