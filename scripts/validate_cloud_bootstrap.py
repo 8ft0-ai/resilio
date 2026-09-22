@@ -27,11 +27,12 @@ PHASE4_CONTROL_SEED_SHA = "10e7a938046e2d2d28ffa08a470bf9dfeda40dac"
 PHASE4_BUILD_WORKFLOW_SHA = "f3d4fbb4496dea195808191e3f105e40b4fe0779"
 PHASE4_EVIDENCE_WORKFLOW_SHA = "f3d4fbb4496dea195808191e3f105e40b4fe0779"
 FOUNDATION_DRIFT_CONTROL_SEED_SHA = "af6d0fe6765a1eea36d6000f6a3e465bffc32e50"
-PHASE4_DEPLOY_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
-PHASE4_RECONCILE_WORKFLOW_SHA = "7ff8545fd8e094aef7340095e38112227282cb54"
+PHASE4_DEPLOY_WORKFLOW_SHA = "5f8ae0f34ebc98538bfac6aedc3905373534e0a7"
+PHASE4_RECONCILE_WORKFLOW_SHA = "5f8ae0f34ebc98538bfac6aedc3905373534e0a7"
 PHASE4_DEPLOY_OLD_WORKFLOW_SHA = "288a0fb525a3e4914d59dc4702914eaa066f061b"
 PHASE4_DEPLOY_SUPERSEDED_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
-PHASE4_REVISION_FUTURE_WORKFLOW_SHA = "5f8ae0f34ebc98538bfac6aedc3905373534e0a7"
+PHASE4_DEPLOY_PREVIOUS_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
+PHASE4_RECONCILE_PREVIOUS_WORKFLOW_SHA = "7ff8545fd8e094aef7340095e38112227282cb54"
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -81,11 +82,11 @@ PHASE4_EVIDENCE_WORKFLOW_REF = (
     + PHASE4_EVIDENCE_WORKFLOW_SHA
 )
 PHASE4_DEPLOY_WORKFLOW_REF = (
-    "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@"
+    "8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@"
     + PHASE4_DEPLOY_WORKFLOW_SHA
 )
 PHASE4_RECONCILE_WORKFLOW_REF = (
-    "8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@"
+    "8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@"
     + PHASE4_RECONCILE_WORKFLOW_SHA
 )
 
@@ -94,7 +95,7 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "af76ce84728a514d0a1811563fbcf85621b5cd03",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "f478028b93d93dfa6181981bd88bab588185704c",
+    "phase4_authority.tf": "dfeec737d25b48a10967085f5f7a9ad8ce63bfa6",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -411,8 +412,8 @@ def check_phase4_authority(errors: list[str]) -> None:
         f'phase4_evidence_workflow_sha             = "{PHASE4_EVIDENCE_WORKFLOW_SHA}"',
         'phase4_build_workflow_ref                = "8ft0-ai/resilio/.github/workflows/phase4-build-reusable.yml@${local.phase4_build_workflow_sha}"',
         'phase4_evidence_workflow_ref             = "8ft0-ai/resilio/.github/workflows/phase4-evidence-reusable.yml@${local.phase4_evidence_workflow_sha}"',
-        f'phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reusable.yml@{PHASE4_DEPLOY_WORKFLOW_SHA}"',
-        f'phase4_reconcile_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase4-deploy-reconcile-reusable.yml@{PHASE4_RECONCILE_WORKFLOW_SHA}"',
+        f'phase4_deploy_workflow_ref               = "8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@{PHASE4_DEPLOY_WORKFLOW_SHA}"',
+        f'phase4_reconcile_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@{PHASE4_RECONCILE_WORKFLOW_SHA}"',
         f'phase4_transition_object_resource_prefix = "{PHASE4_TRANSITION_PREFIX}"',
     )
     for token in exact_locals:
@@ -422,11 +423,12 @@ def check_phase4_authority(errors: list[str]) -> None:
     for forbidden_workflow_sha in (
         PHASE4_DEPLOY_OLD_WORKFLOW_SHA,
         PHASE4_DEPLOY_SUPERSEDED_WORKFLOW_SHA,
-        PHASE4_REVISION_FUTURE_WORKFLOW_SHA,
+        PHASE4_DEPLOY_PREVIOUS_WORKFLOW_SHA,
+        PHASE4_RECONCILE_PREVIOUS_WORKFLOW_SHA,
     ):
         if forbidden_workflow_sha in text or forbidden_workflow_sha in outputs_text:
             errors.append(
-                "Phase 4 staged WIF state must reject inactive deployment workflow identities"
+                "Phase 4 staged WIF state must reject inactive Phase 4 workflow identities"
             )
 
     expected_accounts = (
