@@ -1676,6 +1676,38 @@ def _revision_template(image: str, source_sha: str) -> dict[str, Any]:
     }
 
 
+REVISION_PROVIDER_DEFAULT_PORT = {"name": "http1", "containerPort": 8080}
+REVISION_PROVIDER_DEFAULT_STARTUP_PROBE = {
+    "timeoutSeconds": 240,
+    "periodSeconds": 240,
+    "failureThreshold": 1,
+    "tcpSocket": {"port": 8080},
+}
+
+
+def _normalize_revision_template_provider_defaults(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = dict(value)
+
+    scaling = normalized.get("scaling")
+    if isinstance(scaling, dict) and "minInstanceCount" not in scaling:
+        scaling = dict(scaling)
+        scaling["minInstanceCount"] = 0
+        normalized["scaling"] = scaling
+
+    containers = normalized.get("containers")
+    if isinstance(containers, list) and len(containers) == 1 and isinstance(containers[0], dict):
+        container = dict(containers[0])
+        if container.get("ports") == [REVISION_PROVIDER_DEFAULT_PORT]:
+            container.pop("ports")
+        if container.get("startupProbe") == REVISION_PROVIDER_DEFAULT_STARTUP_PROBE:
+            container.pop("startupProbe")
+        normalized["containers"] = [container]
+
+    return normalized
+
+
 def _verify_revision_service_base(
     envelope: dict[str, Any], service: dict[str, Any], policy: dict[str, Any] | None,
     *, image: str, source_sha: str, expected_revision: str,
@@ -1685,7 +1717,10 @@ def _verify_revision_service_base(
         raise SupplyChainError("REVISION_SERVICE_IDENTITY_MISMATCH")
     if service.get("ingress") != "INGRESS_TRAFFIC_ALL" or service.get("invokerIamDisabled") is True:
         raise SupplyChainError("REVISION_ACCESS_POSTURE_MISMATCH")
-    if service.get("template") != _revision_template(image, source_sha):
+    if (
+        _normalize_revision_template_provider_defaults(service.get("template"))
+        != _revision_template(image, source_sha)
+    ):
         raise SupplyChainError("REVISION_TEMPLATE_MISMATCH")
     if policy is not None:
         for binding in policy.get("bindings") or []:

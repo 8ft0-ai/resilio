@@ -91,7 +91,7 @@ jobs:
       contents: read
       issues: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7
     with:
       stage: pre
       authority_comment_id: ${{ inputs.authority_comment_id }}
@@ -105,7 +105,7 @@ jobs:
       contents: read
       issues: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7
     with:
       authority_comment_id: ${{ inputs.authority_comment_id }}
       release_id: ${{ needs.control.outputs.release_id }}
@@ -121,7 +121,7 @@ jobs:
       contents: read
       issues: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@ad6d81b18eed7467f6d1b6fb35710af6f2462465
+    uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@5f8ae0f34ebc98538bfac6aedc3905373534e0a7
     with:
       stage: post
       authority_comment_id: ${{ inputs.authority_comment_id }}

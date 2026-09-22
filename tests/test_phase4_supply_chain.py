@@ -949,6 +949,61 @@ class RevisionTransitionTests(unittest.TestCase):
         pre = p4.verify_revision_transition_precondition(envelope, before, {"bindings": []})
         self.assertEqual(pre["etag"], "etag-before")
 
+        provider_materialized = copy.deepcopy(before)
+        provider_materialized["template"]["scaling"].pop("minInstanceCount")
+        provider_materialized["template"]["containers"][0]["ports"] = [
+            {"name": "http1", "containerPort": 8080}
+        ]
+        provider_materialized["template"]["containers"][0]["startupProbe"] = {
+            "timeoutSeconds": 240,
+            "periodSeconds": 240,
+            "failureThreshold": 1,
+            "tcpSocket": {"port": 8080},
+        }
+        provider_pre = p4.verify_revision_transition_precondition(
+            envelope, provider_materialized, {"bindings": []}
+        )
+        self.assertEqual(provider_pre["etag"], "etag-before")
+
+        invalid_provider_variants = []
+
+        altered_port = copy.deepcopy(provider_materialized)
+        altered_port["template"]["containers"][0]["ports"][0]["containerPort"] = 8081
+        invalid_provider_variants.append(("altered-port", altered_port))
+
+        additional_port = copy.deepcopy(provider_materialized)
+        additional_port["template"]["containers"][0]["ports"].append(
+            {"name": "admin", "containerPort": 9090}
+        )
+        invalid_provider_variants.append(("additional-port", additional_port))
+
+        altered_probe = copy.deepcopy(provider_materialized)
+        altered_probe["template"]["containers"][0]["startupProbe"]["timeoutSeconds"] = 239
+        invalid_provider_variants.append(("altered-probe", altered_probe))
+
+        additional_probe_field = copy.deepcopy(provider_materialized)
+        additional_probe_field["template"]["containers"][0]["startupProbe"][
+            "initialDelaySeconds"
+        ] = 1
+        invalid_provider_variants.append(("additional-probe-field", additional_probe_field))
+
+        altered_scaling = copy.deepcopy(provider_materialized)
+        altered_scaling["template"]["scaling"]["minInstanceCount"] = 1
+        invalid_provider_variants.append(("altered-scaling", altered_scaling))
+
+        unexpected_command = copy.deepcopy(provider_materialized)
+        unexpected_command["template"]["containers"][0]["command"] = ["python3"]
+        invalid_provider_variants.append(("unexpected-template-field", unexpected_command))
+
+        for label, candidate in invalid_provider_variants:
+            with self.subTest(provider_variant=label):
+                with self.assertRaisesRegex(
+                    p4.SupplyChainError, "REVISION_TEMPLATE_MISMATCH"
+                ):
+                    p4.verify_revision_transition_precondition(
+                        envelope, candidate, {"bindings": []}
+                    )
+
         missing_name = copy.deepcopy(before)
         missing_name.pop("name")
         with self.assertRaisesRegex(p4.SupplyChainError, "REVISION_SERVICE_IDENTITY_MISMATCH"):
@@ -1132,7 +1187,7 @@ class RevisionTransitionTests(unittest.TestCase):
 
     def test_revision_caller_pins_exact_immutable_reusables(self) -> None:
         caller = (ROOT / ".github/workflows/phase4-revision-transition.yml").read_text()
-        sha = "ad6d81b18eed7467f6d1b6fb35710af6f2462465"
+        sha = "5f8ae0f34ebc98538bfac6aedc3905373534e0a7"
         verify = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-verify-reusable.yml@{sha}"
         update = f"uses: 8ft0-ai/resilio/.github/workflows/phase4-revision-update-reusable.yml@{sha}"
         self.assertEqual(caller.count(verify), 2)
