@@ -9,14 +9,16 @@ sys.path.insert(0,str(ROOT/"scripts"))
 from phase5_supply_chain import (
     CONTROL_PROJECT, OWNER_ID, OWNER_LOGIN, REFERENCE_PROJECT, SERVICES,
     Phase5Error, acceptance_readback, build_request, cloud_run_create_request,
+    processor_routing_binding_body,
     deployment_authority, deployment_consumption_available,
     deployment_consumption_body, image_tag, release_envelope, validate_build,
     validate_release, verify_deployment_consumption, verify_service_config,
 )
 from phase5_release_record import record_body, validate_record
 from phase5_terraform_control import (
-    BASE_ADDRESSES, ProductTerraformError, expected_creates,
-    material_effect, resource_document, state_identity, validate_candidate,
+    BASE_ADDRESSES, PROCESSOR_RESOURCE, ProductTerraformError, expected_creates,
+    material_effect, resource_document, routing_binding_from_documents,
+    state_identity, validate_candidate, verify_caller_context,
 )
 from services.resilio_app.server import PUSH_PATH
 SOURCE="1"*40
@@ -82,23 +84,33 @@ class SupplyChainTests(unittest.TestCase):
         self.assertEqual(decoded,value);self.assertEqual(meta["release_id"],rid)
     def test_acceptance_readback_binds_replay_metadata(self):
         response={"event_id":"d"*64,"payload_sha256":"e"*64,"observed":{"schema_version":1},
+                  "first_pubsub_message_id":"message-1",
                   "first_observed_at":"2026-09-23T00:00:00+00:00"}
-        bound=acceptance_readback(response,"d"*64,"e"*64)
+        bound=acceptance_readback(response,"d"*64,"e"*64,"message-1")
         self.assertEqual(bound["first_observed_at"],response["first_observed_at"])
+        self.assertEqual(bound["first_pubsub_message_id"],"message-1")
+        with self.assertRaises(Phase5Error):
+            acceptance_readback(response,"d"*64,"e"*64,"different-message")
     def test_pubsub_push_application_route_is_exact_processor_uri_root(self):
         self.assertEqual(PUSH_PATH,"/")
 class TerraformControlTests(unittest.TestCase):
     @staticmethod
-    def candidate(stage,uri=None):
-        return {"contract":"resilio-product-terraform-candidate/v1","stage":stage,"processor_uri":uri}
+    def candidate(stage,uri=None,verification_comment_id=None):
+        return {"contract":"resilio-product-terraform-candidate/v1","stage":stage,
+                "processor_uri":uri,
+                "processor_verification_comment_id":verification_comment_id}
     def test_closed_candidate_stages(self):
         for stage in ("empty","base"): self.assertEqual(validate_candidate(self.candidate(stage))["stage"],stage)
-        routing=self.candidate("routing","https://resilio-processor-abc-uc.a.run.app")
+        routing=self.candidate("routing","https://resilio-processor-abc-uc.a.run.app","123")
         self.assertEqual(validate_candidate(routing)["stage"],"routing")
         for bad in (
-            {"contract":"resilio-product-terraform-candidate/v1","stage":"base","processor_uri":"x"},
-            {"contract":"resilio-product-terraform-candidate/v1","stage":"other","processor_uri":None},
-            {"contract":"resilio-product-terraform-candidate/v1","stage":"routing","processor_uri":"http://bad"},
+            {"contract":"resilio-product-terraform-candidate/v1","stage":"base","processor_uri":"x",
+             "processor_verification_comment_id":None},
+            {"contract":"resilio-product-terraform-candidate/v1","stage":"other","processor_uri":None,
+             "processor_verification_comment_id":None},
+            {"contract":"resilio-product-terraform-candidate/v1","stage":"routing","processor_uri":"http://bad",
+             "processor_verification_comment_id":"123"},
+            self.candidate("routing","https://resilio-processor-abc-uc.a.run.app",None),
             {**self.candidate("base"),"iam":"forbidden"}):
             with self.assertRaises(ProductTerraformError): validate_candidate(bad)
     def test_generated_base_has_exact_non_iam_resource_classes(self):
@@ -108,10 +120,34 @@ class TerraformControlTests(unittest.TestCase):
         self.assertEqual(expected_creates("base"),tuple(sorted(BASE_ADDRESSES)))
     def test_routing_is_exact_authenticated_processor_push(self):
         uri="https://resilio-processor-abc-uc.a.run.app"
-        sub=resource_document(self.candidate("routing",uri))["resource"]["google_pubsub_subscription"]["deployment_events_push"]
+        sub=resource_document(self.candidate("routing",uri,"123"))["resource"]["google_pubsub_subscription"]["deployment_events_push"]
         oidc=sub["push_config"][0]["oidc_token"][0]
         self.assertEqual(sub["push_config"][0]["push_endpoint"],uri);self.assertEqual(oidc["audience"],uri)
         self.assertEqual(oidc["service_account_email"],f"p5-pubsub-push@{REFERENCE_PROJECT}.iam.gserviceaccount.com")
+    def test_privileged_caller_must_be_protected_main_first_attempt(self):
+        verify_caller_context("8ft0-ai/resilio","refs/heads/main","true","1")
+        for args in (
+            ("fork/resilio","refs/heads/main","true","1"),
+            ("8ft0-ai/resilio","refs/heads/feature","false","1"),
+            ("8ft0-ai/resilio","refs/heads/main","true","2"),
+        ):
+            with self.assertRaises(ProductTerraformError):
+                verify_caller_context(*args)
+
+    def test_routing_binding_requires_exact_independent_processor_observation(self):
+        uri="https://resilio-processor-abc-uc.a.run.app"
+        candidate=self.candidate("routing",uri,"123")
+        body=processor_routing_binding_body("f"*64,uri,CONTROL,"456",1)
+        comment={"id":123,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109",
+                 "body":body,"user":{"login":"github-actions[bot]","id":41898282}}
+        run={"id":456,"run_attempt":1,"status":"completed","conclusion":"success",
+             "head_branch":"main","head_repository":{"full_name":"8ft0-ai/resilio"}}
+        binding=routing_binding_from_documents(candidate,CONTROL,comment,run)
+        self.assertEqual(binding["processor_resource"],PROCESSOR_RESOURCE)
+        unrelated=self.candidate("routing","https://unrelated-abc-uc.a.run.app","123")
+        with self.assertRaises(ProductTerraformError):
+            routing_binding_from_documents(unrelated,CONTROL,comment,run)
+
     def test_material_effect_is_create_only_and_stage_exact(self):
         rows=[]
         for address in sorted(BASE_ADDRESSES):

@@ -24,7 +24,7 @@ class MemoryStore:
         self.rejections = {}
         self.fail = False
 
-    def create_event(self, event_id, canonical, digest):
+    def create_event(self, event_id, canonical, digest, message_id):
         if self.fail:
             raise ProviderFailure("STORE_DOWN")
         existing = self.events.get(event_id)
@@ -34,7 +34,8 @@ class MemoryStore:
             return "PERMANENT_IMMUTABLE_DEPLOYMENT_CONFLICT"
         self.events[event_id] = {
             "event_id": event_id, "payload_sha256": digest,
-            "observed_json": canonical.decode(), "first_observed_at": "original"
+            "observed_json": canonical.decode(), "first_pubsub_message_id": message_id,
+            "first_observed_at": "original"
         }
         return "SUCCESS_NEW_OR_DUPLICATE"
 
@@ -148,19 +149,21 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(len(self.publisher.calls), 1)
 
     def test_replay_identical_and_api_read_only(self):
-        packet = push(self.event)
-        for _ in range(2):
+        for packet in (push(self.event, "first-message"), push(self.event, "replay-message")):
             code, _ = dispatch("processor", "POST", PUSH_PATH, packet, self.publisher, self.store)
             self.assertEqual(code, 200)
         self.assertEqual(len(self.store.events), 1)
         first = self.store.events[self.event.event_id].copy()
         self.assertEqual(first["first_observed_at"], "original")
+        self.assertEqual(first["first_pubsub_message_id"], "first-message")
         code, raw = dispatch("api", "GET", EVENT_PATH + "/" + self.event.event_id,
                              b"", self.publisher, self.store)
         self.assertEqual(code, 200)
-        self.assertEqual(json.loads(raw)["payload_sha256"], self.event.payload_sha256)
+        response = json.loads(raw)
+        self.assertEqual(response["payload_sha256"], self.event.payload_sha256)
+        self.assertEqual(response["first_pubsub_message_id"], "first-message")
         self.assertEqual(first, self.store.events[self.event.event_id])
-        self.assertEqual(dispatch("api", "POST", EVENT_PATH, packet,
+        self.assertEqual(dispatch("api", "POST", EVENT_PATH, push(self.event),
                                   self.publisher, self.store)[0], 404)
 
     def test_conflict_is_durable_then_acknowledged(self):
@@ -203,6 +206,12 @@ class ProductTests(unittest.TestCase):
         code, _ = dispatch("processor", "POST", PUSH_PATH, b"invalid", self.publisher, self.store)
         self.assertEqual(code, 200)
         self.assertEqual(len(self.store.rejections), 2)
+        missing_id = json.loads(push(self.event))
+        del missing_id["message"]["messageId"]
+        code, _ = dispatch("processor", "POST", PUSH_PATH, jcs(missing_id),
+                           self.publisher, self.store)
+        self.assertEqual(code, 200)
+        self.assertEqual(len(self.store.events), 0)
 
     def test_fail_closed_component_and_ambient_keys(self):
         for value in ("", "writer", "ingest,api"):

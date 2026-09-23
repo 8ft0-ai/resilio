@@ -43,6 +43,20 @@ def check():
                           "\n  repository_dispatch:","${{ secrets.","permissions: write-all","google_service_account_key"):
             if forbidden in text: errors.append(f"PHASE5_REUSABLE_ACTIVE_OR_SECRET_SURFACE:{name}:{forbidden}")
     deploy=(ROOT/".github/workflows/phase5-deploy-reusable.yml").read_text()
+    for name in ("phase5-terraform-plan-reusable.yml","phase5-terraform-apply-reusable.yml"):
+        text=(ROOT/".github/workflows"/name).read_text(encoding="utf-8")
+        for required in ("verify-caller","verify-routing-binding","issues: read",
+                         "GITHUB_REF","GITHUB_REF_PROTECTED","GITHUB_RUN_ATTEMPT"):
+            if required not in text: errors.append(f"PHASE5_TERRAFORM_CALLER_BOUNDARY_MISSING:{name}:{required}")
+    verifier=(ROOT/".github/workflows/phase5-verify-reusable.yml").read_text(encoding="utf-8")
+    for required in ("routing-binding-body","issues: write","GITHUB_RUN_ATTEMPT"):
+        if required not in verifier: errors.append(f"PHASE5_VERIFIER_EVIDENCE_BOUNDARY_MISSING:{required}")
+    docker=(ROOT/"services/resilio_app/Dockerfile").read_text(encoding="utf-8")
+    if 'ENTRYPOINT ["/usr/bin/python3", "-m", "resilio_app.server"]' not in docker:
+        errors.append("PHASE5_PRODUCT_ENTRYPOINT_NOT_MODULE_EXECUTION")
+    validation=(ROOT/".github/workflows/validate.yml").read_text(encoding="utf-8")
+    if "Smoke-test the built Phase 5 product image" not in validation:
+        errors.append("PHASE5_BUILT_IMAGE_SMOKE_MISSING")
     for forbidden in ("run.services.update","run.services.delete","setIamPolicy","PATCH ","DELETE "):
         if forbidden in deploy: errors.append(f"PHASE5_DEPLOY_FORBIDDEN_OPERATION:{forbidden}")
     for service in ("resilio-ingest","resilio-processor","resilio-api"):

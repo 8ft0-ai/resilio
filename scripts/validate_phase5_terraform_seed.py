@@ -10,7 +10,9 @@ def run(stage,uri):
     with tempfile.TemporaryDirectory(prefix="resilio-p5-") as td:
         root=Path(td);candidate=root/"candidate.json"
         candidate.write_text(json.dumps({"contract":"resilio-product-terraform-candidate/v1",
-            "stage":stage,"processor_uri":uri},separators=(",",":"))+"\n",encoding="utf-8")
+            "stage":stage,"processor_uri":uri,
+            "processor_verification_comment_id":"1" if stage=="routing" else None},
+            separators=(",",":"))+"\n",encoding="utf-8")
         work=root/"work";assemble(ROOT,candidate,work)
         subprocess.run(["terraform",f"-chdir={work}","init","-backend=false","-input=false","-lockfile=readonly"],
                        check=True,stdout=subprocess.DEVNULL)

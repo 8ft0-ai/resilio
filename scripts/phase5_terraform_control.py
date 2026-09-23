@@ -36,11 +36,17 @@ PLANNER = f"github-p5-product-planner@{CONTROL_PROJECT}.iam.gserviceaccount.com"
 APPLIER = f"github-p5-product-applier@{CONTROL_PROJECT}.iam.gserviceaccount.com"
 WIF_PROVIDER = "projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio"
 PUSH_IDENTITY = f"p5-pubsub-push@{REFERENCE_PROJECT}.iam.gserviceaccount.com"
+GOVERNING_ISSUE = 109
+PROCESSOR_RESOURCE = f"projects/{REFERENCE_PROJECT}/locations/{REGION}/services/resilio-processor"
+GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
+GITHUB_ACTIONS_BOT_ID = 41898282
 
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 PROCESSOR_URI = re.compile(r"^https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app$")
 SAFE_EVIDENCE = re.compile(r"^plan-evidence/product/pr-[1-9][0-9]*-[0-9a-f]{40}\.json$")
+RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
+COMMENT_ID = RUN_ID
 TRUSTED_FILES = ("backend.tf", "provider.tf", "versions.tf", ".terraform.lock.hcl")
 
 BASE_ADDRESSES = (
@@ -96,24 +102,29 @@ def strict_file(path: str | Path) -> Any:
 
 
 def validate_candidate(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"contract", "stage", "processor_uri"}:
+    fields = {"contract", "stage", "processor_uri", "processor_verification_comment_id"}
+    if not isinstance(value, dict) or set(value) != fields:
         raise ProductTerraformError("CANDIDATE_FIELDS_INVALID")
     if value["contract"] != "resilio-product-terraform-candidate/v1":
         raise ProductTerraformError("CANDIDATE_CONTRACT_INVALID")
     stage = value["stage"]
     uri = value["processor_uri"]
-    if stage == "empty":
-        if uri is not None:
-            raise ProductTerraformError("EMPTY_PROCESSOR_URI_FORBIDDEN")
-    elif stage == "base":
-        if uri is not None:
-            raise ProductTerraformError("BASE_PROCESSOR_URI_FORBIDDEN")
+    verification_comment_id = value["processor_verification_comment_id"]
+    if stage in {"empty", "base"}:
+        if uri is not None or verification_comment_id is not None:
+            raise ProductTerraformError(f"{stage.upper()}_ROUTING_BINDING_FORBIDDEN")
     elif stage == "routing":
         if not isinstance(uri, str) or not PROCESSOR_URI.fullmatch(uri):
             raise ProductTerraformError("ROUTING_PROCESSOR_URI_INVALID")
+        if (not isinstance(verification_comment_id, str)
+                or not COMMENT_ID.fullmatch(verification_comment_id)):
+            raise ProductTerraformError("ROUTING_VERIFICATION_COMMENT_ID_INVALID")
     else:
         raise ProductTerraformError("CANDIDATE_STAGE_INVALID")
-    return {"contract": value["contract"], "stage": stage, "processor_uri": uri}
+    return {
+        "contract": value["contract"], "stage": stage, "processor_uri": uri,
+        "processor_verification_comment_id": verification_comment_id,
+    }
 
 
 def _base_resources() -> dict[str, Any]:
@@ -341,18 +352,34 @@ def material_effect(plan: Any, stage: str) -> list[dict[str, Any]]:
 
 
 def private_effect(plan: Any, candidate: dict[str, Any], state: dict[str, Any],
-                   pr_number: int, base_sha: str, candidate_sha: str,
-                   control_sha: str, trusted_tree_sha256: str,
+                   routing_binding: dict[str, Any], pr_number: int, base_sha: str,
+                   candidate_sha: str, control_sha: str, trusted_tree_sha256: str,
                    provider_lock_sha256: str) -> dict[str, Any]:
     if pr_number <= 0 or not FULL_SHA.fullmatch(base_sha) or not FULL_SHA.fullmatch(candidate_sha):
         raise ProductTerraformError("EFFECT_GITHUB_IDENTITY_INVALID")
     if not FULL_SHA.fullmatch(control_sha) or not HEX64.fullmatch(trusted_tree_sha256) or not HEX64.fullmatch(provider_lock_sha256):
         raise ProductTerraformError("EFFECT_CONTROL_IDENTITY_INVALID")
     candidate = validate_candidate(candidate)
+    if not isinstance(routing_binding, dict):
+        raise ProductTerraformError("ROUTING_BINDING_INVALID")
+    if candidate["stage"] == "routing":
+        required = {"comment_id", "release_id", "processor_resource", "processor_uri",
+                    "control_sha", "verifier_run_id", "verifier_run_attempt"}
+        if set(routing_binding) != required:
+            raise ProductTerraformError("ROUTING_BINDING_FIELDS_INVALID")
+        if (routing_binding["comment_id"] != candidate["processor_verification_comment_id"]
+                or routing_binding["processor_resource"] != PROCESSOR_RESOURCE
+                or routing_binding["processor_uri"] != candidate["processor_uri"]
+                or routing_binding["control_sha"] != control_sha):
+            raise ProductTerraformError("ROUTING_BINDING_EFFECT_MISMATCH")
+    elif routing_binding != {}:
+        raise ProductTerraformError("NON_ROUTING_BINDING_FORBIDDEN")
     effect = {
         "contract": "resilio-product-terraform-private-effect/v1",
         "stage": candidate["stage"],
         "processor_uri": candidate["processor_uri"],
+        "processor_verification_comment_id": candidate["processor_verification_comment_id"],
+        "routing_binding": routing_binding,
         "pr_number": pr_number,
         "base_sha": base_sha,
         "candidate_sha": candidate_sha,
@@ -378,6 +405,7 @@ def public_manifest(effect: dict[str, Any], run_id: str, evidence_object: str) -
     return {
         "contract": "resilio-product-terraform-plan-manifest/v1",
         "stage": effect["stage"],
+        "routing_verification_comment_id": effect["processor_verification_comment_id"],
         "pr_number": effect["pr_number"],
         "candidate_sha": effect["candidate_sha"],
         "state_generation": effect["state"]["generation"],
@@ -416,6 +444,80 @@ def github_token() -> str:
 
 def github(path: str) -> Any:
     return _request_json("https://api.github.com" + path, github_token())
+
+
+def verify_caller_context(repository: str, ref: str, ref_protected: str,
+                          run_attempt: str) -> None:
+    if repository != REPOSITORY:
+        raise ProductTerraformError("CALLER_REPOSITORY_MISMATCH")
+    if ref != "refs/heads/main" or ref_protected != "true":
+        raise ProductTerraformError("CALLER_PROTECTED_MAIN_REQUIRED")
+    if run_attempt != "1":
+        raise ProductTerraformError("CALLER_FIRST_ATTEMPT_REQUIRED")
+
+
+def routing_binding_from_documents(candidate: dict[str, Any], control_sha: str,
+                                   comment: Any, run: Any) -> dict[str, str]:
+    candidate = validate_candidate(candidate)
+    if candidate["stage"] != "routing":
+        if comment not in (None, {}) or run not in (None, {}):
+            raise ProductTerraformError("NON_ROUTING_VERIFICATION_EVIDENCE_FORBIDDEN")
+        return {}
+    if not FULL_SHA.fullmatch(control_sha):
+        raise ProductTerraformError("ROUTING_CONTROL_SHA_INVALID")
+    comment_id = candidate["processor_verification_comment_id"]
+    if not isinstance(comment, dict) or str(comment.get("id") or "") != comment_id:
+        raise ProductTerraformError("ROUTING_VERIFICATION_COMMENT_MISMATCH")
+    if not str(comment.get("issue_url") or "").endswith(f"/issues/{GOVERNING_ISSUE}"):
+        raise ProductTerraformError("ROUTING_VERIFICATION_ISSUE_MISMATCH")
+    user = comment.get("user") or {}
+    if user.get("login") != GITHUB_ACTIONS_BOT_LOGIN or user.get("id") != GITHUB_ACTIONS_BOT_ID:
+        raise ProductTerraformError("ROUTING_VERIFICATION_AUTHOR_MISMATCH")
+    body = str(comment.get("body") or "")
+    match = re.fullmatch(
+        r"PHASE5_PROCESSOR_ROUTING_BINDING_V1 "
+        r"release_id=([0-9a-f]{64}) "
+        r"processor_resource=(projects/resilio-reference-e882d4/locations/us-central1/services/resilio-processor) "
+        r"processor_uri=(https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app) "
+        r"control_sha=([0-9a-f]{40}) verifier_run_id=([1-9][0-9]{0,19}) "
+        r"verifier_run_attempt=1",
+        body,
+    )
+    if not match:
+        raise ProductTerraformError("ROUTING_VERIFICATION_BODY_INVALID")
+    release_id, resource, uri, recorded_control_sha, run_id = match.groups()
+    if resource != PROCESSOR_RESOURCE or uri != candidate["processor_uri"]:
+        raise ProductTerraformError("ROUTING_VERIFICATION_RESOURCE_URI_MISMATCH")
+    if recorded_control_sha != control_sha:
+        raise ProductTerraformError("ROUTING_VERIFICATION_CONTROL_MISMATCH")
+    if not isinstance(run, dict) or str(run.get("id") or "") != run_id:
+        raise ProductTerraformError("ROUTING_VERIFICATION_RUN_MISMATCH")
+    if (run.get("run_attempt") != 1 or run.get("status") != "completed"
+            or run.get("conclusion") != "success" or run.get("head_branch") != DEFAULT_BRANCH):
+        raise ProductTerraformError("ROUTING_VERIFICATION_RUN_NOT_SUCCESSFUL")
+    head_repo = run.get("head_repository") or {}
+    if head_repo.get("full_name") != REPOSITORY:
+        raise ProductTerraformError("ROUTING_VERIFICATION_RUN_REPOSITORY_MISMATCH")
+    return {
+        "comment_id": comment_id, "release_id": release_id,
+        "processor_resource": resource, "processor_uri": uri,
+        "control_sha": recorded_control_sha, "verifier_run_id": run_id,
+        "verifier_run_attempt": "1",
+    }
+
+
+def verify_routing_binding(candidate: dict[str, Any], control_sha: str) -> dict[str, str]:
+    candidate = validate_candidate(candidate)
+    if candidate["stage"] != "routing":
+        return {}
+    comment_id = candidate["processor_verification_comment_id"]
+    comment = github(f"/repos/{REPOSITORY}/issues/comments/{comment_id}")
+    body = str(comment.get("body") or "") if isinstance(comment, dict) else ""
+    run_match = re.search(r" verifier_run_id=([1-9][0-9]{0,19}) verifier_run_attempt=1\Z", body)
+    if not run_match:
+        raise ProductTerraformError("ROUTING_VERIFICATION_RUN_ID_MISSING")
+    run = github(f"/repos/{REPOSITORY}/actions/runs/{run_match.group(1)}")
+    return routing_binding_from_documents(candidate, control_sha, comment, run)
 
 
 def verify_main(expected_sha: str) -> None:
@@ -515,19 +617,18 @@ def download_effect(object_name: str, output: str | Path) -> dict[str, Any]:
     return value
 
 
-RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     p=commands.add_parser("validate-candidate"); p.add_argument("--file", required=True)
+    p=commands.add_parser("verify-caller"); p.add_argument("--repository", required=True); p.add_argument("--ref", required=True); p.add_argument("--ref-protected", required=True); p.add_argument("--run-attempt", required=True)
+    p=commands.add_parser("verify-routing-binding"); p.add_argument("--candidate", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--output", required=True)
     p=commands.add_parser("assemble"); p.add_argument("--trusted-root", required=True); p.add_argument("--candidate", required=True); p.add_argument("--output", required=True)
     p=commands.add_parser("verify-pr"); p.add_argument("--pr-number", type=int, required=True); p.add_argument("--head-sha", required=True); p.add_argument("--base-sha", required=True); p.add_argument("--require-open", action="store_true"); p.add_argument("--require-merged", action="store_true"); p.add_argument("--merge-sha")
     p=commands.add_parser("verify-main"); p.add_argument("--sha", required=True)
     p=commands.add_parser("fetch-candidate"); p.add_argument("--sha", required=True); p.add_argument("--output", required=True)
     p=commands.add_parser("state-identity"); p.add_argument("--state-json", required=True); p.add_argument("--generation", required=True); p.add_argument("--output", required=True)
-    p=commands.add_parser("build-effect"); p.add_argument("--plan-json", required=True); p.add_argument("--candidate", required=True); p.add_argument("--state-identity", required=True); p.add_argument("--pr-number", type=int, required=True); p.add_argument("--base-sha", required=True); p.add_argument("--candidate-sha", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--trusted-tree-sha256", required=True); p.add_argument("--provider-lock-sha256", required=True); p.add_argument("--private-output", required=True); p.add_argument("--public-output", required=True); p.add_argument("--run-id", required=True); p.add_argument("--evidence-object", required=True)
+    p=commands.add_parser("build-effect"); p.add_argument("--plan-json", required=True); p.add_argument("--candidate", required=True); p.add_argument("--state-identity", required=True); p.add_argument("--routing-binding", required=True); p.add_argument("--pr-number", type=int, required=True); p.add_argument("--base-sha", required=True); p.add_argument("--candidate-sha", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--trusted-tree-sha256", required=True); p.add_argument("--provider-lock-sha256", required=True); p.add_argument("--private-output", required=True); p.add_argument("--public-output", required=True); p.add_argument("--run-id", required=True); p.add_argument("--evidence-object", required=True)
     p=commands.add_parser("compare-effect"); p.add_argument("--expected", required=True); p.add_argument("--actual", required=True)
     p=commands.add_parser("gcs-metadata"); p.add_argument("--object", required=True); p.add_argument("--allow-absent", action="store_true")
     p=commands.add_parser("upload-effect"); p.add_argument("--object", required=True); p.add_argument("--file", required=True)
@@ -536,6 +637,11 @@ def main() -> int:
     try:
         if args.command=="validate-candidate":
             print(json.dumps(validate_candidate(strict_file(args.file)), sort_keys=True, separators=(",", ":")))
+        elif args.command=="verify-caller":
+            verify_caller_context(args.repository,args.ref,args.ref_protected,args.run_attempt)
+        elif args.command=="verify-routing-binding":
+            binding=verify_routing_binding(strict_file(args.candidate),args.control_sha)
+            Path(args.output).write_bytes(canonical(binding)+b"\n")
         elif args.command=="assemble":
             print(json.dumps(assemble(args.trusted_root,args.candidate,args.output),sort_keys=True,separators=(",",":")))
         elif args.command=="verify-pr":
@@ -548,7 +654,8 @@ def main() -> int:
             state=strict_file(args.state_json); ident=state_identity(state,args.generation)
             Path(args.output).write_bytes(canonical(ident)+b"\n")
         elif args.command=="build-effect":
-            effect=private_effect(strict_file(args.plan_json),strict_file(args.candidate),strict_file(args.state_identity),
+            effect=private_effect(strict_file(args.plan_json),strict_file(args.candidate),
+                                  strict_file(args.state_identity),strict_file(args.routing_binding),
                                   args.pr_number,args.base_sha,args.candidate_sha,args.control_sha,
                                   args.trusted_tree_sha256,args.provider_lock_sha256)
             Path(args.private_output).write_bytes(canonical(effect)+b"\n")

@@ -185,6 +185,39 @@ def build_tags(source_sha: str, workflow_sha: str) -> list[str]:
     return [f"phase5-product", f"source-{source_sha}", f"control-{workflow_sha}"]
 
 
+def container_smoke_script(target: str) -> str:
+    return """set -euo pipefail
+IMAGE='__IMAGE__'
+for COMPONENT in ingest processor api; do
+  NAME="resilio-$COMPONENT-smoke"
+  docker run -d --rm --network=none --name "$NAME" \
+    -e RESILIO_COMPONENT="$COMPONENT" \
+    -e GOOGLE_CLOUD_PROJECT=resilio-reference-e882d4 "$IMAGE" >/dev/null
+  READY=""
+  for _ in $(seq 1 20); do
+    if docker exec "$NAME" /usr/bin/python3 -c 'import json,urllib.request; r=urllib.request.urlopen("http://127.0.0.1:8080/health",timeout=1); assert r.status == 200; assert json.load(r) == {"status":"ok"}' >/dev/null 2>&1; then
+      READY=1
+      break
+    fi
+    sleep 1
+  done
+  if test -z "$READY"; then
+    docker logs "$NAME" >&2 || true
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    exit 1
+  fi
+  docker stop "$NAME" >/dev/null
+done
+set +e
+docker run --rm --network=none \
+  -e RESILIO_COMPONENT=invalid \
+  -e GOOGLE_CLOUD_PROJECT=resilio-reference-e882d4 "$IMAGE" >/tmp/resilio-invalid-component.log 2>&1
+RC=$?
+set -e
+test "$RC" -ne 0
+""".replace("__IMAGE__", target)
+
+
 def build_request(source_sha: str, workflow_sha: str) -> dict[str, Any]:
     target = image_tag(source_sha)
     return {
@@ -207,6 +240,11 @@ def build_request(source_sha: str, workflow_sha: str) -> dict[str, Any]:
                     "-f", "services/resilio_app/Dockerfile",
                     "-t", target, ".",
                 ],
+            },
+            {
+                "name": DOCKER_BUILDER_IMAGE,
+                "entrypoint": "bash",
+                "args": ["-ceu", container_smoke_script(target)],
             },
         ],
         "images": [target],
@@ -313,7 +351,7 @@ def validate_build(build: Any, source_sha: str, workflow_sha: str) -> dict[str, 
         "build_id": build_id,
         "source_sha": source_sha,
         "control_sha": workflow_sha,
-        "steps": [0, 1],
+        "steps": [0, 1, 3],
         "status": "SUCCESS",
     }
     provenance = {
@@ -702,7 +740,8 @@ def verify_revision(revision: Any, envelope: Any, release_id: str, service_name:
         raise Phase5Error("REVISION_IMAGE_MISMATCH")
 
 
-def acceptance_readback(response: Any, expected_event_id: str, expected_payload_sha256: str) -> dict[str, str]:
+def acceptance_readback(response: Any, expected_event_id: str, expected_payload_sha256: str,
+                        expected_message_id: str) -> dict[str, str]:
     if not isinstance(response, dict):
         raise Phase5Error("ACCEPTANCE_API_RESPONSE_INVALID")
     if response.get("event_id") != expected_event_id or response.get("payload_sha256") != expected_payload_sha256:
@@ -711,14 +750,35 @@ def acceptance_readback(response: Any, expected_event_id: str, expected_payload_
     if not isinstance(observed, dict):
         raise Phase5Error("ACCEPTANCE_OBSERVED_INVALID")
     first = response.get("first_observed_at")
-    if not isinstance(first, str) or not first:
+    first_message_id = response.get("first_pubsub_message_id")
+    if (not isinstance(first, str) or not first or not isinstance(expected_message_id, str)
+            or not expected_message_id or first_message_id != expected_message_id):
         raise Phase5Error("ACCEPTANCE_PROCESSING_METADATA_INVALID")
     return {
         "event_id": expected_event_id,
         "payload_sha256": expected_payload_sha256,
+        "first_pubsub_message_id": first_message_id,
         "first_observed_at": first,
         "observed_sha256": sha256_bytes(canonical_json_bytes(observed)),
     }
+
+
+def processor_routing_binding_body(release_id: str, processor_uri: str, control_sha: str,
+                                   run_id: str, run_attempt: int) -> str:
+    _hex(release_id, "RELEASE")
+    _sha(control_sha, "CONTROL")
+    if not RUN_ID.fullmatch(str(run_id)) or run_attempt != 1:
+        raise Phase5Error("ROUTING_BINDING_RUN_INVALID")
+    if (not isinstance(processor_uri, str)
+            or not re.fullmatch(r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app", processor_uri)):
+        raise Phase5Error("ROUTING_BINDING_URI_INVALID")
+    resource = f"projects/{REFERENCE_PROJECT}/locations/{REGION}/services/resilio-processor"
+    return (
+        "PHASE5_PROCESSOR_ROUTING_BINDING_V1 "
+        f"release_id={release_id} processor_resource={resource} "
+        f"processor_uri={processor_uri} control_sha={control_sha} "
+        f"verifier_run_id={run_id} verifier_run_attempt=1"
+    )
 
 
 def main() -> int:
@@ -740,7 +800,8 @@ def main() -> int:
     p = commands.add_parser("verify-created-service"); p.add_argument("--service-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
     p = commands.add_parser("verify-service"); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
     p = commands.add_parser("verify-revision"); p.add_argument("--revision-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
-    p = commands.add_parser("acceptance-readback"); p.add_argument("--response-json", required=True); p.add_argument("--event-id", required=True); p.add_argument("--payload-sha256", required=True)
+    p = commands.add_parser("acceptance-readback"); p.add_argument("--response-json", required=True); p.add_argument("--event-id", required=True); p.add_argument("--payload-sha256", required=True); p.add_argument("--message-id", required=True)
+    p = commands.add_parser("routing-binding-body"); p.add_argument("--release-id", required=True); p.add_argument("--processor-uri", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
     args = parser.parse_args()
     try:
         if args.command == "build-request":
@@ -788,8 +849,13 @@ def main() -> int:
         elif args.command == "verify-revision":
             verify_revision(load_json(args.revision_json), load_json(args.release), args.release_id, args.service)
         elif args.command == "acceptance-readback":
-            print(json.dumps(acceptance_readback(load_json(args.response_json), args.event_id, args.payload_sha256),
+            print(json.dumps(acceptance_readback(load_json(args.response_json), args.event_id,
+                                                 args.payload_sha256, args.message_id),
                              sort_keys=True, separators=(",", ":")))
+        elif args.command == "routing-binding-body":
+            print(processor_routing_binding_body(args.release_id, args.processor_uri,
+                                                 args.control_sha, args.run_id,
+                                                 args.run_attempt))
         return 0
     except Phase5Error as exc:
         print(f"PHASE5_CONTROL_STOPPED:{exc}", file=sys.stderr)

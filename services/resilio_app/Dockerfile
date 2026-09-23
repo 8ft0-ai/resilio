@@ -6,4 +6,4 @@ ENV PORT=8080
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
-ENTRYPOINT ["/usr/bin/python3", "/app/resilio_app/server.py"]
+ENTRYPOINT ["/usr/bin/python3", "-m", "resilio_app.server"]

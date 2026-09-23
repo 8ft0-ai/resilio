@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      issues: read
+      issues: write
       id-token: write
     steps:
       - name: Check out immutable Slice A control
@@ -37,6 +37,7 @@ jobs:
           test "$GITHUB_REPOSITORY" = "8ft0-ai/resilio"
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
           [[ "$RELEASE_RECORD_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           gh api "repos/$GITHUB_REPOSITORY/issues/comments/$RELEASE_RECORD_COMMENT_ID" > "$RUNNER_TEMP/release-record.json"
           python3 scripts/phase5_release_record.py validate \
@@ -78,6 +79,10 @@ jobs:
             python3 scripts/phase5_supply_chain.py verify-revision \
               --revision-json "$RUNNER_TEMP/$SERVICE-revision.json" \
               --release "$RUNNER_TEMP/release.json" --release-id "$RELEASE_ID" --service "$SERVICE"
+            if test "$SERVICE" = "resilio-processor"; then
+              PROCESSOR_URI="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["uri"])' "$RUNNER_TEMP/$SERVICE-verified.json")"
+              printf 'PROCESSOR_URI=%s\n' "$PROCESSOR_URI" >> "$GITHUB_ENV"
+            fi
             printf 'verified=%s revision=%s\n' "$SERVICE" "$REVISION" >> "$GITHUB_STEP_SUMMARY"
           done
 
@@ -95,3 +100,19 @@ jobs:
           test "$RC" -eq 0
           test "$HTTP" = "403"
           printf 'phase4_metadata_read=DENIED\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record durable processor routing binding after independent verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          BODY="$(python3 scripts/phase5_supply_chain.py routing-binding-body \
+            --release-id "$RELEASE_ID" --processor-uri "$PROCESSOR_URI" \
+            --control-sha "$CONTROL_SHA" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT")"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/109/comments" \
+            -f body="$BODY" > "$RUNNER_TEMP/routing-binding-comment.json"
+          COMMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$RUNNER_TEMP/routing-binding-comment.json")"
+          [[ "$COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          printf 'processor_routing_binding_comment=%s\n' "$COMMENT_ID" >> "$GITHUB_STEP_SUMMARY"

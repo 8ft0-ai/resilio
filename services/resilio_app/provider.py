@@ -120,11 +120,16 @@ class Store:
     def read_event(self, event_id: str) -> dict | None:
         return self._get("deployment_events", event_id)
 
-    def create_event(self, event_id: str, canonical: bytes, digest: str) -> str:
+    def create_event(self, event_id: str, canonical: bytes, digest: str,
+                     message_id: str) -> str:
+        if (not isinstance(message_id, str) or not message_id or len(message_id) > 128
+                or any(ord(c) > 127 or ord(c) < 33 for c in message_id)):
+            raise ProviderFailure("PUBSUB_MESSAGE_ID_INVALID")
         fields = {
             "event_id": event_id,
             "payload_sha256": digest,
             "observed_json": canonical.decode("utf-8"),
+            "first_pubsub_message_id": message_id,
             "first_observed_at": datetime.now(timezone.utc).isoformat(),
         }
         if self._create_or_reconcile("deployment_events", event_id, fields,

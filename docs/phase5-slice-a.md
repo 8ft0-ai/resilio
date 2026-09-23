@@ -77,3 +77,42 @@ CI success is evidence only. It grants no merge, WIF/IAM, Terraform apply,
 workflow dispatch, deployment or cloud authority. Pricing/free-tier assumptions,
 live Firestore database/location state and live provider/IAM state remain fresh
 preflight requirements before the first separately authorised cost-bearing plan.
+
+
+## Post-review bounded Gate 1 amendment
+
+Issue #109 comment `5793265711` is the governing bounded amendment for the
+remediation of PR #110 after the fresh `CHANGES_REQUIRED` review.
+
+The initial create path may mint the already-bounded product-deployer token
+before the authenticated all-three-services absence GET preflight. It still may
+perform no provider mutation until all three exact service absences have been
+proved, and it gains no update, delete or IAM-policy mutation path.
+
+Slice D may use its exact create-operation outcome plus bounded deployer
+readback as the create-only result entering D.5. D.5 remains a separately
+reviewed and authorised IAM transaction. Independent service/revision/IAM
+verification occurs immediately after successful D.5 reconciliation and must
+succeed before Slice E. The verifier requires its own immutable reusable WIF
+subject; no project-wide Cloud Run read role substitutes for that boundary.
+
+The independent verifier emits a durable routing binding only after successful
+attempt-1 verification. A routing Terraform candidate names that evidence
+comment and the exact observed `resilio-processor` URI. The trusted planner
+and applier revalidate both the comment and its successful protected-main
+workflow run before OIDC and bind the evidence into the reviewed private
+Terraform effect. A syntactically valid unrelated `*.run.app` URI therefore
+cannot establish routing authority.
+
+Product processing stores the first accepted Pub/Sub message ID as immutable
+transport metadata outside canonical event identity and payload hashing.
+Acceptance first proves the event absent through the API, then binds the ingest
+response message ID to the stored first ID; replay must retain the original
+stored ID while receiving a distinct transport message ID.
+
+The product image is executed as the `resilio_app.server` module. Repository
+CI and the reviewed Cloud Build request start the actual built image in each of
+the three component modes, check `/health`, and require an invalid selector to
+fail. Product Terraform planner/applier controls also fail before OIDC unless
+the caller is `8ft0-ai/resilio`, protected `main`, attempt 1. Future WIF
+bindings must preserve the same caller restriction independently.

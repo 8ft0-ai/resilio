@@ -64,7 +64,8 @@ def _message(raw: bytes) -> tuple[bytes, str, dict[str, str]]:
     }:
         raise PermanentFailure("PUSH_MESSAGE_INVALID")
     mid = msg.get("messageId", msg.get("message_id", ""))
-    if type(mid) is not str or len(mid) > 128 or any(ord(c) > 127 or ord(c) < 33 for c in mid):
+    if (type(mid) is not str or not mid or len(mid) > 128
+            or any(ord(c) > 127 or ord(c) < 33 for c in mid)):
         raise PermanentFailure("PUSH_MESSAGE_ID_INVALID")
     attributes = msg.get("attributes", {})
     if type(attributes) is not dict or set(attributes) - {"event_id", "payload_sha256"}:
@@ -112,7 +113,9 @@ def dispatch(component: str, method: str, path: str, body: bytes,
                     or (attributes.get("payload_sha256") is not None
                         and attributes["payload_sha256"] != event.payload_sha256)):
                 raise PermanentFailure("PERMANENT_IDENTITY_MISMATCH")
-            result = store.create_event(event.event_id, event.canonical_bytes, event.payload_sha256)
+            result = store.create_event(
+                event.event_id, event.canonical_bytes, event.payload_sha256, mid
+            )
             if result == "PERMANENT_IMMUTABLE_DEPLOYMENT_CONFLICT":
                 raise PermanentFailure(result)
             if result != "SUCCESS_NEW_OR_DUPLICATE":
@@ -140,6 +143,10 @@ def dispatch(component: str, method: str, path: str, body: bytes,
                 return _json_response(404, {"error": "NOT_FOUND"})
             if record.get("event_id") != match.group(1) or not isinstance(record.get("observed_json"), str):
                 return _json_response(503, {"error": "STATE_INTEGRITY_FAILURE"})
+            first_message_id = record.get("first_pubsub_message_id")
+            if (not isinstance(first_message_id, str) or not first_message_id
+                    or len(first_message_id) > 128):
+                return _json_response(503, {"error": "STATE_INTEGRITY_FAILURE"})
             try:
                 event = event_from_bytes(record["observed_json"].encode(), require_canonical=True)
             except PermanentFailure:
@@ -149,6 +156,7 @@ def dispatch(component: str, method: str, path: str, body: bytes,
             return _json_response(200, {"event_id": event.event_id,
                                         "payload_sha256": event.payload_sha256,
                                         "observed": event.observed,
+                                        "first_pubsub_message_id": first_message_id,
                                         "first_observed_at": record.get("first_observed_at", "")})
     return _json_response(404, {"error": "ROUTE_NOT_FOUND"})
 
