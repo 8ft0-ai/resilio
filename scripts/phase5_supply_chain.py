@@ -318,13 +318,12 @@ def _validate_build_options(build: dict[str, Any], expected: dict[str, Any]) -> 
             _require_default(actual.get(key), values, "BUILD_OPTIONS_MISMATCH")
 
 
-def validate_build(build: Any, source_sha: str, workflow_sha: str) -> dict[str, str]:
+def validate_build_request_identity(build: Any, source_sha: str,
+                                    workflow_sha: str) -> dict[str, str]:
     _sha(source_sha, "SOURCE")
     _sha(workflow_sha, "WORKFLOW")
     if not isinstance(build, dict) or set(build) - BUILD_OUTPUT_FIELDS - BUILD_INPUT_FIELDS:
         raise Phase5Error("BUILD_STRUCTURE_INVALID")
-    if build.get("status") != "SUCCESS":
-        raise Phase5Error("BUILD_NOT_SUCCESS")
     expected = build_request(source_sha, workflow_sha)
     source = build.get("source")
     if not isinstance(source, dict) or set(source) != {"gitSource"}:
@@ -334,9 +333,6 @@ def validate_build(build: Any, source_sha: str, workflow_sha: str) -> dict[str, 
         raise Phase5Error("BUILD_SOURCE_MISMATCH")
     if set(git) - {"url", "revision", "dir"} or git.get("dir") not in (None, ""):
         raise Phase5Error("BUILD_SOURCE_MISMATCH")
-    resolved = ((build.get("sourceProvenance") or {}).get("resolvedGitSource") or {})
-    if resolved.get("revision") != source_sha:
-        raise Phase5Error("BUILD_RESOLVED_SOURCE_MISMATCH")
     _validate_build_steps(build, expected)
     if build.get("images") != expected["images"]:
         raise Phase5Error("BUILD_IMAGES_MISMATCH")
@@ -353,6 +349,27 @@ def validate_build(build: Any, source_sha: str, workflow_sha: str) -> dict[str, 
         raise Phase5Error("BUILD_TIME_BOUND_MISMATCH")
     for key, values in EMPTY_BUILD.items():
         _require_default(build.get(key), values, "BUILD_BEHAVIOUR_MISMATCH")
+    build_id = str(build.get("id") or "")
+    if not BUILD_ID.fullmatch(build_id):
+        raise Phase5Error("BUILD_ID_INVALID")
+    status = build.get("status")
+    if not isinstance(status, str) or not status:
+        raise Phase5Error("BUILD_STATUS_INVALID")
+    return {
+        "build_id": build_id,
+        "source_sha": source_sha,
+        "control_sha": workflow_sha,
+        "status": status,
+    }
+
+
+def validate_build(build: Any, source_sha: str, workflow_sha: str) -> dict[str, str]:
+    identity = validate_build_request_identity(build, source_sha, workflow_sha)
+    if build.get("status") != "SUCCESS":
+        raise Phase5Error("BUILD_NOT_SUCCESS")
+    resolved = ((build.get("sourceProvenance") or {}).get("resolvedGitSource") or {})
+    if resolved.get("revision") != source_sha:
+        raise Phase5Error("BUILD_RESOLVED_SOURCE_MISMATCH")
     results = ((build.get("results") or {}).get("images") or [])
     digests = []
     for item in results:
@@ -364,9 +381,7 @@ def validate_build(build: Any, source_sha: str, workflow_sha: str) -> dict[str, 
             digests.append(digest)
     if len(digests) != 1:
         raise Phase5Error("BUILD_OUTPUT_DIGEST_AMBIGUOUS")
-    build_id = str(build.get("id") or "")
-    if not BUILD_ID.fullmatch(build_id):
-        raise Phase5Error("BUILD_ID_INVALID")
+    build_id = identity["build_id"]
     image = f"{IMAGE_PREFIX}@{digests[0]}"
     tests = {
         "contract": "resilio-phase5-tests/v1",
