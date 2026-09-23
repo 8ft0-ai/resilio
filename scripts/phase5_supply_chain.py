@@ -778,6 +778,13 @@ def verify_revision(revision: Any, envelope: Any, release_id: str, service_name:
         raise Phase5Error("REVISION_IMAGE_MISMATCH")
 
 
+def workflow_run_path_matches(run_path: Any, expected_path: str) -> bool:
+    if not isinstance(run_path, str):
+        return False
+    path, separator, ref = run_path.rpartition("@")
+    return separator == "@" and path == expected_path and ref == "main"
+
+
 def d5_reconciliation_body(control_sha: str, caller_sha: str,
                            run_id: str, run_attempt: int) -> str:
     _sha(control_sha, "CONTROL")
@@ -832,7 +839,7 @@ def validate_d5_reconciliation(comment: Any, comment_id: str, control_sha: str,
     if (run.get("run_attempt") != 1 or run.get("status") != "completed"
             or run.get("conclusion") != "success" or run.get("head_branch") != "main"
             or run.get("head_sha") != result["caller_sha"]
-            or run.get("path") != D5_RECONCILIATION_CALLER_PATH):
+            or not workflow_run_path_matches(run.get("path"), D5_RECONCILIATION_CALLER_PATH)):
         raise Phase5Error("D5_RECONCILIATION_RUN_NOT_TRUSTED")
     head_repo = run.get("head_repository") or {}
     repository = run.get("repository") or {}
