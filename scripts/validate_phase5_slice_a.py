@@ -42,6 +42,16 @@ def check():
         for forbidden in ("\n  workflow_dispatch:","\n  pull_request:","\n  push:","\n  schedule:",
                           "\n  repository_dispatch:","${{ secrets.","permissions: write-all","google_service_account_key"):
             if forbidden in text: errors.append(f"PHASE5_REUSABLE_ACTIVE_OR_SECRET_SURFACE:{name}:{forbidden}")
+    build=(ROOT/".github/workflows/phase5-build-reusable.yml").read_text()
+    for required in ("group: phase5-product-build-initiation","GITHUB_RUN_ATTEMPT",
+                     "PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECONCILING",
+                     "PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECOVERY_REQUIRED"):
+        if required not in build: errors.append(f"PHASE5_BUILD_ONCE_BOUNDARY_MISSING:{required}")
+    if build.count("phase5_build_select.py") < 2:
+        errors.append("PHASE5_BUILD_AMBIGUOUS_RECONCILIATION_MISSING")
+    if build.count('-X POST -H "Authorization: Bearer $TOKEN"') != 1:
+        errors.append("PHASE5_BUILD_CREATE_PATH_NOT_SINGLE")
+
     deploy=(ROOT/".github/workflows/phase5-deploy-reusable.yml").read_text()
     for name in ("phase5-terraform-plan-reusable.yml","phase5-terraform-apply-reusable.yml"):
         text=(ROOT/".github/workflows"/name).read_text(encoding="utf-8")
