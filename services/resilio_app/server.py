@@ -13,11 +13,11 @@ import os
 import re
 from typing import Any
 
-from resilio_app.core import (
+from .core import (
     MAX_EVENT_BYTES, PermanentFailure, _reject_duplicate_keys,
     _reject_number, event_from_bytes, jcs, sha256,
 )
-from resilio_app.provider import PROJECT, ProviderFailure, Publisher, Store
+from .provider import PROJECT, ProviderFailure, Publisher, Store
 
 
 COMPONENTS = {"ingest", "processor", "api"}

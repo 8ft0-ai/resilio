@@ -8,9 +8,9 @@ import json
 from pathlib import Path
 import sys
 
-from services.resilio_app.core import event_from_bytes
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from services.resilio_app.core import event_from_bytes
 RELEASE_ID = "a24dd47861df1e07f89116493071c70a3119d100611a59e0bb1a67d3fcba11f3"
 RELEASE = ROOT / "deployments" / "phase4" / "revisions" / (RELEASE_ID + ".json")
 FIXTURE = ROOT / "tests" / "fixtures" / "phase5-phase4-observed-v1.json"

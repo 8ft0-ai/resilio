@@ -1,0 +1,23 @@
+name: Phase 5 product acceptance — inert Slice A seed
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  inert:
+    name: not-authorised-for-live-use
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out repository without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check closed inert control and refuse execution
+        run: |
+          set -euo pipefail
+          python3 scripts/phase5_control_seed.py acceptance
+          exit 1
