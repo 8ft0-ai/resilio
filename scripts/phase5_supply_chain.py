@@ -737,7 +737,8 @@ def main() -> int:
     p = commands.add_parser("verify-deployment-consumption"); p.add_argument("--comments-json", required=True); p.add_argument("--authority-comment-id", required=True); p.add_argument("--release-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
     p = commands.add_parser("create-request"); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True); p.add_argument("--output", required=True)
     p = commands.add_parser("operation-outcome"); p.add_argument("--operation-json", required=True); p.add_argument("--service", required=True)
-    p = commands.add_parser("verify-created-service"); p.add_argument("--service-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)\n    p = commands.add_parser("verify-service"); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
+    p = commands.add_parser("verify-created-service"); p.add_argument("--service-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
+    p = commands.add_parser("verify-service"); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
     p = commands.add_parser("verify-revision"); p.add_argument("--revision-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
     p = commands.add_parser("acceptance-readback"); p.add_argument("--response-json", required=True); p.add_argument("--event-id", required=True); p.add_argument("--payload-sha256", required=True)
     args = parser.parse_args()
@@ -777,6 +778,9 @@ def main() -> int:
             Path(args.output).write_bytes(canonical_json_bytes(cloud_run_create_request(load_json(args.release), args.release_id, args.service)) + b"\n")
         elif args.command == "operation-outcome":
             print(json.dumps(operation_outcome(load_json(args.operation_json), args.service), sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-created-service":
+            print(json.dumps(verify_service_config(load_json(args.service_json), load_json(args.release), args.release_id, args.service),
+                             sort_keys=True, separators=(",", ":")))
         elif args.command == "verify-service":
             print(json.dumps(verify_service(load_json(args.service_json), load_json(args.policy_json),
                                             load_json(args.release), args.release_id, args.service),
