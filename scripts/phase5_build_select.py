@@ -2,7 +2,9 @@
 """Select at most one already-successful exact Phase 5 build."""
 from __future__ import annotations
 import argparse, json, sys
-from phase5_supply_chain import Phase5Error, build_tags, load_json, validate_build
+from phase5_supply_chain import (
+    Phase5Error, build_tags, load_json, validate_build_request_identity,
+)
 
 
 def select(payload, source_sha, workflow_sha):
@@ -14,14 +16,11 @@ def select(payload, source_sha, workflow_sha):
     matches=[]
     wanted=set(build_tags(source_sha,workflow_sha))
     for build in rows:
-        if not isinstance(build,dict) or build.get("status")!="SUCCESS":
-            continue
+        if not isinstance(build,dict):
+            raise Phase5Error("BUILD_LIST_ENTRY_INVALID")
         if set(build.get("tags") or []) != wanted:
             continue
-        try:
-            result=validate_build(build,source_sha,workflow_sha)
-        except Phase5Error:
-            continue
+        result=validate_build_request_identity(build,source_sha,workflow_sha)
         matches.append(result["build_id"])
     if len(matches)>1:
         raise Phase5Error("EXACT_BUILD_AMBIGUOUS")
