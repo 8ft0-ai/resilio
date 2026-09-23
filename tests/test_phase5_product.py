@@ -156,7 +156,7 @@ class ProductTests(unittest.TestCase):
         first = self.store.events[self.event.event_id].copy()
         self.assertEqual(first["first_observed_at"], "original")
         code, raw = dispatch("api", "GET", EVENT_PATH + "/" + self.event.event_id,
-                             self.publisher, self.store)
+                             b"", self.publisher, self.store)
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(raw)["payload_sha256"], self.event.payload_sha256)
         self.assertEqual(first, self.store.events[self.event.event_id])
