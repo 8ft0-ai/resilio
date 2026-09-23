@@ -20,7 +20,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from phase5_supply_chain import d5_reconciliation_comment, validate_d5_reconciliation
+from phase5_supply_chain import (
+    d5_reconciliation_comment, validate_d5_reconciliation, workflow_run_path_matches,
+)
 
 REPOSITORY = "8ft0-ai/resilio"
 REPOSITORY_ID = 1335801159
@@ -506,7 +508,8 @@ def routing_binding_from_documents(candidate: dict[str, Any], control_sha: str,
         raise ProductTerraformError("ROUTING_VERIFICATION_RUN_MISMATCH")
     if (run.get("run_attempt") != 1 or run.get("status") != "completed"
             or run.get("conclusion") != "success" or run.get("head_branch") != DEFAULT_BRANCH
-            or run.get("head_sha") != verifier_caller_sha or run.get("path") != VERIFY_CALLER_PATH):
+            or run.get("head_sha") != verifier_caller_sha
+            or not workflow_run_path_matches(run.get("path"), VERIFY_CALLER_PATH)):
         raise ProductTerraformError("ROUTING_VERIFICATION_RUN_NOT_SUCCESSFUL")
     head_repo = run.get("head_repository") or {}
     repository = run.get("repository") or {}
