@@ -1,23 +1,248 @@
-name: Phase 5 product deploy — inert Slice A seed
+name: Phase 5 product create-only deployment reusable
 
 on:
   workflow_call:
+    inputs:
+      authority_comment_id:
+        required: true
+        type: string
+      release_record_comment_id:
+        required: true
+        type: string
+    outputs:
+      release_id:
+        value: ${{ jobs.control.outputs.release_id }}
 
 permissions:
   contents: read
 
+concurrency:
+  group: phase5-product-create-authority
+  cancel-in-progress: false
+
 jobs:
-  inert:
-    name: not-authorised-for-live-use
+  control:
+    name: validate-and-consume-deployment-authority
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      release_id: ${{ steps.bind.outputs.release_id }}
+      release_generation: ${{ steps.bind.outputs.release_generation }}
+      consumption_comment_id: ${{ steps.bind.outputs.consumption_comment_id }}
     steps:
-      - name: Check out repository without persisted credentials
+      - name: Check out immutable Slice A control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
-      - name: Check closed inert control and refuse execution
+
+      - name: Bind immutable release and consume owner authority once
+        id: bind
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+          RELEASE_RECORD_COMMENT_ID: ${{ inputs.release_record_comment_id }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          python3 scripts/phase5_control_seed.py deploy
-          exit 1
+          test "$GITHUB_REPOSITORY" = "8ft0-ai/resilio"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          [[ "$AUTHORITY_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$RELEASE_RECORD_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$RELEASE_RECORD_COMMENT_ID" > "$RUNNER_TEMP/release-record.json"
+          python3 scripts/phase5_release_record.py validate \
+            --comment-json "$RUNNER_TEMP/release-record.json" \
+            --comment-id "$RELEASE_RECORD_COMMENT_ID" \
+            --output "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/release-record-meta.json"
+          RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/release-record-meta.json")"
+          RELEASE_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_generation"])' "$RUNNER_TEMP/release-record-meta.json")"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["control_sha"])' "$RUNNER_TEMP/release.json")" = "$CONTROL_SHA"
+
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$AUTHORITY_COMMENT_ID" > "$RUNNER_TEMP/authority.json"
+          python3 scripts/phase5_supply_chain.py validate-deployment-authority \
+            --comment-json "$RUNNER_TEMP/authority.json" --comment-id "$AUTHORITY_COMMENT_ID" \
+            > "$RUNNER_TEMP/authority-valid.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/authority-valid.json")" = "$RELEASE_ID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_generation"])' "$RUNNER_TEMP/authority-valid.json")" = "$RELEASE_GENERATION"
+
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/109/comments?per_page=100" > "$RUNNER_TEMP/comment-pages-before.json"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); json.dump([r for page in p for r in page],open(sys.argv[2],"w"),separators=(",",":"))' \
+            "$RUNNER_TEMP/comment-pages-before.json" "$RUNNER_TEMP/comments-before.json"
+          python3 scripts/phase5_supply_chain.py deployment-consumption-available \
+            --comments-json "$RUNNER_TEMP/comments-before.json" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID"
+
+          python3 scripts/phase5_supply_chain.py deployment-consumption-body \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/consumption.txt"
+          set +e
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/109/comments" \
+            -f body="$(cat "$RUNNER_TEMP/consumption.txt")" > "$RUNNER_TEMP/consumption-create.json"
+          CREATE_RC=$?
+          set -e
+          if test "$CREATE_RC" -ne 0; then
+            printf 'PHASE5_DEPLOYMENT_CONSUMPTION_CREATE_OUTCOME_AMBIGUOUS_RECONCILING\n'
+          fi
+
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/109/comments?per_page=100" > "$RUNNER_TEMP/comment-pages-after.json"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); json.dump([r for page in p for r in page],open(sys.argv[2],"w"),separators=(",",":"))' \
+            "$RUNNER_TEMP/comment-pages-after.json" "$RUNNER_TEMP/comments-after.json"
+          python3 scripts/phase5_supply_chain.py verify-deployment-consumption \
+            --comments-json "$RUNNER_TEMP/comments-after.json" \
+            --authority-comment-id "$AUTHORITY_COMMENT_ID" --release-id "$RELEASE_ID" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/consumption-valid.json"
+          CONSUMPTION_COMMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["comment_id"])' "$RUNNER_TEMP/consumption-valid.json")"
+          printf 'release_id=%s\n' "$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          printf 'release_generation=%s\n' "$RELEASE_GENERATION" >> "$GITHUB_OUTPUT"
+          printf 'consumption_comment_id=%s\n' "$CONSUMPTION_COMMENT_ID" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: create-exact-three-services-once
+    needs: control
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    steps:
+      - name: Check out immutable Slice A control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Rebind release and authority consumption before OIDC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_COMMENT_ID: ${{ inputs.authority_comment_id }}
+          RELEASE_RECORD_COMMENT_ID: ${{ inputs.release_record_comment_id }}
+          RELEASE_ID: ${{ needs.control.outputs.release_id }}
+          CONSUMPTION_COMMENT_ID: ${{ needs.control.outputs.consumption_comment_id }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$RELEASE_RECORD_COMMENT_ID" > "$RUNNER_TEMP/release-record.json"
+          python3 scripts/phase5_release_record.py validate \
+            --comment-json "$RUNNER_TEMP/release-record.json" --comment-id "$RELEASE_RECORD_COMMENT_ID" \
+            --output "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/release-record-meta.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/release-record-meta.json")" = "$RELEASE_ID"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["control_sha"])' "$RUNNER_TEMP/release.json")" = "$CONTROL_SHA"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/109/comments?per_page=100" > "$RUNNER_TEMP/comment-pages.json"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); json.dump([r for page in p for r in page],open(sys.argv[2],"w"),separators=(",",":"))' \
+            "$RUNNER_TEMP/comment-pages.json" "$RUNNER_TEMP/comments.json"
+          python3 scripts/phase5_supply_chain.py verify-deployment-consumption \
+            --comments-json "$RUNNER_TEMP/comments.json" --authority-comment-id "$AUTHORITY_COMMENT_ID" \
+            --release-id "$RELEASE_ID" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            > "$RUNNER_TEMP/consumption-valid.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["comment_id"])' "$RUNNER_TEMP/consumption-valid.json")" = "$CONSUMPTION_COMMENT_ID"
+
+      - name: Authenticate bounded create-only product deployer
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p5-deployer@resilio-reference-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 1200s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Reconcile exact evidence, image and create-if-absent precondition
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          RELEASE_ID: ${{ needs.control.outputs.release_id }}
+          RELEASE_GENERATION: ${{ needs.control.outputs.release_generation }}
+        run: |
+          set -euo pipefail
+          RELEASE_OBJECT="releases/$RELEASE_ID.json"
+          ENCODED_RELEASE="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$RELEASE_OBJECT")"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/download/storage/v1/b/resilio-control-e882d4-product-evidence/o/$ENCODED_RELEASE?alt=media&generation=$RELEASE_GENERATION" \
+            > "$RUNNER_TEMP/release-provider.json"
+          cmp "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/release-provider.json"
+          python3 scripts/phase5_supply_chain.py validate-release --file "$RUNNER_TEMP/release-provider.json" --release-id "$RELEASE_ID" > /dev/null
+
+          IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$RUNNER_TEMP/release.json")"
+          DIGEST="$(printf '%s' "$IMAGE" | sed 's/.*@//')"
+          curl --fail-with-body --silent --show-error --head \
+            -u "oauth2accesstoken:$TOKEN" \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            "https://us-central1-docker.pkg.dev/v2/resilio-control-e882d4/resilio-product/resilio-app/manifests/$DIGEST" \
+            > /dev/null
+
+          for SERVICE in resilio-ingest resilio-processor resilio-api; do
+            URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/$SERVICE"
+            set +e
+            HTTP="$(curl --silent --show-error --output "$RUNNER_TEMP/$SERVICE-pre.json" --write-out '%{http_code}' \
+              -H "Authorization: Bearer $TOKEN" "$URL")"
+            RC=$?
+            set -e
+            test "$RC" -eq 0
+            if test "$HTTP" != "404"; then
+              printf 'PHASE5_CREATE_IF_ABSENT_PRECONDITION_FAILED service=%s http=%s\n' "$SERVICE" "$HTTP" >&2
+              exit 1
+            fi
+          done
+
+      - name: Submit exactly three create-only provider mutations
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          RELEASE_ID: ${{ needs.control.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          for SERVICE in resilio-ingest resilio-processor resilio-api; do
+            BODY="$RUNNER_TEMP/$SERVICE-create.json"
+            RESPONSE="$RUNNER_TEMP/$SERVICE-create-response.json"
+            python3 scripts/phase5_supply_chain.py create-request \
+              --release "$RUNNER_TEMP/release.json" --release-id "$RELEASE_ID" \
+              --service "$SERVICE" --output "$BODY"
+            CREATE_URL="https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services?serviceId=$SERVICE"
+            set +e
+            HTTP="$(curl --silent --show-error --output "$RESPONSE" --write-out '%{http_code}' \
+              -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+              --data-binary "@$BODY" "$CREATE_URL")"
+            RC=$?
+            set -e
+            if test "$RC" -ne 0; then
+              printf 'PHASE5_CREATE_OUTCOME_UNKNOWN service=%s; no retry permitted\n' "$SERVICE" >&2
+              exit 1
+            fi
+            if ! [[ "$HTTP" =~ ^2[0-9][0-9]$ ]]; then
+              printf 'PHASE5_CREATE_FAILED_KNOWN service=%s http=%s\n' "$SERVICE" "$HTTP" >&2
+              exit 1
+            fi
+            OPERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("name",""))' "$RESPONSE")"
+            [[ "$OPERATION" =~ ^projects/resilio-reference-e882d4/locations/us-central1/operations/ ]]
+            DONE=""
+            for _ in $(seq 1 60); do
+              curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+                "https://run.googleapis.com/v2/$OPERATION" > "$RUNNER_TEMP/$SERVICE-operation.json"
+              DONE="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("done",False)).lower())' "$RUNNER_TEMP/$SERVICE-operation.json")"
+              test "$DONE" = "true" && break
+              sleep 5
+            done
+            test "$DONE" = "true"
+            python3 scripts/phase5_supply_chain.py operation-outcome \
+              --operation-json "$RUNNER_TEMP/$SERVICE-operation.json" --service "$SERVICE" > /dev/null
+            curl --fail-with-body --silent --show-error -H "Authorization: Bearer $TOKEN" \
+              "https://run.googleapis.com/v2/projects/resilio-reference-e882d4/locations/us-central1/services/$SERVICE" \
+              > "$RUNNER_TEMP/$SERVICE-service.json"
+            python3 scripts/phase5_supply_chain.py verify-created-service \
+              --service-json "$RUNNER_TEMP/$SERVICE-service.json" \
+              --release "$RUNNER_TEMP/release.json" --release-id "$RELEASE_ID" --service "$SERVICE" \
+              > "$RUNNER_TEMP/$SERVICE-created.json"
+            printf 'service=%s operation=%s\n' "$SERVICE" "$OPERATION" >> "$GITHUB_STEP_SUMMARY"
+          done

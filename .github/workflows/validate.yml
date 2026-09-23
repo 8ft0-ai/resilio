@@ -38,8 +38,11 @@ jobs:
       - name: Validate normal Terraform callers
         run: python3 scripts/validate_terraform_callers.py
 
-      - name: Validate Phase 5 inert product/control seed
+      - name: Validate Phase 5 trusted product/control seed
         run: python3 scripts/validate_phase5_slice_a.py
+
+      - name: Validate generated Phase 5 product Terraform configurations
+        run: python3 scripts/validate_phase5_terraform_seed.py
 
       - name: Verify reviewed Phase 4-derived acceptance fixture
         run: python3 scripts/phase5_acceptance_fixture.py > /dev/null

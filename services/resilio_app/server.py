@@ -22,7 +22,7 @@ from .provider import PROJECT, ProviderFailure, Publisher, Store
 
 COMPONENTS = {"ingest", "processor", "api"}
 EVENT_PATH = "/v1/deployments"
-PUSH_PATH = "/internal/pubsub/deployment-events"
+PUSH_PATH = "/"
 EVENT_READ = re.compile(r"/v1/deployments/([0-9a-f]{64})\Z")
 MAX_PUSH_BYTES = 65536
 

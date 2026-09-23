@@ -1,23 +1,212 @@
-name: Phase 5 product evidence — inert Slice A seed
+name: Phase 5 product evidence reusable
 
 on:
   workflow_call:
+    inputs:
+      build_id:
+        required: true
+        type: string
+    outputs:
+      release_id:
+        value: ${{ jobs.evidence.outputs.release_id }}
+      release_generation:
+        value: ${{ jobs.evidence.outputs.release_generation }}
+      release_record_comment_id:
+        value: ${{ jobs.evidence.outputs.release_record_comment_id }}
+      image:
+        value: ${{ jobs.evidence.outputs.image }}
 
 permissions:
   contents: read
 
 jobs:
-  inert:
-    name: not-authorised-for-live-use
+  evidence:
+    name: adjudicate-product-image-and-create-release
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    outputs:
+      release_id: ${{ steps.result.outputs.release_id }}
+      release_generation: ${{ steps.result.outputs.release_generation }}
+      release_record_comment_id: ${{ steps.result.outputs.release_record_comment_id }}
+      image: ${{ steps.result.outputs.image }}
     steps:
-      - name: Check out repository without persisted credentials
+      - name: Check out immutable Slice A control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
-      - name: Check closed inert control and refuse execution
+
+      - name: Validate exact build input before evidence OIDC
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
         run: |
           set -euo pipefail
-          python3 scripts/phase5_control_seed.py evidence
-          exit 1
+          test "$GITHUB_REPOSITORY" = "8ft0-ai/resilio"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          [[ "$BUILD_ID" =~ ^[0-9a-f-]{8,64}$ ]]
+
+      - name: Authenticate bounded Phase 5 evidence adjudicator
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p5-evidence@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 1200s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Bind build, scan, SBOM and immutable release
+        id: result
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          BUILD_ID: ${{ inputs.build_id }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BUILD="$RUNNER_TEMP/build.json"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds/$BUILD_ID" > "$BUILD"
+          IDENTITY="$RUNNER_TEMP/identity.json"
+          python3 scripts/phase5_supply_chain.py build-identity --build-json "$BUILD" > "$IDENTITY"
+          SOURCE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$IDENTITY")"
+          BUILD_CONTROL_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["control_sha"])' "$IDENTITY")"
+          IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image"])' "$IDENTITY")"
+          test "$BUILD_CONTROL_SHA" = "$CONTROL_SHA"
+          RESOURCE_URL="https://$IMAGE"
+
+          collect_occurrences() {
+            local FILTER="$1"
+            local PREFIX="$2"
+            local OUT="$3"
+            local NEXT=""
+            rm -f "$RUNNER_TEMP"/"$PREFIX"-page-*.json
+            for PAGE in $(seq 1 100); do
+              printf -v PAGE_FILE '%s/%s-page-%03d.json' "$RUNNER_TEMP" "$PREFIX" "$PAGE"
+              if test -n "$NEXT"; then
+                curl --fail-with-body --silent --show-error -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "X-Goog-User-Project: resilio-control-e882d4" \
+                  --data-urlencode "filter=$FILTER" --data-urlencode "pageSize=1000" \
+                  --data-urlencode "pageToken=$NEXT" \
+                  "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/occurrences" > "$PAGE_FILE"
+              else
+                curl --fail-with-body --silent --show-error -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  -H "X-Goog-User-Project: resilio-control-e882d4" \
+                  --data-urlencode "filter=$FILTER" --data-urlencode "pageSize=1000" \
+                  "https://containeranalysis.googleapis.com/v1/projects/resilio-control-e882d4/occurrences" > "$PAGE_FILE"
+              fi
+              NEXT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("nextPageToken",""))' "$PAGE_FILE")"
+              test -z "$NEXT" && break
+            done
+            test -z "$NEXT"
+            python3 -c 'import glob,json,sys; rows=[]; [rows.extend((json.load(open(p)).get("occurrences") or [])) for p in sorted(glob.glob(sys.argv[1]))]; json.dump({"occurrences":rows},open(sys.argv[2],"w"),separators=(",",":"))' \
+              "$RUNNER_TEMP/$PREFIX-page-*.json" "$OUT"
+          }
+
+          DISCOVERY="$RUNNER_TEMP/discovery.json"
+          VULN="$RUNNER_TEMP/vulnerabilities.json"
+          SCAN_META="$RUNNER_TEMP/scan-meta.json"
+          rm -f "$SCAN_META"
+          for _ in $(seq 1 30); do
+            collect_occurrences "(kind=\"DISCOVERY\" AND resourceUrl=\"$RESOURCE_URL\")" discovery "$DISCOVERY"
+            collect_occurrences "(kind=\"VULNERABILITY\" AND resourceUrl=\"$RESOURCE_URL\")" vulnerability "$VULN"
+            if python3 scripts/phase5_supply_chain.py scan-summary \
+              --discovery-json "$DISCOVERY" --vulnerability-json "$VULN" \
+              --image "$IMAGE" --output "$RUNNER_TEMP/scan-summary.json" > "$SCAN_META"; then
+              break
+            fi
+            rm -f "$SCAN_META"
+            sleep 10
+          done
+          test -s "$SCAN_META"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["disposition"])' "$SCAN_META")" = "PASS"
+          VULN_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$SCAN_META")"
+
+          SYFT_URL="https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz"
+          SYFT_ARCHIVE="$RUNNER_TEMP/syft.tar.gz"
+          SYFT_DIR="$RUNNER_TEMP/syft"
+          mkdir -m 0700 "$SYFT_DIR"
+          curl --fail-with-body --silent --show-error --location --proto '=https' --tlsv1.2 "$SYFT_URL" > "$SYFT_ARCHIVE"
+          test "$(sha256sum "$SYFT_ARCHIVE" | cut -d' ' -f1)" = "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3"
+          tar -xzf "$SYFT_ARCHIVE" -C "$SYFT_DIR" syft
+          "$SYFT_DIR/syft" version > "$RUNNER_TEMP/syft-version.txt"
+          grep -Eq '^Version:[[:space:]]*1\.51\.1[[:space:]]*$' "$RUNNER_TEMP/syft-version.txt"
+
+          SBOM="$RUNNER_TEMP/sbom.spdx.json"
+          SYFT_JSON="$RUNNER_TEMP/sbom.syft.json"
+          SYFT_REGISTRY_AUTH_AUTHORITY="us-central1-docker.pkg.dev" \
+          SYFT_REGISTRY_AUTH_USERNAME="oauth2accesstoken" \
+          SYFT_REGISTRY_AUTH_PASSWORD="$TOKEN" \
+            "$SYFT_DIR/syft" "$IMAGE" -o "spdx-json=$SBOM" -o "syft-json=$SYFT_JSON"
+          SBOM_META="$RUNNER_TEMP/sbom-meta.json"
+          python3 scripts/phase5_supply_chain.py validate-sbom --file "$SBOM" > "$SBOM_META"
+          python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); expected=sys.argv[2].rsplit("@",1)[1]; actual=((d.get("source") or {}).get("metadata") or {}).get("manifestDigest"); assert actual==expected, (actual,expected)' \
+            "$SYFT_JSON" "$IMAGE"
+          SBOM_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$SBOM_META")"
+          SBOM_SIZE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["size"])' "$SBOM_META")"
+          SBOM_OBJECT="sbom/$BUILD_ID.spdx.json"
+          ENCODED_SBOM="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$SBOM_OBJECT")"
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary "@$SBOM" \
+            "https://storage.googleapis.com/upload/storage/v1/b/resilio-control-e882d4-product-evidence/o?uploadType=media&name=$ENCODED_SBOM&ifGenerationMatch=0" \
+            > "$RUNNER_TEMP/sbom-upload.json"
+          SBOM_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$RUNNER_TEMP/sbom-upload.json")"
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/download/storage/v1/b/resilio-control-e882d4-product-evidence/o/$ENCODED_SBOM?alt=media&generation=$SBOM_GENERATION" \
+            > "$RUNNER_TEMP/sbom-readback.json"
+          test "$(sha256sum "$RUNNER_TEMP/sbom-readback.json" | cut -d' ' -f1)" = "$SBOM_SHA"
+          test "$(wc -c < "$RUNNER_TEMP/sbom-readback.json" | tr -d ' ')" = "$SBOM_SIZE"
+
+          RELEASE="$RUNNER_TEMP/release.json"
+          RELEASE_ID="$(python3 scripts/phase5_supply_chain.py release-envelope \
+            --build-json "$BUILD" --source-sha "$SOURCE_SHA" --workflow-sha "$CONTROL_SHA" \
+            --sbom-ref "$SBOM_OBJECT" --sbom-sha256 "$SBOM_SHA" --sbom-size "$SBOM_SIZE" \
+            --vulnerability-ref "artifactanalysis://$IMAGE" \
+            --vulnerability-sha256 "$VULN_SHA" --vulnerability-disposition PASS \
+            --output "$RELEASE")"
+          [[ "$RELEASE_ID" =~ ^[0-9a-f]{64}$ ]]
+          RELEASE_OBJECT="releases/$RELEASE_ID.json"
+          ENCODED_RELEASE="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$RELEASE_OBJECT")"
+          curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary "@$RELEASE" \
+            "https://storage.googleapis.com/upload/storage/v1/b/resilio-control-e882d4-product-evidence/o?uploadType=media&name=$ENCODED_RELEASE&ifGenerationMatch=0" \
+            > "$RUNNER_TEMP/release-upload.json"
+          RELEASE_GENERATION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["generation"])' "$RUNNER_TEMP/release-upload.json")"
+          [[ "$RELEASE_GENERATION" =~ ^[1-9][0-9]*$ ]]
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://storage.googleapis.com/download/storage/v1/b/resilio-control-e882d4-product-evidence/o/$ENCODED_RELEASE?alt=media&generation=$RELEASE_GENERATION" \
+            > "$RUNNER_TEMP/release-readback.json"
+          cmp "$RELEASE" "$RUNNER_TEMP/release-readback.json"
+
+          python3 scripts/phase5_release_record.py body \
+            --release "$RELEASE" --generation "$RELEASE_GENERATION" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/release-record.txt"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/109/comments" \
+            -f body="$(cat "$RUNNER_TEMP/release-record.txt")" > "$RUNNER_TEMP/release-record-create.json"
+          RECORD_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$RUNNER_TEMP/release-record-create.json")"
+          [[ "$RECORD_ID" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$RECORD_ID" > "$RUNNER_TEMP/release-record.json"
+          python3 scripts/phase5_release_record.py validate \
+            --comment-json "$RUNNER_TEMP/release-record.json" --comment-id "$RECORD_ID" \
+            --output "$RUNNER_TEMP/release-from-record.json" > /dev/null
+          cmp "$RELEASE" "$RUNNER_TEMP/release-from-record.json"
+
+          printf 'release_id=%s\n' "$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          printf 'release_generation=%s\n' "$RELEASE_GENERATION" >> "$GITHUB_OUTPUT"
+          printf 'release_record_comment_id=%s\n' "$RECORD_ID" >> "$GITHUB_OUTPUT"
+          printf 'image=%s\n' "$IMAGE" >> "$GITHUB_OUTPUT"

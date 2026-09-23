@@ -1,23 +1,154 @@
-name: Phase 5 product Terraform plan — inert Slice A seed
+name: Phase 5 product Terraform trusted planner reusable
 
 on:
   workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      candidate_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+    outputs:
+      evidence_object:
+        value: ${{ jobs.plan.outputs.evidence_object }}
+      effect_sha256:
+        value: ${{ jobs.plan.outputs.effect_sha256 }}
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
-  inert:
-    name: not-authorised-for-live-use
+  plan:
+    name: product-plan
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    outputs:
+      evidence_object: ${{ steps.effect.outputs.evidence_object }}
+      effect_sha256: ${{ steps.effect.outputs.effect_sha256 }}
     steps:
-      - name: Check out repository without persisted credentials
+      - name: Check out immutable Slice A Terraform control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
-      - name: Check closed inert control and refuse execution
+
+      - name: Set up exact Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Validate exact candidate as data before planner OIDC
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
         run: |
           set -euo pipefail
-          python3 scripts/phase5_control_seed.py terraform-plan
-          exit 1
+          test "$GITHUB_REPOSITORY" = "8ft0-ai/resilio"
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$PR_NUMBER" -gt 0
+          python3 scripts/phase5_terraform_control.py verify-pr \
+            --pr-number "$PR_NUMBER" --head-sha "$CANDIDATE_SHA" --base-sha "$BASE_SHA" --require-open
+          python3 scripts/phase5_terraform_control.py fetch-candidate \
+            --sha "$CANDIDATE_SHA" --output "$RUNNER_TEMP/candidate.json" > "$RUNNER_TEMP/candidate-meta.json"
+          python3 scripts/phase5_terraform_control.py assemble \
+            --trusted-root "$GITHUB_WORKSPACE" --candidate "$RUNNER_TEMP/candidate.json" \
+            --output "$RUNNER_TEMP/product" > "$RUNNER_TEMP/assembly.json"
+
+      - name: Authenticate bounded product planner
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 900s
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Produce private exact-effect evidence
+        id: effect
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/product"
+          STATE="$RUNNER_TEMP/state.json"
+          STATE_ID="$RUNNER_TEMP/state-id.json"
+          POST_STATE="$RUNNER_TEMP/post-state.json"
+          POST_STATE_ID="$RUNNER_TEMP/post-state-id.json"
+          PLAN="$RUNNER_TEMP/product.tfplan"
+          PLAN_JSON="$RUNNER_TEMP/plan.json"
+          PRIVATE="$RUNNER_TEMP/private-effect.json"
+          PUBLIC="$RUNNER_TEMP/public-manifest.json"
+          EVIDENCE_OBJECT="plan-evidence/product/pr-$PR_NUMBER-$CANDIDATE_SHA.json"
+
+          META="$(python3 scripts/phase5_terraform_control.py gcs-metadata --object product/default.tfstate --allow-absent)"
+          if test "$META" = "ABSENT"; then
+            printf '{}\n' > "$STATE"
+            GENERATION=ABSENT
+          else
+            GENERATION="$(printf '%s' "$META" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
+          fi
+
+          terraform -chdir="$WORK" init -input=false -lockfile=readonly >/dev/null
+          if test "$GENERATION" != "ABSENT"; then
+            terraform -chdir="$WORK" state pull > "$STATE"
+          fi
+          python3 scripts/phase5_terraform_control.py state-identity \
+            --state-json "$STATE" --generation "$GENERATION" --output "$STATE_ID"
+
+          terraform -chdir="$WORK" plan -input=false -out="$PLAN" >/dev/null
+          terraform -chdir="$WORK" show -json "$PLAN" > "$PLAN_JSON"
+
+          POST_META="$(python3 scripts/phase5_terraform_control.py gcs-metadata --object product/default.tfstate --allow-absent)"
+          if test "$POST_META" = "ABSENT"; then
+            printf '{}\n' > "$POST_STATE"
+            POST_GENERATION=ABSENT
+          else
+            POST_GENERATION="$(printf '%s' "$POST_META" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
+            terraform -chdir="$WORK" state pull > "$POST_STATE"
+          fi
+          python3 scripts/phase5_terraform_control.py state-identity \
+            --state-json "$POST_STATE" --generation "$POST_GENERATION" --output "$POST_STATE_ID"
+          cmp "$STATE_ID" "$POST_STATE_ID"
+
+          TREE_SHA="$(cat "$WORK/backend.tf" "$WORK/provider.tf" "$WORK/versions.tf" "$WORK/.terraform.lock.hcl" | sha256sum | cut -d' ' -f1)"
+          LOCK_SHA="$(sha256sum "$WORK/.terraform.lock.hcl" | cut -d' ' -f1)"
+          python3 scripts/phase5_terraform_control.py build-effect \
+            --plan-json "$PLAN_JSON" --candidate "$RUNNER_TEMP/candidate.json" \
+            --state-identity "$STATE_ID" --pr-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA" \
+            --control-sha "$CONTROL_SHA" --trusted-tree-sha256 "$TREE_SHA" \
+            --provider-lock-sha256 "$LOCK_SHA" --private-output "$PRIVATE" \
+            --public-output "$PUBLIC" --run-id "$GITHUB_RUN_ID" \
+            --evidence-object "$EVIDENCE_OBJECT"
+          python3 scripts/phase5_terraform_control.py upload-effect \
+            --object "$EVIDENCE_OBJECT" --file "$PRIVATE" > "$RUNNER_TEMP/evidence-upload.json"
+
+          EFFECT_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["effect_sha256"])' "$PRIVATE")"
+          printf 'evidence_object=%s\n' "$EVIDENCE_OBJECT" >> "$GITHUB_OUTPUT"
+          printf 'effect_sha256=%s\n' "$EFFECT_SHA" >> "$GITHUB_OUTPUT"
+          cat "$PUBLIC"
+
+      - name: Remove generated WIF credential material
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE"/gha-creds-*.json "$RUNNER_TEMP"/gha-creds-*.json
