@@ -105,10 +105,12 @@ class SupplyChainTests(unittest.TestCase):
         d5_body=d5_reconciliation_body(CONTROL,"3"*40,"321",1)
         d5_comment={"id":222,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109","body":d5_body,"user":{"login":"github-actions[bot]","id":41898282}}
         d5_run={"id":321,"run_attempt":1,"status":"completed","conclusion":"success","head_branch":"main","head_sha":"3"*40,
-            "path":".github/workflows/phase5-d5-iam-reconcile.yml","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"}}
+            "path":".github/workflows/phase5-d5-iam-reconcile.yml@main","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"}}
         self.assertEqual(validate_d5_reconciliation(d5_comment,"222",CONTROL,d5_run)["caller_sha"],"3"*40)
-        bad_run=copy.deepcopy(d5_run);bad_run["path"]=".github/workflows/unrelated.yml"
+        bad_run=copy.deepcopy(d5_run);bad_run["path"]=".github/workflows/unrelated.yml@main"
         with self.assertRaises(Phase5Error): validate_d5_reconciliation(d5_comment,"222",CONTROL,bad_run)
+        wrong_ref=copy.deepcopy(d5_run);wrong_ref["path"]=".github/workflows/phase5-d5-iam-reconcile.yml@feature"
+        with self.assertRaises(Phase5Error): validate_d5_reconciliation(d5_comment,"222",CONTROL,wrong_ref)
         bad_comment=copy.deepcopy(d5_comment);bad_comment["body"]=bad_comment["body"].replace("acceptance_project_run_roles=ABSENT","acceptance_project_run_roles=PRESENT")
         with self.assertRaises(Phase5Error): validate_d5_reconciliation(bad_comment,"222",CONTROL,d5_run)
 
@@ -183,19 +185,21 @@ class TerraformControlTests(unittest.TestCase):
         d5_body=d5_reconciliation_body(CONTROL,"4"*40,"321",1)
         d5_comment={"id":222,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109","body":d5_body,"user":{"login":"github-actions[bot]","id":41898282}}
         d5_run={"id":321,"run_attempt":1,"status":"completed","conclusion":"success","head_branch":"main","head_sha":"4"*40,
-            "path":".github/workflows/phase5-d5-iam-reconcile.yml","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"}}
+            "path":".github/workflows/phase5-d5-iam-reconcile.yml@main","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"}}
         body=processor_routing_binding_body("f"*64,uri,CONTROL,"222",caller_sha,"456",1)
         comment={"id":123,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109",
                  "body":body,"user":{"login":"github-actions[bot]","id":41898282}}
         run={"id":456,"run_attempt":1,"status":"completed","conclusion":"success","head_branch":"main","head_sha":caller_sha,
-             "path":".github/workflows/phase5-verify.yml","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"},
+             "path":".github/workflows/phase5-verify.yml@main","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"},
              "referenced_workflows":[{"path":f"8ft0-ai/resilio/.github/workflows/phase5-verify-reusable.yml@{CONTROL}","sha":CONTROL}]}
         binding=routing_binding_from_documents(candidate,CONTROL,comment,run,d5_comment,d5_run)
         self.assertEqual(binding["processor_resource"],PROCESSOR_RESOURCE)
         self.assertEqual(binding["d5_reconciliation_comment_id"],"222")
         unrelated=self.candidate("routing","https://unrelated-abc-uc.a.run.app","123")
         with self.assertRaises(ProductTerraformError): routing_binding_from_documents(unrelated,CONTROL,comment,run,d5_comment,d5_run)
-        hostile=copy.deepcopy(run);hostile["path"]=".github/workflows/other-protected-main.yml"
+        hostile=copy.deepcopy(run);hostile["path"]=".github/workflows/other-protected-main.yml@main"
+        with self.assertRaises(ProductTerraformError): routing_binding_from_documents(candidate,CONTROL,comment,hostile,d5_comment,d5_run)
+        hostile=copy.deepcopy(run);hostile["path"]=".github/workflows/phase5-verify.yml@feature"
         with self.assertRaises(ProductTerraformError): routing_binding_from_documents(candidate,CONTROL,comment,hostile,d5_comment,d5_run)
         hostile=copy.deepcopy(run);hostile["referenced_workflows"][0]["sha"]="9"*40
         with self.assertRaises(ProductTerraformError): routing_binding_from_documents(candidate,CONTROL,comment,hostile,d5_comment,d5_run)
