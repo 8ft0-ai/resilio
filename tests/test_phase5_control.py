@@ -15,6 +15,7 @@ from phase5_supply_chain import (
     validate_d5_reconciliation, validate_release, verify_deployment_consumption,
     verify_service, verify_service_config,
 )
+from phase5_build_select import select
 from phase5_release_record import record_body, validate_record
 from phase5_terraform_control import (
     BASE_ADDRESSES, PROCESSOR_RESOURCE, ProductTerraformError, expected_creates,
@@ -46,6 +47,25 @@ class SupplyChainTests(unittest.TestCase):
         self.assertEqual(result["image"],f"us-central1-docker.pkg.dev/{CONTROL_PROJECT}/resilio-product/resilio-app@{DIGEST}")
         bad=successful_build();bad["steps"][0]["args"]=["/workspace/unauthorised.py"]
         with self.assertRaises(Phase5Error): validate_build(bad,SOURCE,CONTROL)
+    def test_build_recovery_reuses_inflight_identity_and_duplicates_fail_closed(self):
+        working=successful_build();working["status"]="WORKING";working["results"]={}
+        self.assertEqual(select({"builds":[working]},SOURCE,CONTROL),"12345678-abcd")
+        duplicate=copy.deepcopy(working);duplicate["id"]="87654321-abcd"
+        with self.assertRaises(Phase5Error):
+            select({"builds":[working,duplicate]},SOURCE,CONTROL)
+        malformed=copy.deepcopy(working);malformed["steps"][0]["args"]=["/workspace/unauthorised.py"]
+        with self.assertRaises(Phase5Error):
+            select({"builds":[malformed]},SOURCE,CONTROL)
+
+    def test_build_workflow_serialises_first_attempt_and_reconciles_ambiguous_create(self):
+        text=(ROOT/".github/workflows/phase5-build-reusable.yml").read_text(encoding="utf-8")
+        self.assertIn("group: phase5-product-build-initiation",text)
+        self.assertGreaterEqual(text.count('test "$GITHUB_RUN_ATTEMPT" = "1"'),2)
+        self.assertIn("PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECONCILING",text)
+        self.assertIn("PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECOVERY_REQUIRED",text)
+        self.assertGreaterEqual(text.count("phase5_build_select.py"),2)
+        self.assertEqual(text.count('-X POST -H "Authorization: Bearer $TOKEN"'),1)
+
     def test_release_is_one_digest_three_independent_runtime_principals(self):
         value=release();rid=validate_release(value);self.assertEqual(len(rid),64)
         self.assertEqual(set(value["services"]),set(SERVICES))
