@@ -7,12 +7,13 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 sys.path.insert(0,str(ROOT/"scripts"))
 from phase5_supply_chain import (
-    CONTROL_PROJECT, OWNER_ID, OWNER_LOGIN, REFERENCE_PROJECT, SERVICES,
-    Phase5Error, acceptance_readback, build_request, cloud_run_create_request,
-    processor_routing_binding_body,
-    deployment_authority, deployment_consumption_available,
-    deployment_consumption_body, image_tag, release_envelope, validate_build,
-    validate_release, verify_deployment_consumption, verify_service_config,
+    ACCEPTANCE_READER_ROLE, CONTROL_PROJECT, OWNER_ID, OWNER_LOGIN,
+    REFERENCE_PROJECT, SERVICES, Phase5Error, acceptance_readback, build_request,
+    cloud_run_create_request, d5_reconciliation_body, deployment_authority,
+    deployment_consumption_available, deployment_consumption_body, image_tag,
+    processor_routing_binding_body, release_envelope, validate_build,
+    validate_d5_reconciliation, validate_release, verify_deployment_consumption,
+    verify_service, verify_service_config,
 )
 from phase5_release_record import record_body, validate_record
 from phase5_terraform_control import (
@@ -70,6 +71,47 @@ class SupplyChainTests(unittest.TestCase):
         self.assertEqual(verify_service_config(observed,value,rid,service)["uri"],observed["uri"])
         observed["template"]["serviceAccount"]=SERVICES["resilio-api"]["runtime_service_account"]
         with self.assertRaises(Phase5Error): verify_service_config(observed,value,rid,service)
+    def test_exact_service_iam_graph_and_d5_project_negative_reconciliation(self):
+        value=release();rid=validate_release(value)
+        acceptance=f"serviceAccount:github-p5-acceptance@{REFERENCE_PROJECT}.iam.gserviceaccount.com"
+        push=f"serviceAccount:p5-pubsub-push@{REFERENCE_PROJECT}.iam.gserviceaccount.com"
+        expected={
+            "resilio-ingest":{"roles/run.servicesInvoker":[acceptance],ACCEPTANCE_READER_ROLE:[acceptance]},
+            "resilio-processor":{"roles/run.invoker":[push],ACCEPTANCE_READER_ROLE:[acceptance]},
+            "resilio-api":{"roles/run.servicesInvoker":[acceptance],ACCEPTANCE_READER_ROLE:[acceptance]},
+        }
+        def observed(service):
+            config=value["services"][service]
+            return {"name":config["resource"],"uri":f"https://{service}-abc-uc.a.run.app",
+                "latestReadyRevision":config["resource"]+f"/revisions/{service}-00001-abc",
+                "template":{"serviceAccount":config["runtime_service_account"],"timeout":"10s",
+                    "maxInstanceRequestConcurrency":10,"scaling":{"minInstanceCount":0,"maxInstanceCount":1},
+                    "containers":[{"image":value["image"],"env":[
+                        {"name":"GOOGLE_CLOUD_PROJECT","value":REFERENCE_PROJECT},
+                        {"name":"RESILIO_COMPONENT","value":SERVICES[service]["component"]}]}]}}
+        for service,roles in expected.items():
+            policy={"bindings":[{"role":role,"members":members} for role,members in roles.items()]}
+            self.assertEqual(verify_service(observed(service),policy,value,rid,service)["service"],value["services"][service]["resource"])
+            missing=copy.deepcopy(policy);missing["bindings"].pop()
+            with self.assertRaises(Phase5Error): verify_service(observed(service),missing,value,rid,service)
+            extra=copy.deepcopy(policy);extra["bindings"][0]["members"].append("serviceAccount:unexpected@example.iam.gserviceaccount.com")
+            with self.assertRaises(Phase5Error): verify_service(observed(service),extra,value,rid,service)
+        bad={"bindings":[{"role":r,"members":m} for r,m in expected["resilio-processor"].items()]+[{"role":"roles/run.servicesInvoker","members":[acceptance]}]}
+        with self.assertRaises(Phase5Error): verify_service(observed("resilio-processor"),bad,value,rid,"resilio-processor")
+        bad={"bindings":[{"role":r,"members":m} for r,m in expected["resilio-ingest"].items()]+[{"role":"roles/run.invoker","members":[push]}]}
+        with self.assertRaises(Phase5Error): verify_service(observed("resilio-ingest"),bad,value,rid,"resilio-ingest")
+        bad={"bindings":[{"role":r,"members":m} for r,m in expected["resilio-api"].items()]+[{"role":"roles/run.invoker","members":[push]}]}
+        with self.assertRaises(Phase5Error): verify_service(observed("resilio-api"),bad,value,rid,"resilio-api")
+        d5_body=d5_reconciliation_body(CONTROL,"3"*40,"321",1)
+        d5_comment={"id":222,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109","body":d5_body,"user":{"login":"github-actions[bot]","id":41898282}}
+        d5_run={"id":321,"run_attempt":1,"status":"completed","conclusion":"success","head_branch":"main","head_sha":"3"*40,
+            "path":".github/workflows/phase5-d5-iam-reconcile.yml","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"}}
+        self.assertEqual(validate_d5_reconciliation(d5_comment,"222",CONTROL,d5_run)["caller_sha"],"3"*40)
+        bad_run=copy.deepcopy(d5_run);bad_run["path"]=".github/workflows/unrelated.yml"
+        with self.assertRaises(Phase5Error): validate_d5_reconciliation(d5_comment,"222",CONTROL,bad_run)
+        bad_comment=copy.deepcopy(d5_comment);bad_comment["body"]=bad_comment["body"].replace("acceptance_project_run_roles=ABSENT","acceptance_project_run_roles=PRESENT")
+        with self.assertRaises(Phase5Error): validate_d5_reconciliation(bad_comment,"222",CONTROL,d5_run)
+
     def test_owner_deployment_authority_and_consumption_are_exactly_once(self):
         rid=validate_release(release());body=f"PHASE5_DEPLOYMENT_AUTHORITY_V1 release_id={rid} release_generation=7"
         authority=deployment_authority(comment(101,body),"101");self.assertEqual(authority["release_id"],rid)
@@ -137,16 +179,26 @@ class TerraformControlTests(unittest.TestCase):
     def test_routing_binding_requires_exact_independent_processor_observation(self):
         uri="https://resilio-processor-abc-uc.a.run.app"
         candidate=self.candidate("routing",uri,"123")
-        body=processor_routing_binding_body("f"*64,uri,CONTROL,"456",1)
+        caller_sha="3"*40
+        d5_body=d5_reconciliation_body(CONTROL,"4"*40,"321",1)
+        d5_comment={"id":222,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109","body":d5_body,"user":{"login":"github-actions[bot]","id":41898282}}
+        d5_run={"id":321,"run_attempt":1,"status":"completed","conclusion":"success","head_branch":"main","head_sha":"4"*40,
+            "path":".github/workflows/phase5-d5-iam-reconcile.yml","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"}}
+        body=processor_routing_binding_body("f"*64,uri,CONTROL,"222",caller_sha,"456",1)
         comment={"id":123,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109",
                  "body":body,"user":{"login":"github-actions[bot]","id":41898282}}
-        run={"id":456,"run_attempt":1,"status":"completed","conclusion":"success",
-             "head_branch":"main","head_repository":{"full_name":"8ft0-ai/resilio"}}
-        binding=routing_binding_from_documents(candidate,CONTROL,comment,run)
+        run={"id":456,"run_attempt":1,"status":"completed","conclusion":"success","head_branch":"main","head_sha":caller_sha,
+             "path":".github/workflows/phase5-verify.yml","head_repository":{"full_name":"8ft0-ai/resilio"},"repository":{"full_name":"8ft0-ai/resilio"},
+             "referenced_workflows":[{"path":f"8ft0-ai/resilio/.github/workflows/phase5-verify-reusable.yml@{CONTROL}","sha":CONTROL}]}
+        binding=routing_binding_from_documents(candidate,CONTROL,comment,run,d5_comment,d5_run)
         self.assertEqual(binding["processor_resource"],PROCESSOR_RESOURCE)
+        self.assertEqual(binding["d5_reconciliation_comment_id"],"222")
         unrelated=self.candidate("routing","https://unrelated-abc-uc.a.run.app","123")
-        with self.assertRaises(ProductTerraformError):
-            routing_binding_from_documents(unrelated,CONTROL,comment,run)
+        with self.assertRaises(ProductTerraformError): routing_binding_from_documents(unrelated,CONTROL,comment,run,d5_comment,d5_run)
+        hostile=copy.deepcopy(run);hostile["path"]=".github/workflows/other-protected-main.yml"
+        with self.assertRaises(ProductTerraformError): routing_binding_from_documents(candidate,CONTROL,comment,hostile,d5_comment,d5_run)
+        hostile=copy.deepcopy(run);hostile["referenced_workflows"][0]["sha"]="9"*40
+        with self.assertRaises(ProductTerraformError): routing_binding_from_documents(candidate,CONTROL,comment,hostile,d5_comment,d5_run)
 
     def test_material_effect_is_create_only_and_stage_exact(self):
         rows=[]

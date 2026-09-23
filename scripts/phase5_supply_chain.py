@@ -35,6 +35,14 @@ DEPLOYER = f"github-p5-deployer@{REFERENCE_PROJECT}.iam.gserviceaccount.com"
 ACCEPTANCE = f"github-p5-acceptance@{REFERENCE_PROJECT}.iam.gserviceaccount.com"
 PUSH_IDENTITY = f"p5-pubsub-push@{REFERENCE_PROJECT}.iam.gserviceaccount.com"
 WIF_PROVIDER = "projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio"
+ACCEPTANCE_MEMBER = f"serviceAccount:{ACCEPTANCE}"
+PUSH_MEMBER = f"serviceAccount:{PUSH_IDENTITY}"
+ACCEPTANCE_READER_ROLE = f"projects/{REFERENCE_PROJECT}/roles/resilio_p5_acceptance_reader"
+GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
+GITHUB_ACTIONS_BOT_ID = 41898282
+D5_RECONCILIATION_CALLER_PATH = ".github/workflows/phase5-d5-iam-reconcile.yml"
+VERIFY_CALLER_PATH = ".github/workflows/phase5-verify.yml"
+VERIFY_REUSABLE_PATH = ".github/workflows/phase5-verify-reusable.yml"
 
 PYTHON_RUNTIME_IMAGE = (
     "gcr.io/distroless/python3-debian13@"
@@ -57,6 +65,20 @@ SERVICES = {
     "resilio-api": {
         "component": "api",
         "runtime_service_account": f"p5-api-runtime@{REFERENCE_PROJECT}.iam.gserviceaccount.com",
+    },
+}
+EXPECTED_SERVICE_IAM = {
+    "resilio-ingest": {
+        "roles/run.servicesInvoker": (ACCEPTANCE_MEMBER,),
+        ACCEPTANCE_READER_ROLE: (ACCEPTANCE_MEMBER,),
+    },
+    "resilio-processor": {
+        "roles/run.invoker": (PUSH_MEMBER,),
+        ACCEPTANCE_READER_ROLE: (ACCEPTANCE_MEMBER,),
+    },
+    "resilio-api": {
+        "roles/run.servicesInvoker": (ACCEPTANCE_MEMBER,),
+        ACCEPTANCE_READER_ROLE: (ACCEPTANCE_MEMBER,),
     },
 }
 SERVICE_NAMES = tuple(SERVICES)
@@ -715,17 +737,33 @@ def verify_service_config(service: Any, envelope: Any, release_id: str,
     return {"uri": uri, "revision": revision, "service": expected_name}
 
 
+def verify_service_policy(policy: Any, service_name: str) -> None:
+    if service_name not in EXPECTED_SERVICE_IAM or not isinstance(policy, dict):
+        raise Phase5Error("SERVICE_IAM_INVALID")
+    bindings = policy.get("bindings", [])
+    if not isinstance(bindings, list):
+        raise Phase5Error("SERVICE_IAM_INVALID")
+    actual: dict[str, tuple[str, ...]] = {}
+    for binding in bindings:
+        if not isinstance(binding, dict) or set(binding) != {"role", "members"}:
+            raise Phase5Error("SERVICE_IAM_BINDING_INVALID")
+        role, members = binding["role"], binding["members"]
+        if (not isinstance(role, str) or not role or not isinstance(members, list)
+                or not members or any(not isinstance(member, str) or not member for member in members)
+                or len(set(members)) != len(members) or role in actual):
+            raise Phase5Error("SERVICE_IAM_BINDING_INVALID")
+        if "allUsers" in members or "allAuthenticatedUsers" in members:
+            raise Phase5Error("SERVICE_PUBLIC_PRINCIPAL_FORBIDDEN")
+        actual[role] = tuple(sorted(members))
+    expected = {role: tuple(sorted(members)) for role, members in EXPECTED_SERVICE_IAM[service_name].items()}
+    if actual != expected:
+        raise Phase5Error("SERVICE_IAM_GRAPH_MISMATCH")
+
+
 def verify_service(service: Any, policy: Any, envelope: Any, release_id: str,
                    service_name: str) -> dict[str, str]:
     result = verify_service_config(service, envelope, release_id, service_name)
-    if not isinstance(policy, dict):
-        raise Phase5Error("SERVICE_IAM_INVALID")
-    for binding in policy.get("bindings") or []:
-        if not isinstance(binding, dict):
-            raise Phase5Error("SERVICE_IAM_INVALID")
-        members = binding.get("members") or []
-        if "allUsers" in members or "allAuthenticatedUsers" in members:
-            raise Phase5Error("SERVICE_PUBLIC_PRINCIPAL_FORBIDDEN")
+    verify_service_policy(policy, service_name)
     return result
 
 def verify_revision(revision: Any, envelope: Any, release_id: str, service_name: str) -> None:
@@ -738,6 +776,69 @@ def verify_revision(revision: Any, envelope: Any, release_id: str, service_name:
     containers = revision.get("containers") or []
     if not isinstance(containers, list) or len(containers) != 1 or containers[0].get("image") != envelope["image"]:
         raise Phase5Error("REVISION_IMAGE_MISMATCH")
+
+
+def d5_reconciliation_body(control_sha: str, caller_sha: str,
+                           run_id: str, run_attempt: int) -> str:
+    _sha(control_sha, "CONTROL")
+    _sha(caller_sha, "CALLER")
+    if not RUN_ID.fullmatch(str(run_id)) or run_attempt != 1:
+        raise Phase5Error("D5_RECONCILIATION_RUN_INVALID")
+    return (
+        "PHASE5_D5_IAM_RECONCILIATION_V1 "
+        f"control_sha={control_sha} caller_sha={caller_sha} "
+        f"reconciliation_run_id={run_id} reconciliation_run_attempt=1 "
+        "acceptance_project_run_roles=ABSENT push_project_run_roles=ABSENT "
+        "acceptance_project_mutation_permissions=ABSENT "
+        "acceptance_phase4_authority=ABSENT push_phase4_authority=ABSENT"
+    )
+
+
+def d5_reconciliation_comment(comment: Any, comment_id: str,
+                              control_sha: str) -> dict[str, str]:
+    if not COMMENT_ID.fullmatch(str(comment_id)) or not FULL_SHA.fullmatch(control_sha):
+        raise Phase5Error("D5_RECONCILIATION_IDENTITY_INVALID")
+    if not isinstance(comment, dict) or str(comment.get("id") or "") != str(comment_id):
+        raise Phase5Error("D5_RECONCILIATION_COMMENT_MISMATCH")
+    if not str(comment.get("issue_url") or "").endswith(f"/issues/{GOVERNING_ISSUE}"):
+        raise Phase5Error("D5_RECONCILIATION_ISSUE_MISMATCH")
+    user = comment.get("user") or {}
+    if user.get("login") != GITHUB_ACTIONS_BOT_LOGIN or user.get("id") != GITHUB_ACTIONS_BOT_ID:
+        raise Phase5Error("D5_RECONCILIATION_AUTHOR_MISMATCH")
+    match = re.fullmatch(
+        r"PHASE5_D5_IAM_RECONCILIATION_V1 "
+        r"control_sha=([0-9a-f]{40}) caller_sha=([0-9a-f]{40}) "
+        r"reconciliation_run_id=([1-9][0-9]{0,19}) reconciliation_run_attempt=1 "
+        r"acceptance_project_run_roles=ABSENT push_project_run_roles=ABSENT "
+        r"acceptance_project_mutation_permissions=ABSENT "
+        r"acceptance_phase4_authority=ABSENT push_phase4_authority=ABSENT",
+        str(comment.get("body") or ""),
+    )
+    if not match:
+        raise Phase5Error("D5_RECONCILIATION_BODY_INVALID")
+    recorded_control, caller_sha, run_id = match.groups()
+    if recorded_control != control_sha:
+        raise Phase5Error("D5_RECONCILIATION_CONTROL_MISMATCH")
+    return {"comment_id": str(comment_id), "control_sha": recorded_control,
+            "caller_sha": caller_sha, "reconciliation_run_id": run_id,
+            "reconciliation_run_attempt": "1"}
+
+
+def validate_d5_reconciliation(comment: Any, comment_id: str, control_sha: str,
+                               run: Any) -> dict[str, str]:
+    result = d5_reconciliation_comment(comment, comment_id, control_sha)
+    if not isinstance(run, dict) or str(run.get("id") or "") != result["reconciliation_run_id"]:
+        raise Phase5Error("D5_RECONCILIATION_RUN_MISMATCH")
+    if (run.get("run_attempt") != 1 or run.get("status") != "completed"
+            or run.get("conclusion") != "success" or run.get("head_branch") != "main"
+            or run.get("head_sha") != result["caller_sha"]
+            or run.get("path") != D5_RECONCILIATION_CALLER_PATH):
+        raise Phase5Error("D5_RECONCILIATION_RUN_NOT_TRUSTED")
+    head_repo = run.get("head_repository") or {}
+    repository = run.get("repository") or {}
+    if head_repo.get("full_name") != REPOSITORY or repository.get("full_name") != REPOSITORY:
+        raise Phase5Error("D5_RECONCILIATION_REPOSITORY_MISMATCH")
+    return result
 
 
 def acceptance_readback(response: Any, expected_event_id: str, expected_payload_sha256: str,
@@ -764,10 +865,13 @@ def acceptance_readback(response: Any, expected_event_id: str, expected_payload_
 
 
 def processor_routing_binding_body(release_id: str, processor_uri: str, control_sha: str,
+                                   d5_reconciliation_comment_id: str, caller_sha: str,
                                    run_id: str, run_attempt: int) -> str:
     _hex(release_id, "RELEASE")
     _sha(control_sha, "CONTROL")
-    if not RUN_ID.fullmatch(str(run_id)) or run_attempt != 1:
+    _sha(caller_sha, "CALLER")
+    if (not COMMENT_ID.fullmatch(str(d5_reconciliation_comment_id))
+            or not RUN_ID.fullmatch(str(run_id)) or run_attempt != 1):
         raise Phase5Error("ROUTING_BINDING_RUN_INVALID")
     if (not isinstance(processor_uri, str)
             or not re.fullmatch(r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app", processor_uri)):
@@ -777,7 +881,8 @@ def processor_routing_binding_body(release_id: str, processor_uri: str, control_
         "PHASE5_PROCESSOR_ROUTING_BINDING_V1 "
         f"release_id={release_id} processor_resource={resource} "
         f"processor_uri={processor_uri} control_sha={control_sha} "
-        f"verifier_run_id={run_id} verifier_run_attempt=1"
+        f"d5_reconciliation_comment_id={d5_reconciliation_comment_id} "
+        f"verifier_caller_sha={caller_sha} verifier_run_id={run_id} verifier_run_attempt=1"
     )
 
 
@@ -800,8 +905,11 @@ def main() -> int:
     p = commands.add_parser("verify-created-service"); p.add_argument("--service-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
     p = commands.add_parser("verify-service"); p.add_argument("--service-json", required=True); p.add_argument("--policy-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
     p = commands.add_parser("verify-revision"); p.add_argument("--revision-json", required=True); p.add_argument("--release", required=True); p.add_argument("--release-id", required=True); p.add_argument("--service", required=True)
+    p = commands.add_parser("d5-reconciliation-body"); p.add_argument("--control-sha", required=True); p.add_argument("--caller-sha", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
+    p = commands.add_parser("validate-d5-reconciliation-comment"); p.add_argument("--comment-json", required=True); p.add_argument("--comment-id", required=True); p.add_argument("--control-sha", required=True)
+    p = commands.add_parser("validate-d5-reconciliation"); p.add_argument("--comment-json", required=True); p.add_argument("--comment-id", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--run-json", required=True)
     p = commands.add_parser("acceptance-readback"); p.add_argument("--response-json", required=True); p.add_argument("--event-id", required=True); p.add_argument("--payload-sha256", required=True); p.add_argument("--message-id", required=True)
-    p = commands.add_parser("routing-binding-body"); p.add_argument("--release-id", required=True); p.add_argument("--processor-uri", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
+    p = commands.add_parser("routing-binding-body"); p.add_argument("--release-id", required=True); p.add_argument("--processor-uri", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--d5-reconciliation-comment-id", required=True); p.add_argument("--caller-sha", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
     args = parser.parse_args()
     try:
         if args.command == "build-request":
@@ -848,13 +956,24 @@ def main() -> int:
                              sort_keys=True, separators=(",", ":")))
         elif args.command == "verify-revision":
             verify_revision(load_json(args.revision_json), load_json(args.release), args.release_id, args.service)
+        elif args.command == "d5-reconciliation-body":
+            print(d5_reconciliation_body(args.control_sha, args.caller_sha, args.run_id, args.run_attempt))
+        elif args.command == "validate-d5-reconciliation-comment":
+            print(json.dumps(d5_reconciliation_comment(load_json(args.comment_json), args.comment_id,
+                                                       args.control_sha), sort_keys=True, separators=(",", ":")))
+        elif args.command == "validate-d5-reconciliation":
+            print(json.dumps(validate_d5_reconciliation(load_json(args.comment_json), args.comment_id,
+                                                        args.control_sha, load_json(args.run_json)),
+                             sort_keys=True, separators=(",", ":")))
         elif args.command == "acceptance-readback":
             print(json.dumps(acceptance_readback(load_json(args.response_json), args.event_id,
                                                  args.payload_sha256, args.message_id),
                              sort_keys=True, separators=(",", ":")))
         elif args.command == "routing-binding-body":
             print(processor_routing_binding_body(args.release_id, args.processor_uri,
-                                                 args.control_sha, args.run_id,
+                                                 args.control_sha,
+                                                 args.d5_reconciliation_comment_id,
+                                                 args.caller_sha, args.run_id,
                                                  args.run_attempt))
         return 0
     except Phase5Error as exc:

@@ -49,7 +49,8 @@ def check():
                          "GITHUB_REF","GITHUB_REF_PROTECTED","GITHUB_RUN_ATTEMPT"):
             if required not in text: errors.append(f"PHASE5_TERRAFORM_CALLER_BOUNDARY_MISSING:{name}:{required}")
     verifier=(ROOT/".github/workflows/phase5-verify-reusable.yml").read_text(encoding="utf-8")
-    for required in ("routing-binding-body","issues: write","GITHUB_RUN_ATTEMPT"):
+    for required in ("routing-binding-body","issues: write","GITHUB_RUN_ATTEMPT",
+                     "d5_reconciliation_comment_id","validate-d5-reconciliation"):
         if required not in verifier: errors.append(f"PHASE5_VERIFIER_EVIDENCE_BOUNDARY_MISSING:{required}")
     docker=(ROOT/"services/resilio_app/Dockerfile").read_text(encoding="utf-8")
     if 'ENTRYPOINT ["/usr/bin/python3", "-m", "resilio_app.server"]' not in docker:

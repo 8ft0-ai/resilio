@@ -96,13 +96,28 @@ verification occurs immediately after successful D.5 reconciliation and must
 succeed before Slice E. The verifier requires its own immutable reusable WIF
 subject; no project-wide Cloud Run read role substitutes for that boundary.
 
+D.5 reconciliation must also emit one durable project-level negative authority
+record from the future protected-main `.github/workflows/phase5-d5-iam-reconcile.yml`
+caller. That record is closed to the accepted absence of project-level Cloud Run
+roles for the acceptance and push identities, absence of acceptance mutation
+permissions, and Phase 4 isolation. The independent verifier requires and
+revalidates that record and its successful attempt-1 caller run before verifier
+OIDC. Service-level IAM policy readback must then match the exact accepted graph:
+acceptance service invocation on ingest/API only, push invocation on processor
+only, and the acceptance metadata-reader role on all three Phase 5 services.
+
 The independent verifier emits a durable routing binding only after successful
-attempt-1 verification. A routing Terraform candidate names that evidence
-comment and the exact observed `resilio-processor` URI. The trusted planner
-and applier revalidate both the comment and its successful protected-main
-workflow run before OIDC and bind the evidence into the reviewed private
-Terraform effect. A syntactically valid unrelated `*.run.app` URI therefore
-cannot establish routing authority.
+attempt-1 verification. The future protected-main verifier caller path is fixed
+as `.github/workflows/phase5-verify.yml`; the run must reference the immutable
+`phase5-verify-reusable.yml` at the exact Slice A control SHA. The routing
+binding carries the D.5 reconciliation comment identity and caller SHA. A routing
+Terraform candidate names that evidence comment and the exact observed
+`resilio-processor` URI. The trusted planner and applier re-fetch and revalidate
+the D.5 record/run, the verifier caller path, exact referenced reusable identity,
+resource-to-URI binding and successful protected-main attempt-1 run before OIDC,
+then bind that provenance into the reviewed private Terraform effect. A
+syntactically valid unrelated `*.run.app` URI or another successful
+protected-main workflow run therefore cannot establish routing authority.
 
 Product processing stores the first accepted Pub/Sub message ID as immutable
 transport metadata outside canonical event identity and payload hashing.

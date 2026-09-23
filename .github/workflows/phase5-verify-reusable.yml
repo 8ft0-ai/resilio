@@ -6,6 +6,9 @@ on:
       release_record_comment_id:
         required: true
         type: string
+      d5_reconciliation_comment_id:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -27,10 +30,11 @@ jobs:
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
-      - name: Bind reviewed release before verifier OIDC
+      - name: Bind reviewed release and D.5 reconciliation before verifier OIDC
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_RECORD_COMMENT_ID: ${{ inputs.release_record_comment_id }}
+          D5_RECONCILIATION_COMMENT_ID: ${{ inputs.d5_reconciliation_comment_id }}
           CONTROL_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
@@ -39,13 +43,24 @@ jobs:
           test "$GITHUB_REF_PROTECTED" = "true"
           test "$GITHUB_RUN_ATTEMPT" = "1"
           [[ "$RELEASE_RECORD_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$D5_RECONCILIATION_COMMENT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           gh api "repos/$GITHUB_REPOSITORY/issues/comments/$RELEASE_RECORD_COMMENT_ID" > "$RUNNER_TEMP/release-record.json"
           python3 scripts/phase5_release_record.py validate \
             --comment-json "$RUNNER_TEMP/release-record.json" --comment-id "$RELEASE_RECORD_COMMENT_ID" \
             --output "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/release-meta.json"
           RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release_id"])' "$RUNNER_TEMP/release-meta.json")"
           test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["control_sha"])' "$RUNNER_TEMP/release.json")" = "$CONTROL_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/issues/comments/$D5_RECONCILIATION_COMMENT_ID" > "$RUNNER_TEMP/d5-reconciliation.json"
+          python3 scripts/phase5_supply_chain.py validate-d5-reconciliation-comment \
+            --comment-json "$RUNNER_TEMP/d5-reconciliation.json" --comment-id "$D5_RECONCILIATION_COMMENT_ID" \
+            --control-sha "$CONTROL_SHA" > "$RUNNER_TEMP/d5-reconciliation-meta.json"
+          D5_RUN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["reconciliation_run_id"])' "$RUNNER_TEMP/d5-reconciliation-meta.json")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$D5_RUN_ID" > "$RUNNER_TEMP/d5-reconciliation-run.json"
+          python3 scripts/phase5_supply_chain.py validate-d5-reconciliation \
+            --comment-json "$RUNNER_TEMP/d5-reconciliation.json" --comment-id "$D5_RECONCILIATION_COMMENT_ID" \
+            --control-sha "$CONTROL_SHA" --run-json "$RUNNER_TEMP/d5-reconciliation-run.json" > /dev/null
           printf 'RELEASE_ID=%s\n' "$RELEASE_ID" >> "$GITHUB_ENV"
+          printf 'D5_RECONCILIATION_COMMENT_ID=%s\n' "$D5_RECONCILIATION_COMMENT_ID" >> "$GITHUB_ENV"
 
       - name: Authenticate bounded Phase 5 acceptance verifier for metadata readback
         id: auth
@@ -109,7 +124,9 @@ jobs:
           set -euo pipefail
           BODY="$(python3 scripts/phase5_supply_chain.py routing-binding-body \
             --release-id "$RELEASE_ID" --processor-uri "$PROCESSOR_URI" \
-            --control-sha "$CONTROL_SHA" --run-id "$GITHUB_RUN_ID" \
+            --control-sha "$CONTROL_SHA" \
+            --d5-reconciliation-comment-id "$D5_RECONCILIATION_COMMENT_ID" \
+            --caller-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
             --run-attempt "$GITHUB_RUN_ATTEMPT")"
           gh api --method POST "repos/$GITHUB_REPOSITORY/issues/109/comments" \
             -f body="$BODY" > "$RUNNER_TEMP/routing-binding-comment.json"

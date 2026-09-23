@@ -20,6 +20,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from phase5_supply_chain import d5_reconciliation_comment, validate_d5_reconciliation
+
 REPOSITORY = "8ft0-ai/resilio"
 REPOSITORY_ID = 1335801159
 DEFAULT_BRANCH = "main"
@@ -38,6 +40,8 @@ WIF_PROVIDER = "projects/400271474382/locations/global/workloadIdentityPools/git
 PUSH_IDENTITY = f"p5-pubsub-push@{REFERENCE_PROJECT}.iam.gserviceaccount.com"
 GOVERNING_ISSUE = 109
 PROCESSOR_RESOURCE = f"projects/{REFERENCE_PROJECT}/locations/{REGION}/services/resilio-processor"
+VERIFY_CALLER_PATH = ".github/workflows/phase5-verify.yml"
+VERIFY_REUSABLE_PATH = ".github/workflows/phase5-verify-reusable.yml"
 GITHUB_ACTIONS_BOT_LOGIN = "github-actions[bot]"
 GITHUB_ACTIONS_BOT_ID = 41898282
 
@@ -364,13 +368,21 @@ def private_effect(plan: Any, candidate: dict[str, Any], state: dict[str, Any],
         raise ProductTerraformError("ROUTING_BINDING_INVALID")
     if candidate["stage"] == "routing":
         required = {"comment_id", "release_id", "processor_resource", "processor_uri",
-                    "control_sha", "verifier_run_id", "verifier_run_attempt"}
+                    "control_sha", "d5_reconciliation_comment_id",
+                    "d5_reconciliation_run_id", "d5_reconciliation_caller_sha",
+                    "verifier_caller_path", "verifier_caller_sha",
+                    "verifier_reusable_path", "verifier_reusable_sha",
+                    "verifier_run_id", "verifier_run_attempt"}
         if set(routing_binding) != required:
             raise ProductTerraformError("ROUTING_BINDING_FIELDS_INVALID")
         if (routing_binding["comment_id"] != candidate["processor_verification_comment_id"]
                 or routing_binding["processor_resource"] != PROCESSOR_RESOURCE
                 or routing_binding["processor_uri"] != candidate["processor_uri"]
-                or routing_binding["control_sha"] != control_sha):
+                or routing_binding["control_sha"] != control_sha
+                or routing_binding["verifier_caller_path"] != VERIFY_CALLER_PATH
+                or routing_binding["verifier_reusable_sha"] != control_sha
+                or routing_binding["verifier_reusable_path"]
+                    != f"{REPOSITORY}/{VERIFY_REUSABLE_PATH}@{control_sha}"):
             raise ProductTerraformError("ROUTING_BINDING_EFFECT_MISMATCH")
     elif routing_binding != {}:
         raise ProductTerraformError("NON_ROUTING_BINDING_FORBIDDEN")
@@ -457,10 +469,11 @@ def verify_caller_context(repository: str, ref: str, ref_protected: str,
 
 
 def routing_binding_from_documents(candidate: dict[str, Any], control_sha: str,
-                                   comment: Any, run: Any) -> dict[str, str]:
+                                   comment: Any, run: Any,
+                                   d5_comment: Any, d5_run: Any) -> dict[str, str]:
     candidate = validate_candidate(candidate)
     if candidate["stage"] != "routing":
-        if comment not in (None, {}) or run not in (None, {}):
+        if any(value not in (None, {}) for value in (comment, run, d5_comment, d5_run)):
             raise ProductTerraformError("NON_ROUTING_VERIFICATION_EVIDENCE_FORBIDDEN")
         return {}
     if not FULL_SHA.fullmatch(control_sha):
@@ -473,36 +486,51 @@ def routing_binding_from_documents(candidate: dict[str, Any], control_sha: str,
     user = comment.get("user") or {}
     if user.get("login") != GITHUB_ACTIONS_BOT_LOGIN or user.get("id") != GITHUB_ACTIONS_BOT_ID:
         raise ProductTerraformError("ROUTING_VERIFICATION_AUTHOR_MISMATCH")
-    body = str(comment.get("body") or "")
     match = re.fullmatch(
         r"PHASE5_PROCESSOR_ROUTING_BINDING_V1 "
         r"release_id=([0-9a-f]{64}) "
         r"processor_resource=(projects/resilio-reference-e882d4/locations/us-central1/services/resilio-processor) "
         r"processor_uri=(https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app) "
-        r"control_sha=([0-9a-f]{40}) verifier_run_id=([1-9][0-9]{0,19}) "
-        r"verifier_run_attempt=1",
-        body,
-    )
+        r"control_sha=([0-9a-f]{40}) d5_reconciliation_comment_id=([1-9][0-9]{0,19}) "
+        r"verifier_caller_sha=([0-9a-f]{40}) verifier_run_id=([1-9][0-9]{0,19}) verifier_run_attempt=1",
+        str(comment.get("body") or ""))
     if not match:
         raise ProductTerraformError("ROUTING_VERIFICATION_BODY_INVALID")
-    release_id, resource, uri, recorded_control_sha, run_id = match.groups()
+    release_id, resource, uri, recorded_control_sha, d5_comment_id, verifier_caller_sha, run_id = match.groups()
     if resource != PROCESSOR_RESOURCE or uri != candidate["processor_uri"]:
         raise ProductTerraformError("ROUTING_VERIFICATION_RESOURCE_URI_MISMATCH")
     if recorded_control_sha != control_sha:
         raise ProductTerraformError("ROUTING_VERIFICATION_CONTROL_MISMATCH")
+    d5 = validate_d5_reconciliation(d5_comment, d5_comment_id, control_sha, d5_run)
     if not isinstance(run, dict) or str(run.get("id") or "") != run_id:
         raise ProductTerraformError("ROUTING_VERIFICATION_RUN_MISMATCH")
     if (run.get("run_attempt") != 1 or run.get("status") != "completed"
-            or run.get("conclusion") != "success" or run.get("head_branch") != DEFAULT_BRANCH):
+            or run.get("conclusion") != "success" or run.get("head_branch") != DEFAULT_BRANCH
+            or run.get("head_sha") != verifier_caller_sha or run.get("path") != VERIFY_CALLER_PATH):
         raise ProductTerraformError("ROUTING_VERIFICATION_RUN_NOT_SUCCESSFUL")
     head_repo = run.get("head_repository") or {}
-    if head_repo.get("full_name") != REPOSITORY:
+    repository = run.get("repository") or {}
+    if head_repo.get("full_name") != REPOSITORY or repository.get("full_name") != REPOSITORY:
         raise ProductTerraformError("ROUTING_VERIFICATION_RUN_REPOSITORY_MISMATCH")
+    references = run.get("referenced_workflows")
+    if not isinstance(references, list):
+        raise ProductTerraformError("ROUTING_VERIFIER_REUSABLE_IDENTITY_MISSING")
+    reusable_prefix = f"{REPOSITORY}/{VERIFY_REUSABLE_PATH}"
+    matches = [row for row in references if isinstance(row, dict)
+               and str(row.get("path") or "").split("@", 1)[0] == reusable_prefix]
+    expected_reusable = f"{reusable_prefix}@{control_sha}"
+    if (len(matches) != 1 or matches[0].get("path") != expected_reusable
+            or matches[0].get("sha") != control_sha):
+        raise ProductTerraformError("ROUTING_VERIFIER_REUSABLE_IDENTITY_MISMATCH")
     return {
         "comment_id": comment_id, "release_id": release_id,
-        "processor_resource": resource, "processor_uri": uri,
-        "control_sha": recorded_control_sha, "verifier_run_id": run_id,
-        "verifier_run_attempt": "1",
+        "processor_resource": resource, "processor_uri": uri, "control_sha": recorded_control_sha,
+        "d5_reconciliation_comment_id": d5["comment_id"],
+        "d5_reconciliation_run_id": d5["reconciliation_run_id"],
+        "d5_reconciliation_caller_sha": d5["caller_sha"],
+        "verifier_caller_path": VERIFY_CALLER_PATH, "verifier_caller_sha": verifier_caller_sha,
+        "verifier_reusable_path": expected_reusable, "verifier_reusable_sha": control_sha,
+        "verifier_run_id": run_id, "verifier_run_attempt": "1",
     }
 
 
@@ -513,12 +541,18 @@ def verify_routing_binding(candidate: dict[str, Any], control_sha: str) -> dict[
     comment_id = candidate["processor_verification_comment_id"]
     comment = github(f"/repos/{REPOSITORY}/issues/comments/{comment_id}")
     body = str(comment.get("body") or "") if isinstance(comment, dict) else ""
-    run_match = re.search(r" verifier_run_id=([1-9][0-9]{0,19}) verifier_run_attempt=1\Z", body)
-    if not run_match:
+    match = re.search(
+        r" d5_reconciliation_comment_id=([1-9][0-9]{0,19}) "
+        r"verifier_caller_sha=[0-9a-f]{40} verifier_run_id=([1-9][0-9]{0,19}) verifier_run_attempt=1\Z",
+        body)
+    if not match:
         raise ProductTerraformError("ROUTING_VERIFICATION_RUN_ID_MISSING")
-    run = github(f"/repos/{REPOSITORY}/actions/runs/{run_match.group(1)}")
-    return routing_binding_from_documents(candidate, control_sha, comment, run)
-
+    d5_comment_id, verifier_run_id = match.groups()
+    run = github(f"/repos/{REPOSITORY}/actions/runs/{verifier_run_id}")
+    d5_comment = github(f"/repos/{REPOSITORY}/issues/comments/{d5_comment_id}")
+    d5 = d5_reconciliation_comment(d5_comment, d5_comment_id, control_sha)
+    d5_run = github(f"/repos/{REPOSITORY}/actions/runs/{d5['reconciliation_run_id']}")
+    return routing_binding_from_documents(candidate, control_sha, comment, run, d5_comment, d5_run)
 
 def verify_main(expected_sha: str) -> None:
     if not FULL_SHA.fullmatch(expected_sha):
