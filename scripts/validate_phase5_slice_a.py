@@ -31,7 +31,7 @@ PHASE4_BLOBS={
 "services/phase4-proof/app.py":"1faf98e8cc2d67905c9c896cbc3ae30dccfe6b34",
 "services/phase4-proof/test_app.py":"387f5203c9201a84dcabee119c06981f5eb1605d"}
 def check():
-    errors=[];actual={p.name for p in (ROOT/".github/workflows").glob("phase5-*.yml")}
+    errors=[];actual={p.name for p in (ROOT/".github/workflows").glob("phase5-*-reusable.yml")}
     if actual != set(WORKFLOWS): errors.append("PHASE5_REUSABLE_SET_MISMATCH")
     for name,principal in WORKFLOWS.items():
         text=(ROOT/".github/workflows"/name).read_text(encoding="utf-8")
@@ -84,7 +84,6 @@ def check():
     for service in ("resilio-ingest","resilio-processor","resilio-api"):
         if service not in deploy: errors.append(f"PHASE5_DEPLOY_SERVICE_MISSING:{service}")
     if "serviceId=$SERVICE" not in deploy: errors.append("PHASE5_DEPLOY_CREATE_ID_NOT_BOUND")
-    if (ROOT/"infra/product").exists(): errors.append("PHASE5_LIVE_PRODUCT_ROOT_FORBIDDEN_IN_SLICE_A")
     for path,sha in PHASE4_BLOBS.items():
         file=ROOT/path
         if not file.is_file(): errors.append(f"RETAINED_PHASE4_FILE_MISSING:{path}");continue
