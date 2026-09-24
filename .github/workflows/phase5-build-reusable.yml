@@ -69,7 +69,136 @@ jobs:
           [[ "$CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          BUILDS="$RUNNER_TEMP/builds.json"
+          collect_comments() {
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues/109/comments?per_page=100" > "$RUNNER_TEMP/build-comment-pages.json"
+            python3 - "$RUNNER_TEMP/build-comment-pages.json" "$RUNNER_TEMP/build-comments.json" <<'PY'
+          import json,sys
+          pages=json.load(open(sys.argv[1]))
+          rows=[]
+          for page in pages:
+              rows.extend(page)
+          json.dump(rows,open(sys.argv[2],"w"),separators=(",",":"))
+          PY
+          }
+
+          collect_comments
+          STATE="$RUNNER_TEMP/build-initiation-state.json"
+          python3 scripts/phase5_supply_chain.py build-initiation-state \
+            --comments-json "$RUNNER_TEMP/build-comments.json" \
+            --source-sha "$SOURCE_SHA" --workflow-sha "$CONTROL_SHA" > "$STATE"
+          STATE_NAME="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' "$STATE")"
+
+          if test "$STATE_NAME" = "INITIATED"; then
+            INITIATING_RUN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["initiating_run_id"])' "$STATE")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$INITIATING_RUN_ID" > "$RUNNER_TEMP/build-initiating-run.json"
+            AUTHORITY="$RUNNER_TEMP/build-initiation-authority.json"
+            python3 scripts/phase5_supply_chain.py build-initiation-authority \
+              --comments-json "$RUNNER_TEMP/build-comments.json" \
+              --source-sha "$SOURCE_SHA" --workflow-sha "$CONTROL_SHA" \
+              --run-json "$RUNNER_TEMP/build-initiating-run.json" > "$AUTHORITY"
+            test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"])' "$AUTHORITY")" = "REUSE_SUCCESSFUL_INITIATION"
+            INITIATION_COMMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["initiation_comment_id"])' "$AUTHORITY")"
+            printf 'initiation_comment_id=%s\n' "$INITIATION_COMMENT_ID" >> "$GITHUB_OUTPUT"
+            printf 'allow_create=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$STATE_NAME" = "NONE"
+
+          BODY="$(python3 scripts/phase5_supply_chain.py build-initiation-body \
+            --source-sha "$SOURCE_SHA" --workflow-sha "$CONTROL_SHA" \
+            --caller-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT")"
+          set +e
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/109/comments" \
+            -f body="$BODY" > "$RUNNER_TEMP/build-initiation-create.json"
+          CREATE_RC=$?
+          set -e
+          if test "$CREATE_RC" -ne 0; then
+            printf 'PHASE5_BUILD_INITIATION_CREATE_OUTCOME_AMBIGUOUS_RECONCILING\n' >&2
+          fi
+
+          collect_comments
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/build-current-run.json"
+          python3 scripts/phase5_supply_chain.py verify-build-initiation \
+            --comments-json "$RUNNER_TEMP/build-comments.json" \
+            --source-sha "$SOURCE_SHA" --workflow-sha "$CONTROL_SHA" \
+            --caller-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --run-json "$RUNNER_TEMP/build-current-run.json" \
+            > "$RUNNER_TEMP/build-initiation-valid.json"
+          INITIATION_COMMENT_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["initiation_comment_id"])' "$RUNNER_TEMP/build-initiation-valid.json")"
+          printf 'initiation_comment_id=%s\n' "$INITIATION_COMMENT_ID" >> "$GITHUB_OUTPUT"
+          printf 'allow_create=true\n' >> "$GITHUB_OUTPUT"
+
+      - name: Recheck protected main before product-build OIDC
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$SOURCE_SHA"
+
+      - name: Authenticate bounded Phase 5 build initiator
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p5-build@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Reuse or create the one exact source/control build
+        id: result
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
+          INITIATION_COMMENT_ID: ${{ steps.initiation.outputs.initiation_comment_id }}
+          ALLOW_CREATE: ${{ steps.initiation.outputs.allow_create }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$SOURCE_SHA"
+          [[ "$CONTROL_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          collect_builds() {
+            local PREFIX="$1"
+            local OUT="$2"
+            local NEXT=""
+            rm -f "$RUNNER_TEMP"/"$PREFIX"-page-*.json
+            for PAGE in $(seq 1 100); do
+              printf -v PAGE_FILE '%s/%s-page-%03d.json' "$RUNNER_TEMP" "$PREFIX" "$PAGE"
+              if test -n "$NEXT"; then
+                curl --fail-with-body --silent --show-error -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  --data-urlencode "pageSize=100" \
+                  --data-urlencode "pageToken=$NEXT" \
+                  "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds" > "$PAGE_FILE"
+              else
+                curl --fail-with-body --silent --show-error -G \
+                  -H "Authorization: Bearer $TOKEN" \
+                  --data-urlencode "pageSize=100" \
+                  "https://cloudbuild.googleapis.com/v1/projects/resilio-control-e882d4/builds" > "$PAGE_FILE"
+              fi
+              NEXT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("nextPageToken",""))' "$PAGE_FILE")"
+              test -z "$NEXT" && break
+            done
+            test -z "$NEXT"
+            python3 - "$RUNNER_TEMP/$PREFIX-page-*.json" "$OUT" <<'PY'
+          import glob,json,sys
+          rows=[]
+          for path in sorted(glob.glob(sys.argv[1])):
+              rows.extend((json.load(open(path)).get("builds") or []))
+          json.dump({"builds":rows},open(sys.argv[2],"w"),separators=(",",":"))
+          PY
+          }
+
           BUILDS="$RUNNER_TEMP/builds.json"
           collect_builds "p5-build" "$BUILDS"
           BUILD_ID="$(python3 scripts/phase5_build_select.py \
@@ -134,7 +263,6 @@ jobs:
 
           [[ "$BUILD_ID" =~ ^[0-9a-f-]{8,64}$ ]]
 
-          DONE=""
           DONE=""
           for _ in $(seq 1 60); do
             curl --fail-with-body --silent --show-error \
