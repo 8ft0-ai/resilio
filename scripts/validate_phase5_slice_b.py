@@ -102,11 +102,14 @@ def check() -> None:
         'account_id   = "github-p5-acceptance"',
         'account_id   = "p5-pubsub-push"',
         'role_id     = "resilio_p5_acceptance_reader"',
-        'phase5_product_topic                = "resilio-deployment-events"',
-        'phase5_firestore_document_prefix    = "projects/${google_project.reference.project_id}/databases/(default)/documents/"',
         'expression  = "resource.name == \\"${local.phase5_topic_resource}\\""',
         'expression  = "resource.name.startsWith(\\"${local.phase5_firestore_document_prefix}\\")"',
     ), "PHASE5_AUTHORITY_REQUIRED", errors)
+    compact_authority = "\n".join(" ".join(line.split()) for line in authority.splitlines())
+    require(compact_authority, (
+        'phase5_product_topic = "resilio-deployment-events"',
+        'phase5_firestore_document_prefix = "projects/${google_project.reference.project_id}/databases/(default)/documents/"',
+    ), "PHASE5_AUTHORITY_LOCAL", errors)
 
     if authority.count('resource "google_service_account"') != len(EXPECTED_ACCOUNTS):
         errors.append("PHASE5_SERVICE_ACCOUNT_SET_COUNT_MISMATCH")
