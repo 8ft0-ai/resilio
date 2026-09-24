@@ -8,12 +8,13 @@ sys.path.insert(0,str(ROOT))
 sys.path.insert(0,str(ROOT/"scripts"))
 from phase5_supply_chain import (
     ACCEPTANCE_READER_ROLE, CONTROL_PROJECT, OWNER_ID, OWNER_LOGIN,
-    REFERENCE_PROJECT, SERVICES, Phase5Error, acceptance_readback, build_request,
-    cloud_run_create_request, d5_reconciliation_body, deployment_authority,
+    REFERENCE_PROJECT, SERVICES, Phase5Error, acceptance_readback,
+    build_initiation_authority, build_initiation_body, build_request,
+    build_resolution_body, cloud_run_create_request, d5_reconciliation_body, deployment_authority,
     deployment_consumption_available, deployment_consumption_body, image_tag,
     processor_routing_binding_body, release_envelope, validate_build,
-    validate_d5_reconciliation, validate_release, verify_deployment_consumption,
-    verify_service, verify_service_config,
+    validate_d5_reconciliation, validate_release, verify_build_initiation,
+    verify_build_resolution, verify_deployment_consumption, verify_service, verify_service_config,
 )
 from phase5_build_select import select
 from phase5_release_record import record_body, validate_record
@@ -40,6 +41,9 @@ def release():
 def comment(comment_id:int,body:str):
     return {"id":comment_id,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109",
             "body":body,"user":{"login":OWNER_LOGIN,"id":OWNER_ID}}
+def bot_comment(comment_id:int,body:str):
+    return {"id":comment_id,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109",
+            "body":body,"user":{"login":"github-actions[bot]","id":41898282}}
 class SupplyChainTests(unittest.TestCase):
     def test_build_is_exact_source_control_and_one_image(self):
         result=validate_build(successful_build(),SOURCE,CONTROL)
@@ -57,9 +61,45 @@ class SupplyChainTests(unittest.TestCase):
         with self.assertRaises(Phase5Error):
             select({"builds":[malformed]},SOURCE,CONTROL)
 
+    def test_build_initiation_state_survives_fresh_invocations(self):
+        self.assertEqual(
+            build_initiation_authority([],SOURCE,CONTROL)["decision"],
+            "CLAIM_REQUIRED",
+        )
+        initiation=bot_comment(401,build_initiation_body(SOURCE,CONTROL,"55",1))
+        verified=verify_build_initiation([initiation],SOURCE,CONTROL,"55",1)
+        self.assertEqual(verified["initiation_comment_id"],"401")
+
+        with self.assertRaises(Phase5Error) as cm:
+            build_initiation_authority([initiation],SOURCE,CONTROL)
+        self.assertIn("BUILD_RECOVERY_AUTHORITY_REQUIRED",str(cm.exception))
+
+        resolution=bot_comment(402,build_resolution_body(
+            SOURCE,CONTROL,"401","12345678-abcd","55",1))
+        resolved=verify_build_resolution(
+            [initiation,resolution],SOURCE,CONTROL,"401","12345678-abcd")
+        self.assertEqual(resolved["resolution_comment_id"],"402")
+        reusable=build_initiation_authority([initiation,resolution],SOURCE,CONTROL)
+        self.assertEqual(reusable["decision"],"REUSE_RESOLVED")
+        self.assertEqual(reusable["build_id"],"12345678-abcd")
+
+        duplicate=bot_comment(403,build_initiation_body(SOURCE,CONTROL,"56",1))
+        with self.assertRaises(Phase5Error):
+            build_initiation_authority([initiation,duplicate],SOURCE,CONTROL)
+
     def test_build_workflow_serialises_first_attempt_and_reconciles_ambiguous_create(self):
         text=(ROOT/".github/workflows/phase5-build-reusable.yml").read_text(encoding="utf-8")
         self.assertIn("group: phase5-product-build-initiation",text)
+        self.assertIn("issues: write",text)
+        self.assertLess(
+            text.index("Establish durable cross-run build initiation state before OIDC"),
+            text.index("Authenticate bounded Phase 5 build initiator"),
+        )
+        for marker in (
+            "build-initiation-authority","verify-build-initiation",
+            "build-resolution-body","verify-build-resolution",
+        ):
+            self.assertIn(marker,text)
         self.assertGreaterEqual(text.count('test "$GITHUB_RUN_ATTEMPT" = "1"'),2)
         self.assertIn("PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECONCILING",text)
         self.assertIn("PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECOVERY_REQUIRED",text)
