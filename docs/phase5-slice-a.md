@@ -29,8 +29,14 @@ There is no protected-main caller, WIF binding, Phase 5 principal, product
 Terraform candidate/root, provider credential or cloud activation in Slice A.
 
 The future build is bound to protected main plus the immutable reusable workflow
-identity. Evidence binds the exact Cloud Build result, vulnerability result,
-pinned Syft SBOM and immutable release envelope. Initial deployment consumes one
+identity. Before build OIDC, the reusable also reconciles an append-only build
+initiation record on governing issue #109 for the exact source/control identity.
+An unresolved prior initiation blocks every later invocation before OIDC and
+requires separately governed recovery; a resolved record binds exactly one
+Cloud Build ID for reuse. A newly initiated run records the exact build ID before
+continuing to terminal build validation, so an unknown create outcome cannot be
+silently retried by a fresh workflow invocation. Evidence binds the exact Cloud
+Build result, vulnerability result, pinned Syft SBOM and immutable release envelope. Initial deployment consumes one
 owner authority record and has only an exact three-service create-if-absent code
 path; it contains no update, delete or IAM-policy mutation path. The separate
 verifier/acceptance reusable is designed for the post-D.5 service-level
