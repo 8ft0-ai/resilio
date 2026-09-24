@@ -207,6 +207,167 @@ def build_tags(source_sha: str, workflow_sha: str) -> list[str]:
     return [f"phase5-product", f"source-{source_sha}", f"control-{workflow_sha}"]
 
 
+def _trusted_build_record_comment(row: Any) -> str:
+    if not isinstance(row, dict):
+        raise Phase5Error("BUILD_RECORD_INVALID")
+    comment_id = str(row.get("id") or "")
+    if not COMMENT_ID.fullmatch(comment_id):
+        raise Phase5Error("BUILD_RECORD_COMMENT_ID_INVALID")
+    if not str(row.get("issue_url") or "").endswith(f"/issues/{GOVERNING_ISSUE}"):
+        raise Phase5Error("BUILD_RECORD_ISSUE_INVALID")
+    user = row.get("user") or {}
+    if user.get("login") != GITHUB_ACTIONS_BOT_LOGIN or user.get("id") != GITHUB_ACTIONS_BOT_ID:
+        raise Phase5Error("BUILD_RECORD_AUTHOR_INVALID")
+    return comment_id
+
+
+def build_initiation_body(source_sha: str, workflow_sha: str,
+                          run_id: str, run_attempt: int) -> str:
+    _sha(source_sha, "SOURCE")
+    _sha(workflow_sha, "WORKFLOW")
+    if not RUN_ID.fullmatch(run_id) or run_attempt != 1:
+        raise Phase5Error("BUILD_INITIATION_RUN_INVALID")
+    return (
+        "PHASE5_BUILD_INITIATION_V1 "
+        f"source_sha={source_sha} control_sha={workflow_sha} "
+        f"run_id={run_id} run_attempt=1"
+    )
+
+
+def build_resolution_body(source_sha: str, workflow_sha: str,
+                          initiation_comment_id: str, build_id: str,
+                          run_id: str, run_attempt: int) -> str:
+    _sha(source_sha, "SOURCE")
+    _sha(workflow_sha, "WORKFLOW")
+    if not COMMENT_ID.fullmatch(initiation_comment_id) or not BUILD_ID.fullmatch(build_id):
+        raise Phase5Error("BUILD_RESOLUTION_IDENTITY_INVALID")
+    if not RUN_ID.fullmatch(run_id) or run_attempt != 1:
+        raise Phase5Error("BUILD_RESOLUTION_RUN_INVALID")
+    return (
+        "PHASE5_BUILD_RESOLUTION_V1 "
+        f"source_sha={source_sha} control_sha={workflow_sha} "
+        f"initiation_comment_id={initiation_comment_id} build_id={build_id} "
+        f"run_id={run_id} run_attempt=1"
+    )
+
+
+def _build_initiation_state(comments: Any, source_sha: str,
+                            workflow_sha: str) -> dict[str, str]:
+    _sha(source_sha, "SOURCE")
+    _sha(workflow_sha, "WORKFLOW")
+    if not isinstance(comments, list):
+        raise Phase5Error("BUILD_RECORD_COMMENTS_INVALID")
+    initiation_re = re.compile(
+        r"PHASE5_BUILD_INITIATION_V1 source_sha=([0-9a-f]{40}) "
+        r"control_sha=([0-9a-f]{40}) run_id=([1-9][0-9]{0,19}) run_attempt=1"
+    )
+    resolution_re = re.compile(
+        r"PHASE5_BUILD_RESOLUTION_V1 source_sha=([0-9a-f]{40}) "
+        r"control_sha=([0-9a-f]{40}) initiation_comment_id=([1-9][0-9]{0,19}) "
+        r"build_id=([0-9a-f-]{8,64}) run_id=([1-9][0-9]{0,19}) run_attempt=1"
+    )
+    initiations: list[dict[str, str]] = []
+    resolutions: list[dict[str, str]] = []
+    for row in comments:
+        if not isinstance(row, dict):
+            continue
+        body = str(row.get("body") or "")
+        if body.startswith("PHASE5_BUILD_INITIATION_V1 "):
+            match = initiation_re.fullmatch(body)
+            if not match:
+                raise Phase5Error("BUILD_INITIATION_RECORD_INVALID")
+            comment_id = _trusted_build_record_comment(row)
+            row_source, row_control, run_id = match.groups()
+            if row_source == source_sha and row_control == workflow_sha:
+                initiations.append({
+                    "comment_id": comment_id, "run_id": run_id,
+                })
+        elif body.startswith("PHASE5_BUILD_RESOLUTION_V1 "):
+            match = resolution_re.fullmatch(body)
+            if not match:
+                raise Phase5Error("BUILD_RESOLUTION_RECORD_INVALID")
+            comment_id = _trusted_build_record_comment(row)
+            row_source, row_control, initiation_comment_id, build_id, run_id = match.groups()
+            if row_source == source_sha and row_control == workflow_sha:
+                resolutions.append({
+                    "comment_id": comment_id,
+                    "initiation_comment_id": initiation_comment_id,
+                    "build_id": build_id,
+                    "run_id": run_id,
+                })
+    if len(initiations) > 1:
+        raise Phase5Error("BUILD_INITIATION_AMBIGUOUS")
+    if not initiations:
+        if resolutions:
+            raise Phase5Error("BUILD_RESOLUTION_ORPHANED")
+        return {"state": "NONE"}
+    initiation = initiations[0]
+    if len(resolutions) > 1:
+        raise Phase5Error("BUILD_RESOLUTION_AMBIGUOUS")
+    if not resolutions:
+        return {
+            "state": "UNRESOLVED",
+            "initiation_comment_id": initiation["comment_id"],
+            "initiating_run_id": initiation["run_id"],
+        }
+    resolution = resolutions[0]
+    if resolution["initiation_comment_id"] != initiation["comment_id"]:
+        raise Phase5Error("BUILD_RESOLUTION_INITIATION_MISMATCH")
+    return {
+        "state": "RESOLVED",
+        "initiation_comment_id": initiation["comment_id"],
+        "initiating_run_id": initiation["run_id"],
+        "resolution_comment_id": resolution["comment_id"],
+        "resolving_run_id": resolution["run_id"],
+        "build_id": resolution["build_id"],
+    }
+
+
+def build_initiation_authority(comments: Any, source_sha: str,
+                               workflow_sha: str) -> dict[str, str]:
+    state = _build_initiation_state(comments, source_sha, workflow_sha)
+    if state["state"] == "NONE":
+        return {"decision": "CLAIM_REQUIRED"}
+    if state["state"] == "UNRESOLVED":
+        raise Phase5Error("BUILD_RECOVERY_AUTHORITY_REQUIRED")
+    return {
+        "decision": "REUSE_RESOLVED",
+        "initiation_comment_id": state["initiation_comment_id"],
+        "resolution_comment_id": state["resolution_comment_id"],
+        "build_id": state["build_id"],
+    }
+
+
+def verify_build_initiation(comments: Any, source_sha: str, workflow_sha: str,
+                            run_id: str, run_attempt: int) -> dict[str, str]:
+    if not RUN_ID.fullmatch(run_id) or run_attempt != 1:
+        raise Phase5Error("BUILD_INITIATION_RUN_INVALID")
+    state = _build_initiation_state(comments, source_sha, workflow_sha)
+    if (state["state"] != "UNRESOLVED"
+            or state.get("initiating_run_id") != run_id):
+        raise Phase5Error("BUILD_INITIATION_NOT_EXACTLY_ONCE")
+    return {
+        "initiation_comment_id": state["initiation_comment_id"],
+        "initiating_run_id": run_id,
+    }
+
+
+def verify_build_resolution(comments: Any, source_sha: str, workflow_sha: str,
+                            initiation_comment_id: str, build_id: str) -> dict[str, str]:
+    if not COMMENT_ID.fullmatch(initiation_comment_id) or not BUILD_ID.fullmatch(build_id):
+        raise Phase5Error("BUILD_RESOLUTION_IDENTITY_INVALID")
+    state = _build_initiation_state(comments, source_sha, workflow_sha)
+    if (state["state"] != "RESOLVED"
+            or state.get("initiation_comment_id") != initiation_comment_id
+            or state.get("build_id") != build_id):
+        raise Phase5Error("BUILD_RESOLUTION_NOT_EXACTLY_ONCE")
+    return {
+        "initiation_comment_id": initiation_comment_id,
+        "resolution_comment_id": state["resolution_comment_id"],
+        "build_id": build_id,
+    }
+
+
 def container_smoke_script(target: str) -> str:
     return """set -euo pipefail
 IMAGE='__IMAGE__'
@@ -912,6 +1073,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("build-request"); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True)
+    p = commands.add_parser("build-initiation-authority"); p.add_argument("--comments-json", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True)
+    p = commands.add_parser("build-initiation-body"); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
+    p = commands.add_parser("verify-build-initiation"); p.add_argument("--comments-json", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
+    p = commands.add_parser("build-resolution-body"); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True); p.add_argument("--initiation-comment-id", required=True); p.add_argument("--build-id", required=True); p.add_argument("--run-id", required=True); p.add_argument("--run-attempt", type=int, required=True)
+    p = commands.add_parser("verify-build-resolution"); p.add_argument("--comments-json", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True); p.add_argument("--initiation-comment-id", required=True); p.add_argument("--build-id", required=True)
+    p = commands.add_parser("validate-build-request"); p.add_argument("--build-json", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True)
     p = commands.add_parser("build-identity"); p.add_argument("--build-json", required=True)
     p = commands.add_parser("validate-build"); p.add_argument("--build-json", required=True); p.add_argument("--source-sha", required=True); p.add_argument("--workflow-sha", required=True)
     p = commands.add_parser("scan-summary"); p.add_argument("--discovery-json", required=True); p.add_argument("--vulnerability-json", required=True); p.add_argument("--image", required=True); p.add_argument("--output", required=True)
@@ -936,6 +1103,33 @@ def main() -> int:
     try:
         if args.command == "build-request":
             print(json.dumps(build_request(args.source_sha, args.workflow_sha), sort_keys=True, separators=(",", ":")))
+        elif args.command == "build-initiation-authority":
+            print(json.dumps(build_initiation_authority(load_json(args.comments_json), args.source_sha,
+                                                        args.workflow_sha),
+                             sort_keys=True, separators=(",", ":")))
+        elif args.command == "build-initiation-body":
+            print(build_initiation_body(args.source_sha, args.workflow_sha,
+                                        args.run_id, args.run_attempt))
+        elif args.command == "verify-build-initiation":
+            print(json.dumps(verify_build_initiation(load_json(args.comments_json), args.source_sha,
+                                                     args.workflow_sha, args.run_id,
+                                                     args.run_attempt),
+                             sort_keys=True, separators=(",", ":")))
+        elif args.command == "build-resolution-body":
+            print(build_resolution_body(args.source_sha, args.workflow_sha,
+                                        args.initiation_comment_id, args.build_id,
+                                        args.run_id, args.run_attempt))
+        elif args.command == "verify-build-resolution":
+            print(json.dumps(verify_build_resolution(load_json(args.comments_json), args.source_sha,
+                                                     args.workflow_sha,
+                                                     args.initiation_comment_id,
+                                                     args.build_id),
+                             sort_keys=True, separators=(",", ":")))
+        elif args.command == "validate-build-request":
+            print(json.dumps(validate_build_request_identity(load_json(args.build_json),
+                                                             args.source_sha,
+                                                             args.workflow_sha),
+                             sort_keys=True, separators=(",", ":")))
         elif args.command == "build-identity":
             build = load_json(args.build_json)
             source, control = build_identity_from_tags(build)
