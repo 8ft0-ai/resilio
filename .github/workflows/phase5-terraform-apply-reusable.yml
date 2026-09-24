@@ -1,0 +1,157 @@
+name: Phase 5 product Terraform trusted applier reusable
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      candidate_sha:
+        required: true
+        type: string
+      base_sha:
+        required: true
+        type: string
+      expected_main_sha:
+        required: true
+        type: string
+      reviewed_evidence_object:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  apply:
+    name: product-apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - name: Check out immutable Slice A Terraform control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up exact Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Bind merged candidate exactly before applier OIDC
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/phase5_terraform_control.py verify-caller \
+            --repository "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" \
+            --ref-protected "$GITHUB_REF_PROTECTED" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$PR_NUMBER" -gt 0
+          python3 scripts/phase5_terraform_control.py verify-main --sha "$EXPECTED_MAIN_SHA"
+          python3 scripts/phase5_terraform_control.py verify-pr \
+            --pr-number "$PR_NUMBER" --head-sha "$CANDIDATE_SHA" --base-sha "$BASE_SHA" \
+            --require-merged --merge-sha "$EXPECTED_MAIN_SHA"
+          python3 scripts/phase5_terraform_control.py fetch-candidate \
+            --sha "$CANDIDATE_SHA" --output "$RUNNER_TEMP/reviewed-candidate.json" > /dev/null
+          python3 scripts/phase5_terraform_control.py fetch-candidate \
+            --sha "$EXPECTED_MAIN_SHA" --output "$RUNNER_TEMP/current-candidate.json" > /dev/null
+          cmp "$RUNNER_TEMP/reviewed-candidate.json" "$RUNNER_TEMP/current-candidate.json"
+          python3 scripts/phase5_terraform_control.py verify-routing-binding \
+            --candidate "$RUNNER_TEMP/current-candidate.json" --control-sha "${{ job.workflow_sha }}" \
+            --output "$RUNNER_TEMP/routing-binding.json"
+          python3 scripts/phase5_terraform_control.py assemble \
+            --trusted-root "$GITHUB_WORKSPACE" --candidate "$RUNNER_TEMP/current-candidate.json" \
+            --output "$RUNNER_TEMP/product" > "$RUNNER_TEMP/assembly.json"
+
+      - name: Authenticate bounded product applier
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: resilio-control-e882d4
+          workload_identity_provider: projects/400271474382/locations/global/workloadIdentityPools/github/providers/resilio
+          service_account: github-p5-product-applier@resilio-control-e882d4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 1200s
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Re-plan, compare reviewed private effect, apply once and prove no-change
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
+          REVIEWED_EVIDENCE_OBJECT: ${{ inputs.reviewed_evidence_object }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/product"
+          REVIEWED="$RUNNER_TEMP/reviewed-effect.json"
+          CURRENT="$RUNNER_TEMP/current-effect.json"
+          PUBLIC="$RUNNER_TEMP/current-manifest.json"
+          STATE="$RUNNER_TEMP/state.json"
+          STATE_ID="$RUNNER_TEMP/state-id.json"
+          PLAN="$RUNNER_TEMP/product.tfplan"
+          PLAN_JSON="$RUNNER_TEMP/plan.json"
+
+          python3 scripts/phase5_terraform_control.py download-effect \
+            --object "$REVIEWED_EVIDENCE_OBJECT" --output "$REVIEWED"
+
+          META="$(python3 scripts/phase5_terraform_control.py gcs-metadata --object product/default.tfstate --allow-absent)"
+          if test "$META" = "ABSENT"; then
+            printf '{}\n' > "$STATE"
+            GENERATION=ABSENT
+          else
+            GENERATION="$(printf '%s' "$META" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
+          fi
+
+          terraform -chdir="$WORK" init -input=false -lockfile=readonly >/dev/null
+          if test "$GENERATION" != "ABSENT"; then
+            terraform -chdir="$WORK" state pull > "$STATE"
+          fi
+          python3 scripts/phase5_terraform_control.py state-identity \
+            --state-json "$STATE" --generation "$GENERATION" --output "$STATE_ID"
+
+          terraform -chdir="$WORK" plan -input=false -out="$PLAN" >/dev/null
+          terraform -chdir="$WORK" show -json "$PLAN" > "$PLAN_JSON"
+          TREE_SHA="$(cat "$WORK/backend.tf" "$WORK/provider.tf" "$WORK/versions.tf" "$WORK/.terraform.lock.hcl" | sha256sum | cut -d' ' -f1)"
+          LOCK_SHA="$(sha256sum "$WORK/.terraform.lock.hcl" | cut -d' ' -f1)"
+          python3 scripts/phase5_terraform_control.py build-effect \
+            --plan-json "$PLAN_JSON" --candidate "$RUNNER_TEMP/current-candidate.json" \
+            --state-identity "$STATE_ID" --routing-binding "$RUNNER_TEMP/routing-binding.json" \
+            --pr-number "$PR_NUMBER" \
+            --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA" \
+            --control-sha "$CONTROL_SHA" --trusted-tree-sha256 "$TREE_SHA" \
+            --provider-lock-sha256 "$LOCK_SHA" --private-output "$CURRENT" \
+            --public-output "$PUBLIC" --run-id "$GITHUB_RUN_ID" \
+            --evidence-object "$REVIEWED_EVIDENCE_OBJECT"
+          python3 scripts/phase5_terraform_control.py compare-effect --expected "$REVIEWED" --actual "$CURRENT"
+
+          terraform -chdir="$WORK" apply -input=false -auto-approve "$PLAN" >/dev/null
+          set +e
+          terraform -chdir="$WORK" plan -input=false -detailed-exitcode >/dev/null
+          NO_CHANGE_RC=$?
+          set -e
+          test "$NO_CHANGE_RC" -eq 0
+          cat "$PUBLIC"
+
+      - name: Remove generated WIF credential material
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE"/gha-creds-*.json "$RUNNER_TEMP"/gha-creds-*.json

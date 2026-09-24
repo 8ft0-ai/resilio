@@ -38,6 +38,47 @@ jobs:
       - name: Validate normal Terraform callers
         run: python3 scripts/validate_terraform_callers.py
 
+      - name: Validate Phase 5 trusted product/control seed
+        run: python3 scripts/validate_phase5_slice_a.py
+
+      - name: Validate generated Phase 5 product Terraform configurations
+        run: python3 scripts/validate_phase5_terraform_seed.py
+
+      - name: Verify reviewed Phase 4-derived acceptance fixture
+        run: python3 scripts/phase5_acceptance_fixture.py > /dev/null
+
+      - name: Smoke-test the built Phase 5 product image
+        run: |
+          set -euo pipefail
+          docker build --network=none -f services/resilio_app/Dockerfile -t phase5-slice-a-smoke .
+          for COMPONENT in ingest processor api; do
+            NAME="phase5-$COMPONENT-smoke"
+            docker run -d --rm --network=none --name "$NAME" \
+              -e RESILIO_COMPONENT="$COMPONENT" \
+              -e GOOGLE_CLOUD_PROJECT=resilio-reference-e882d4 phase5-slice-a-smoke >/dev/null
+            READY=""
+            for _ in $(seq 1 20); do
+              if docker exec "$NAME" /usr/bin/python3 -c 'import json,urllib.request; r=urllib.request.urlopen("http://127.0.0.1:8080/health",timeout=1); assert r.status == 200; assert json.load(r) == {"status":"ok"}' >/dev/null 2>&1; then
+                READY=1
+                break
+              fi
+              sleep 1
+            done
+            if test -z "$READY"; then
+              docker logs "$NAME" >&2 || true
+              docker rm -f "$NAME" >/dev/null 2>&1 || true
+              exit 1
+            fi
+            docker stop "$NAME" >/dev/null
+          done
+          set +e
+          docker run --rm --network=none \
+            -e RESILIO_COMPONENT=invalid \
+            -e GOOGLE_CLOUD_PROJECT=resilio-reference-e882d4 phase5-slice-a-smoke >/tmp/invalid-component.log 2>&1
+          RC=$?
+          set -e
+          test "$RC" -ne 0
+
       - name: Run repository unit tests
         run: python3 -m unittest discover -s tests -v
 
