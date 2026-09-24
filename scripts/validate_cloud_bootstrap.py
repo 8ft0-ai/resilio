@@ -95,7 +95,8 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "af76ce84728a514d0a1811563fbcf85621b5cd03",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "dfeec737d25b48a10967085f5f7a9ad8ce63bfa6",
+    "phase4_authority.tf": "5f7439a3aa3e4d67233dda46f9508f73becf6675",
+    "phase5_authority.tf": "bce93317e85f95138981d14e2beecdbabe44ae44",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -587,6 +588,9 @@ def check_phase4_authority(errors: list[str]) -> None:
             "project = google_project.reference.project_id",
             "role    = google_project_iam_custom_role.phase4_verifier.name",
             'member  = "serviceAccount:${google_service_account.phase4_verifier.email}"',
+            'title       = "phase4-proof-verifier-only"',
+            'resource.name == \\"projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof\\"',
+            'resource.name.startsWith(\\"projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof/revisions/\\")',
         ),
     }
     for name, tokens in project_bindings.items():
