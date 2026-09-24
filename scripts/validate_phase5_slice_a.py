@@ -44,9 +44,17 @@ def check():
             if forbidden in text: errors.append(f"PHASE5_REUSABLE_ACTIVE_OR_SECRET_SURFACE:{name}:{forbidden}")
     build=(ROOT/".github/workflows/phase5-build-reusable.yml").read_text()
     for required in ("group: phase5-product-build-initiation","GITHUB_RUN_ATTEMPT",
+                     "issues: write",
+                     "Establish durable cross-run build initiation state before OIDC",
+                     "build-initiation-authority","verify-build-initiation",
+                     "build-resolution-body","verify-build-resolution",
                      "PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECONCILING",
                      "PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECOVERY_REQUIRED"):
         if required not in build: errors.append(f"PHASE5_BUILD_ONCE_BOUNDARY_MISSING:{required}")
+    initiation=build.find("Establish durable cross-run build initiation state before OIDC")
+    oidc=build.find("Authenticate bounded Phase 5 build initiator")
+    if initiation < 0 or oidc < 0 or initiation >= oidc:
+        errors.append("PHASE5_BUILD_DURABLE_INITIATION_NOT_PRE_OIDC")
     if build.count("phase5_build_select.py") < 2:
         errors.append("PHASE5_BUILD_AMBIGUOUS_RECONCILIATION_MISSING")
     if build.count('-X POST -H "Authorization: Bearer $TOKEN"') != 1:
