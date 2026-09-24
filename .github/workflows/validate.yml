@@ -41,6 +41,9 @@ jobs:
       - name: Validate Phase 5 trusted product/control seed
         run: python3 scripts/validate_phase5_slice_a.py
 
+      - name: Validate Phase 5 Slice B authority/state-domain declaration
+        run: python3 scripts/validate_phase5_slice_b.py
+
       - name: Validate generated Phase 5 product Terraform configurations
         run: python3 scripts/validate_phase5_terraform_seed.py
 
