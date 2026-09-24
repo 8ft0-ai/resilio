@@ -102,8 +102,10 @@ def check() -> None:
         'account_id   = "github-p5-acceptance"',
         'account_id   = "p5-pubsub-push"',
         'role_id     = "resilio_p5_acceptance_reader"',
-        'resource.name == \\"projects/resilio-reference-e882d4/topics/resilio-deployment-events\\"',
-        'resource.name.startsWith(\\"projects/resilio-reference-e882d4/databases/(default)/documents/\\")',
+        'phase5_product_topic                = "resilio-deployment-events"',
+        'phase5_firestore_document_prefix    = "projects/${google_project.reference.project_id}/databases/(default)/documents/"',
+        'expression  = "resource.name == \\"${local.phase5_topic_resource}\\""',
+        'expression  = "resource.name.startsWith(\\"${local.phase5_firestore_document_prefix}\\")"',
     ), "PHASE5_AUTHORITY_REQUIRED", errors)
 
     if authority.count('resource "google_service_account"') != len(EXPECTED_ACCOUNTS):
