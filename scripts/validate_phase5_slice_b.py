@@ -178,15 +178,14 @@ def check() -> None:
         if token in authority:
             errors.append(f"PHASE5_SLICE_B_FORBIDDEN_AUTHORITY_OR_RESOURCE:{token}")
 
-    # No project-level Cloud Run role may be given to the future acceptance or
+    # No direct project IAM binding may be given to the future acceptance or
     # push identities. Service-level grants are deliberately deferred to D.5.
     for member in (
-        "google_service_account.phase5_acceptance.email",
-        "google_service_account.phase5_pubsub_push.email",
+        'member  = "serviceAccount:${google_service_account.phase5_acceptance.email}"',
+        'member  = "serviceAccount:${google_service_account.phase5_pubsub_push.email}"',
     ):
-        for block in authority.split('resource "google_project_iam_member"')[1:]:
-            if member in block and ("roles/run." in block or "phase5_acceptance_reader" in block):
-                errors.append(f"PHASE5_PREMATURE_PROJECT_RUN_AUTHORITY:{member}")
+        if member in authority:
+            errors.append(f"PHASE5_PREMATURE_PROJECT_AUTHORITY:{member}")
 
     require(phase4, (
         'title       = "phase4-proof-verifier-only"',
