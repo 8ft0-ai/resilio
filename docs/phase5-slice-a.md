@@ -29,14 +29,19 @@ There is no protected-main caller, WIF binding, Phase 5 principal, product
 Terraform candidate/root, provider credential or cloud activation in Slice A.
 
 The future build is bound to protected main plus the immutable reusable workflow
-identity. Before build OIDC, the reusable also reconciles an append-only build
-initiation record on governing issue #109 for the exact source/control identity.
-An unresolved prior initiation blocks every later invocation before OIDC and
-requires separately governed recovery; a resolved record binds exactly one
-Cloud Build ID for reuse. A newly initiated run records the exact build ID before
-continuing to terminal build validation, so an unknown create outcome cannot be
-silently retried by a fresh workflow invocation. Evidence binds the exact Cloud
-Build result, vulnerability result, pinned Syft SBOM and immutable release envelope. Initial deployment consumes one
+identity. Before build OIDC, the reusable reconciles an append-only build
+initiation record on governing issue #109 for the exact source/control identity,
+caller SHA and initiating workflow run. A later invocation may pass that gate
+only when GitHub reports that exact initiating run as successful on main,
+attempt 1, in this repository, with the immutable
+`phase5-build-reusable.yml@<Slice-A-control-SHA>` identity in its referenced
+workflows. A failed, cancelled or otherwise non-successful initiating run remains
+`BUILD_RECOVERY_AUTHORITY_REQUIRED`; Slice A contains no generic later-run
+resolution record or recovery bypass. Separately governed recovery is required
+before that state can ever be cleared. After OIDC, provider listing must
+independently reproduce exactly one exact source/control build before reuse; an
+absent or duplicate provider identity fails closed. Evidence binds the exact
+Cloud Build result, vulnerability result, pinned Syft SBOM and immutable release envelope. Initial deployment consumes one
 owner authority record and has only an exact three-service create-if-absent code
 path; it contains no update, delete or IAM-policy mutation path. The separate
 verifier/acceptance reusable is designed for the post-D.5 service-level

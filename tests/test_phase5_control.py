@@ -9,12 +9,12 @@ sys.path.insert(0,str(ROOT/"scripts"))
 from phase5_supply_chain import (
     ACCEPTANCE_READER_ROLE, CONTROL_PROJECT, OWNER_ID, OWNER_LOGIN,
     REFERENCE_PROJECT, SERVICES, Phase5Error, acceptance_readback,
-    build_initiation_authority, build_initiation_body, build_request,
-    build_resolution_body, cloud_run_create_request, d5_reconciliation_body, deployment_authority,
+    build_initiation_authority, build_initiation_body, build_initiation_state, build_request,
+    cloud_run_create_request, d5_reconciliation_body, deployment_authority,
     deployment_consumption_available, deployment_consumption_body, image_tag,
     processor_routing_binding_body, release_envelope, validate_build,
     validate_d5_reconciliation, validate_release, verify_build_initiation,
-    verify_build_resolution, verify_deployment_consumption, verify_service, verify_service_config,
+    verify_deployment_consumption, verify_service, verify_service_config,
 )
 from phase5_build_select import select
 from phase5_release_record import record_body, validate_record
@@ -44,6 +44,15 @@ def comment(comment_id:int,body:str):
 def bot_comment(comment_id:int,body:str):
     return {"id":comment_id,"issue_url":"https://api.github.com/repos/8ft0-ai/resilio/issues/109",
             "body":body,"user":{"login":"github-actions[bot]","id":41898282}}
+
+def build_run(run_id=55,caller_sha="3"*40,status="in_progress",conclusion=None,
+              path=".github/workflows/phase5-build.yml@main",reusable_sha=CONTROL):
+    return {"id":run_id,"run_attempt":1,"status":status,"conclusion":conclusion,
+            "head_branch":"main","head_sha":caller_sha,"path":path,
+            "head_repository":{"full_name":"8ft0-ai/resilio"},
+            "repository":{"full_name":"8ft0-ai/resilio"},
+            "referenced_workflows":[{"path":f"8ft0-ai/resilio/.github/workflows/phase5-build-reusable.yml@{reusable_sha}",
+                                     "sha":reusable_sha}]}
 class SupplyChainTests(unittest.TestCase):
     def test_build_is_exact_source_control_and_one_image(self):
         result=validate_build(successful_build(),SOURCE,CONTROL)
@@ -62,44 +71,60 @@ class SupplyChainTests(unittest.TestCase):
             select({"builds":[malformed]},SOURCE,CONTROL)
 
     def test_build_initiation_state_survives_fresh_invocations(self):
-        self.assertEqual(
-            build_initiation_authority([],SOURCE,CONTROL)["decision"],
-            "CLAIM_REQUIRED",
-        )
-        initiation=bot_comment(401,build_initiation_body(SOURCE,CONTROL,"55",1))
-        verified=verify_build_initiation([initiation],SOURCE,CONTROL,"55",1)
+        caller="3"*40
+        self.assertEqual(build_initiation_state([],SOURCE,CONTROL)["state"],"NONE")
+        initiation=bot_comment(401,build_initiation_body(SOURCE,CONTROL,caller,"55",1))
+        current=build_run(caller_sha=caller)
+        verified=verify_build_initiation([initiation],SOURCE,CONTROL,caller,"55",1,current)
         self.assertEqual(verified["initiation_comment_id"],"401")
 
         with self.assertRaises(Phase5Error) as cm:
-            build_initiation_authority([initiation],SOURCE,CONTROL)
+            build_initiation_authority([initiation],SOURCE,CONTROL,current)
         self.assertIn("BUILD_RECOVERY_AUTHORITY_REQUIRED",str(cm.exception))
 
-        resolution=bot_comment(402,build_resolution_body(
-            SOURCE,CONTROL,"401","12345678-abcd","55",1))
-        resolved=verify_build_resolution(
-            [initiation,resolution],SOURCE,CONTROL,"401","12345678-abcd")
-        self.assertEqual(resolved["resolution_comment_id"],"402")
-        reusable=build_initiation_authority([initiation,resolution],SOURCE,CONTROL)
-        self.assertEqual(reusable["decision"],"REUSE_RESOLVED")
-        self.assertEqual(reusable["build_id"],"12345678-abcd")
+        success=build_run(caller_sha=caller,status="completed",conclusion="success")
+        reusable=build_initiation_authority([initiation],SOURCE,CONTROL,success)
+        self.assertEqual(reusable["decision"],"REUSE_SUCCESSFUL_INITIATION")
+        self.assertEqual(reusable["initiating_run_id"],"55")
 
-        duplicate=bot_comment(403,build_initiation_body(SOURCE,CONTROL,"56",1))
+        failed=build_run(caller_sha=caller,status="completed",conclusion="failure")
+        with self.assertRaises(Phase5Error) as cm:
+            build_initiation_authority([initiation],SOURCE,CONTROL,failed)
+        self.assertIn("BUILD_RECOVERY_AUTHORITY_REQUIRED",str(cm.exception))
+
+        hostile=build_run(run_id=56,caller_sha=caller,status="completed",conclusion="success")
         with self.assertRaises(Phase5Error):
-            build_initiation_authority([initiation,duplicate],SOURCE,CONTROL)
+            build_initiation_authority([initiation],SOURCE,CONTROL,hostile)
+        hostile=build_run(caller_sha=caller,status="completed",conclusion="success",
+                          path=".github/workflows/phase5-build.yml@feature")
+        with self.assertRaises(Phase5Error):
+            build_initiation_authority([initiation],SOURCE,CONTROL,hostile)
+        hostile=build_run(caller_sha=caller,status="completed",conclusion="success",
+                          reusable_sha="9"*40)
+        with self.assertRaises(Phase5Error):
+            build_initiation_authority([initiation],SOURCE,CONTROL,hostile)
+
+        duplicate=bot_comment(403,build_initiation_body(SOURCE,CONTROL,caller,"56",1))
+        with self.assertRaises(Phase5Error):
+            build_initiation_state([initiation,duplicate],SOURCE,CONTROL)
 
     def test_build_workflow_serialises_first_attempt_and_reconciles_ambiguous_create(self):
         text=(ROOT/".github/workflows/phase5-build-reusable.yml").read_text(encoding="utf-8")
         self.assertIn("group: phase5-product-build-initiation",text)
         self.assertIn("issues: write",text)
+        self.assertIn("actions: read",text)
         self.assertLess(
             text.index("Establish durable cross-run build initiation state before OIDC"),
             text.index("Authenticate bounded Phase 5 build initiator"),
         )
         for marker in (
-            "build-initiation-authority","verify-build-initiation",
-            "build-resolution-body","verify-build-resolution",
+            "build-initiation-state","build-initiation-authority","verify-build-initiation",
+            "REUSE_SUCCESSFUL_INITIATION",
+            "PHASE5_BUILD_SUCCESSFUL_INITIATION_PROVIDER_BUILD_MISSING",
         ):
             self.assertIn(marker,text)
+        self.assertNotIn("build-resolution-body",text)
+        self.assertNotIn("verify-build-resolution",text)
         self.assertGreaterEqual(text.count('test "$GITHUB_RUN_ATTEMPT" = "1"'),2)
         self.assertIn("PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECONCILING",text)
         self.assertIn("PHASE5_BUILD_CREATE_OUTCOME_AMBIGUOUS_RECOVERY_REQUIRED",text)
