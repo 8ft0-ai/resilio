@@ -1,0 +1,22 @@
+name: Phase 5 first-slice acceptance caller
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_record_comment_id:
+        description: Exact reviewed release-record comment ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase5-acceptance-reusable.yml@67e61a6c0d4930f8a5c5db545ef84d8430e437bc
+    with:
+      release_record_comment_id: ${{ inputs.release_record_comment_id }}

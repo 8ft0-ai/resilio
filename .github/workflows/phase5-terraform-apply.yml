@@ -1,0 +1,45 @@
+name: Phase 5 product Terraform apply caller
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Exact merged product-candidate pull request number
+        required: true
+        type: number
+      candidate_sha:
+        description: Exact reviewed product-candidate head SHA
+        required: true
+        type: string
+      base_sha:
+        description: Exact reviewed product-candidate base SHA
+        required: true
+        type: string
+      expected_main_sha:
+        description: Exact merge commit currently on protected main
+        required: true
+        type: string
+      reviewed_evidence_object:
+        description: Exact private reviewed-plan evidence object
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  apply:
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase5-terraform-apply-reusable.yml@67e61a6c0d4930f8a5c5db545ef84d8430e437bc
+    with:
+      pr_number: ${{ inputs.pr_number }}
+      candidate_sha: ${{ inputs.candidate_sha }}
+      base_sha: ${{ inputs.base_sha }}
+      expected_main_sha: ${{ inputs.expected_main_sha }}
+      reviewed_evidence_object: ${{ inputs.reviewed_evidence_object }}

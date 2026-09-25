@@ -293,10 +293,12 @@ resource "google_project_iam_member" "phase4_deployer" {
   member  = "serviceAccount:${google_service_account.phase4_deployer.email}"
 }
 
-resource "google_project_iam_member" "phase4_verifier" {
-  project = google_project.reference.project_id
-  role    = google_project_iam_custom_role.phase4_verifier.name
-  member  = "serviceAccount:${google_service_account.phase4_verifier.email}"
+resource "google_cloud_run_v2_service_iam_member" "phase4_verifier" {
+  project  = google_project.reference.project_id
+  location = "us-central1"
+  name     = "phase4-proof"
+  role     = google_project_iam_custom_role.phase4_verifier.name
+  member   = "serviceAccount:${google_service_account.phase4_verifier.email}"
 }
 
 resource "google_service_account_iam_member" "github_phase4_build" {

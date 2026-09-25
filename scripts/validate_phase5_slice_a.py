@@ -25,13 +25,13 @@ PHASE4_BLOBS={
 ".github/workflows/phase4-revision-transition.yml":"5c9713162ff3ad374e147a34514d66d651c27f18",
 ".github/workflows/phase4-revision-update-reusable.yml":"7201d7aadd48d1c7f4e84916ee6f611be5f79b9a",
 ".github/workflows/phase4-revision-verify-reusable.yml":"dc2c0079df21c7dec7f9ab7cdcad8a6488915db6",
-"infra/bootstrap/phase4_authority.tf":"dfeec737d25b48a10967085f5f7a9ad8ce63bfa6",
+"infra/bootstrap/phase4_authority.tf":"87d58edf550ee52cccd13dee5b4a0a48303a59cb",
 "infra/foundation/resources.tf.json":"4242a7e8f32e713268d53e1baa9afc69fed4ce8d",
 "services/phase4-proof/Dockerfile":"fce20f77922b303773b4302d1b421c0aea4d3de9",
 "services/phase4-proof/app.py":"1faf98e8cc2d67905c9c896cbc3ae30dccfe6b34",
 "services/phase4-proof/test_app.py":"387f5203c9201a84dcabee119c06981f5eb1605d"}
 def check():
-    errors=[];actual={p.name for p in (ROOT/".github/workflows").glob("phase5-*.yml")}
+    errors=[];actual={p.name for p in (ROOT/".github/workflows").glob("phase5-*-reusable.yml")}
     if actual != set(WORKFLOWS): errors.append("PHASE5_REUSABLE_SET_MISMATCH")
     for name,principal in WORKFLOWS.items():
         text=(ROOT/".github/workflows"/name).read_text(encoding="utf-8")
@@ -84,7 +84,6 @@ def check():
     for service in ("resilio-ingest","resilio-processor","resilio-api"):
         if service not in deploy: errors.append(f"PHASE5_DEPLOY_SERVICE_MISSING:{service}")
     if "serviceId=$SERVICE" not in deploy: errors.append("PHASE5_DEPLOY_CREATE_ID_NOT_BOUND")
-    if (ROOT/"infra/product").exists(): errors.append("PHASE5_LIVE_PRODUCT_ROOT_FORBIDDEN_IN_SLICE_A")
     for path,sha in PHASE4_BLOBS.items():
         file=ROOT/path
         if not file.is_file(): errors.append(f"RETAINED_PHASE4_FILE_MISSING:{path}");continue

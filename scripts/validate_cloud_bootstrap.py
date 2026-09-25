@@ -95,7 +95,8 @@ EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS = {
     "main.tf": "80b0a697e3735c9e0568511dcef58d4c8abdc183",
     "outputs.tf": "af76ce84728a514d0a1811563fbcf85621b5cd03",
     "phase3_authority.tf": "1a860a038522bad437905e30c1a0fcdb49db000f",
-    "phase4_authority.tf": "dfeec737d25b48a10967085f5f7a9ad8ce63bfa6",
+    "phase4_authority.tf": "87d58edf550ee52cccd13dee5b4a0a48303a59cb",
+    "phase5_authority.tf": "bdc6408568a08a7a881e027dc8f8dbaf2d2f8c7a",
     "variables.tf": "8be4636d1493e949f5e8218f559ce1139e862e61",
     "versions.tf": "7d3dff03f38303dd7616b1ad949e440a6d51f1f3",
 }
@@ -583,11 +584,6 @@ def check_phase4_authority(errors: list[str]) -> None:
             "role    = google_project_iam_custom_role.phase4_deployer.name",
             'member  = "serviceAccount:${google_service_account.phase4_deployer.email}"',
         ),
-        "phase4_verifier": (
-            "project = google_project.reference.project_id",
-            "role    = google_project_iam_custom_role.phase4_verifier.name",
-            'member  = "serviceAccount:${google_service_account.phase4_verifier.email}"',
-        ),
     }
     for name, tokens in project_bindings.items():
         require_tokens(
@@ -597,7 +593,28 @@ def check_phase4_authority(errors: list[str]) -> None:
             errors,
         )
     if text.count('resource "google_project_iam_member"') != len(project_bindings):
-        errors.append("Phase 4 must contain exactly nine project IAM bindings")
+        errors.append("Phase 4 must contain exactly eight project IAM bindings")
+
+    verifier_service_tokens = (
+        "project  = google_project.reference.project_id",
+        'location = "us-central1"',
+        'name     = "phase4-proof"',
+        "role     = google_project_iam_custom_role.phase4_verifier.name",
+        'member   = "serviceAccount:${google_service_account.phase4_verifier.email}"',
+    )
+    require_tokens(
+        resource_block(text, "google_cloud_run_v2_service_iam_member", "phase4_verifier"),
+        verifier_service_tokens,
+        "google_cloud_run_v2_service_iam_member.phase4_verifier",
+        errors,
+    )
+    if text.count('resource "google_cloud_run_v2_service_iam_member"') != 1:
+        errors.append("Phase 4 must contain exactly one service-level Cloud Run verifier binding")
+    if resource_block(text, "google_project_iam_member", "phase4_verifier"):
+        errors.append("Phase 4 verifier must not retain a project-level IAM binding")
+    if "phase4-proof-verifier-only" in text:
+        errors.append("Phase 4 verifier must not use unsupported Cloud Run resource.name conditions")
+
     if 'member  = "serviceAccount:${google_service_account.phase4_runtime.email}"' in text:
         errors.append("Phase 4 runtime identity must receive zero project roles")
 
