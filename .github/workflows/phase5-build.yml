@@ -13,4 +13,4 @@ jobs:
       actions: read
       issues: write
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase5-build-reusable.yml@9513cd2a93241a8f870d85b4261102327574da5b
+    uses: 8ft0-ai/resilio/.github/workflows/phase5-build-reusable.yml@47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239
