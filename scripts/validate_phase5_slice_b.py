@@ -1,8 +1,14 @@
 """Credential-free Phase 5 Slice B authority/state-domain invariants."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from phase5_terraform_control import (
+    ProductTerraformError,
+    canonical,
+    strict_file,
+    validate_candidate,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROL_SHA = "67e61a6c0d4930f8a5c5db545ef84d8430e437bc"
