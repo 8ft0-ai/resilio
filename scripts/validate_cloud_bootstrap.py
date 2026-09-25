@@ -584,14 +584,6 @@ def check_phase4_authority(errors: list[str]) -> None:
             "role    = google_project_iam_custom_role.phase4_deployer.name",
             'member  = "serviceAccount:${google_service_account.phase4_deployer.email}"',
         ),
-        "phase4_verifier": (
-            "project = google_project.reference.project_id",
-            "role    = google_project_iam_custom_role.phase4_verifier.name",
-            'member  = "serviceAccount:${google_service_account.phase4_verifier.email}"',
-            'title       = "phase4-proof-verifier-only"',
-            'resource.name == \\"projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof\\"',
-            'resource.name.startsWith(\\"projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof/revisions/\\")',
-        ),
     }
     for name, tokens in project_bindings.items():
         require_tokens(
@@ -601,7 +593,28 @@ def check_phase4_authority(errors: list[str]) -> None:
             errors,
         )
     if text.count('resource "google_project_iam_member"') != len(project_bindings):
-        errors.append("Phase 4 must contain exactly nine project IAM bindings")
+        errors.append("Phase 4 must contain exactly eight project IAM bindings")
+
+    verifier_service_tokens = (
+        "project  = google_project.reference.project_id",
+        'location = "us-central1"',
+        'name     = "phase4-proof"',
+        "role     = google_project_iam_custom_role.phase4_verifier.name",
+        'member   = "serviceAccount:${google_service_account.phase4_verifier.email}"',
+    )
+    require_tokens(
+        resource_block(text, "google_cloud_run_v2_service_iam_member", "phase4_verifier"),
+        verifier_service_tokens,
+        "google_cloud_run_v2_service_iam_member.phase4_verifier",
+        errors,
+    )
+    if text.count('resource "google_cloud_run_v2_service_iam_member"') != 1:
+        errors.append("Phase 4 must contain exactly one service-level Cloud Run verifier binding")
+    if resource_block(text, "google_project_iam_member", "phase4_verifier"):
+        errors.append("Phase 4 verifier must not retain a project-level IAM binding")
+    if "phase4-proof-verifier-only" in text:
+        errors.append("Phase 4 verifier must not use unsupported Cloud Run resource.name conditions")
+
     if 'member  = "serviceAccount:${google_service_account.phase4_runtime.email}"' in text:
         errors.append("Phase 4 runtime identity must receive zero project roles")
 
