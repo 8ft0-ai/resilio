@@ -102,13 +102,13 @@ def check() -> None:
         'account_id   = "github-p5-acceptance"',
         'account_id   = "p5-pubsub-push"',
         'role_id     = "resilio_p5_acceptance_reader"',
-        'expression  = "resource.name == \\"${local.phase5_topic_resource}\\""',
-        'expression  = "resource.name.startsWith(\\"${local.phase5_firestore_document_prefix}\\")"',
+        'role_id     = "resilio_p5_ingest_publisher"',
+        'expression  = "resource.name == \\"${local.phase5_firestore_database_target}\\""',
     ), "PHASE5_AUTHORITY_REQUIRED", errors)
     compact_authority = "\n".join(" ".join(line.split()) for line in authority.splitlines())
     require(compact_authority, (
         'phase5_product_topic = "resilio-deployment-events"',
-        'phase5_firestore_document_prefix = "projects/${google_project.reference.project_id}/databases/(default)/documents/"',
+        'phase5_firestore_database_target = "projects/${google_project.reference.project_id}/databases/(default)"',
     ), "PHASE5_AUTHORITY_LOCAL", errors)
 
     if authority.count('resource "google_service_account"') != len(EXPECTED_ACCOUNTS):
@@ -160,6 +160,30 @@ def check() -> None:
         if actual != expected:
             errors.append(f"PHASE5_ROLE_PERMISSIONS_MISMATCH:{name}:{actual}")
 
+    for name in (
+        "phase5_builder_registry",
+        "phase5_evidence_registry_reader",
+        "phase5_deployer_registry_reader",
+        "phase5_cloud_run_registry_reader",
+        "phase5_ingest_publisher",
+    ):
+        if resource_block(authority, "google_project_iam_member", name):
+            errors.append(f"PHASE5_UNSUPPORTED_PROJECT_RESOURCE_NAME_BINDING:{name}")
+
+    for stale_local in (
+        "phase5_product_repository_prefix",
+        "phase5_topic_resource",
+        "phase5_firestore_document_prefix",
+    ):
+        if stale_local in authority:
+            errors.append(f"PHASE5_UNSUPPORTED_RESOURCE_NAME_LOCAL:{stale_local}")
+
+    if 'resource.name.startsWith("\\${local.phase5_product_repository_prefix}")' in authority:
+        errors.append("PHASE5_UNSUPPORTED_ARTIFACT_REGISTRY_PROJECT_CONDITION")
+    if 'resource.name == "\\${local.phase5_topic_resource}"' in authority:
+        errors.append("PHASE5_UNSUPPORTED_PUBSUB_PROJECT_CONDITION")
+
+
     forbidden = (
         'resource "google_service_account_key"',
         'resource "google_artifact_registry_repository"',
@@ -192,11 +216,19 @@ def check() -> None:
         if member in authority:
             errors.append(f"PHASE5_PREMATURE_PROJECT_AUTHORITY:{member}")
 
-    require(phase4, (
-        'title       = "phase4-proof-verifier-only"',
-        'resource.name == \\"projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof\\"',
-        'resource.name.startsWith(\\"projects/resilio-reference-e882d4/locations/us-central1/services/phase4-proof/revisions/\\")',
-    ), "PHASE4_VERIFIER_NARROWING", errors)
+    compact_phase4 = "\n".join(" ".join(line.split()) for line in phase4.splitlines())
+    require(compact_phase4, (
+        'resource "google_cloud_run_v2_service_iam_member" "phase4_verifier" {',
+        'project = google_project.reference.project_id',
+        'location = "us-central1"',
+        'name = "phase4-proof"',
+        'role = google_project_iam_custom_role.phase4_verifier.name',
+        'member = "serviceAccount:${google_service_account.phase4_verifier.email}"',
+    ), "PHASE4_VERIFIER_SERVICE_LEVEL_NARROWING", errors)
+    if resource_block(phase4, "google_project_iam_member", "phase4_verifier"):
+        errors.append("PHASE4_VERIFIER_PROJECT_LEVEL_BINDING_REMAINS")
+    if "phase4-proof-verifier-only" in phase4:
+        errors.append("PHASE4_VERIFIER_UNSUPPORTED_RESOURCE_NAME_CONDITION_REMAINS")
 
     workflows = ROOT / ".github/workflows"
     actual_callers = {path.name for path in workflows.glob("phase5-*.yml") if "-reusable" not in path.name}
