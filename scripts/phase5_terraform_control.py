@@ -289,6 +289,44 @@ def assemble(trusted_root: str | Path, candidate_file: str | Path, output: str |
     return hashes
 
 
+def prepare_plan_workdir(assembled_root: str | Path, generation: str,
+                         output: str | Path) -> dict[str, Any]:
+    source = Path(assembled_root).resolve()
+    destination = Path(output).resolve()
+    required = TRUSTED_FILES + ("resources.tf.json",)
+    if not all((source / name).is_file() for name in required):
+        raise ProductTerraformError("PLAN_WORKDIR_SOURCE_INVALID")
+    if source == destination or source in destination.parents:
+        raise ProductTerraformError("PLAN_WORKDIR_DESTINATION_INVALID")
+    if generation != "ABSENT" and (not generation.isdigit() or int(generation) <= 0):
+        raise ProductTerraformError("PLAN_WORKDIR_GENERATION_INVALID")
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
+    mode = "gcs-existing-state"
+    if generation == "ABSENT":
+        backend = destination / "backend.tf"
+        if not backend.is_file():
+            raise ProductTerraformError("PLAN_WORKDIR_BACKEND_MISSING")
+        backend.unlink()
+        mode = "local-absent-state"
+    preserved = {}
+    for name in ("provider.tf", "versions.tf", ".terraform.lock.hcl", "resources.tf.json"):
+        source_raw = (source / name).read_bytes()
+        destination_raw = (destination / name).read_bytes()
+        if source_raw != destination_raw:
+            raise ProductTerraformError(f"PLAN_WORKDIR_PRESERVATION_FAILED:{name}")
+        preserved[name] = sha256(source_raw)
+    if generation != "ABSENT" and (source / "backend.tf").read_bytes() != (destination / "backend.tf").read_bytes():
+        raise ProductTerraformError("PLAN_WORKDIR_BACKEND_CHANGED")
+    return {
+        "mode": mode,
+        "generation": generation,
+        "backend_present": (destination / "backend.tf").is_file(),
+        "preserved_sha256": preserved,
+    }
+
+
 def state_identity(state: Any, generation: str) -> dict[str, Any]:
     if not isinstance(state, dict):
         raise ProductTerraformError("STATE_IDENTITY_INVALID")
@@ -674,6 +712,7 @@ def main() -> int:
     p=commands.add_parser("verify-pr"); p.add_argument("--pr-number", type=int, required=True); p.add_argument("--head-sha", required=True); p.add_argument("--base-sha", required=True); p.add_argument("--require-open", action="store_true"); p.add_argument("--require-merged", action="store_true"); p.add_argument("--merge-sha")
     p=commands.add_parser("verify-main"); p.add_argument("--sha", required=True)
     p=commands.add_parser("fetch-candidate"); p.add_argument("--sha", required=True); p.add_argument("--output", required=True)
+    p=commands.add_parser("prepare-plan-workdir"); p.add_argument("--assembled-root", required=True); p.add_argument("--generation", required=True); p.add_argument("--output", required=True)
     p=commands.add_parser("state-identity"); p.add_argument("--state-json", required=True); p.add_argument("--generation", required=True); p.add_argument("--output", required=True)
     p=commands.add_parser("build-effect"); p.add_argument("--plan-json", required=True); p.add_argument("--candidate", required=True); p.add_argument("--state-identity", required=True); p.add_argument("--routing-binding", required=True); p.add_argument("--pr-number", type=int, required=True); p.add_argument("--base-sha", required=True); p.add_argument("--candidate-sha", required=True); p.add_argument("--control-sha", required=True); p.add_argument("--trusted-tree-sha256", required=True); p.add_argument("--provider-lock-sha256", required=True); p.add_argument("--private-output", required=True); p.add_argument("--public-output", required=True); p.add_argument("--run-id", required=True); p.add_argument("--evidence-object", required=True)
     p=commands.add_parser("compare-effect"); p.add_argument("--expected", required=True); p.add_argument("--actual", required=True)
@@ -697,6 +736,8 @@ def main() -> int:
             verify_main(args.sha)
         elif args.command=="fetch-candidate":
             print(json.dumps(fetch_candidate(args.sha,args.output),sort_keys=True,separators=(",",":")))
+        elif args.command=="prepare-plan-workdir":
+            print(json.dumps(prepare_plan_workdir(args.assembled_root,args.generation,args.output),sort_keys=True,separators=(",",":")))
         elif args.command=="state-identity":
             state=strict_file(args.state_json); ident=state_identity(state,args.generation)
             Path(args.output).write_bytes(canonical(ident)+b"\n")
