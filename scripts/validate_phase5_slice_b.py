@@ -80,19 +80,13 @@ def check() -> None:
     authority = AUTHORITY.read_text(encoding="utf-8")
     phase4 = PHASE4.read_text(encoding="utf-8")
 
-    candidate = json.loads(CANDIDATE.read_text(encoding="utf-8"))
-    expected_candidate = {
-        "contract": "resilio-product-terraform-candidate/v1",
-        "processor_uri": None,
-        "processor_verification_comment_id": None,
-        "stage": "empty",
-    }
-    if candidate != expected_candidate:
-        errors.append("PHASE5_SLICE_B_PRODUCT_ROOT_NOT_EMPTY_DECLARATION")
-    if CANDIDATE.read_text(encoding="utf-8") != json.dumps(
-        expected_candidate, sort_keys=True, separators=(",", ":")
-    ) + "\n":
-        errors.append("PHASE5_SLICE_B_CANDIDATE_NOT_CANONICAL")
+    try:
+        candidate = validate_candidate(strict_file(CANDIDATE))
+    except ProductTerraformError as exc:
+        errors.append(f"PHASE5_PRODUCT_CANDIDATE_INVALID:{exc}")
+    else:
+        if CANDIDATE.read_bytes() != canonical(candidate) + b"\\n":
+            errors.append("PHASE5_PRODUCT_CANDIDATE_NOT_CANONICAL")
 
     require(authority, (
         f'phase5_control_sha = "{CONTROL_SHA}"',
