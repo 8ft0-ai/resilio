@@ -1,6 +1,6 @@
 """Credential-free Phase 5 supply-chain, authority and Terraform-control tests."""
 from __future__ import annotations
-import base64, copy, json
+import base64, copy, json, tempfile
 from pathlib import Path
 import sys, unittest
 ROOT=Path(__file__).resolve().parents[1]
@@ -20,8 +20,8 @@ from phase5_build_select import select
 from phase5_release_record import record_body, validate_record
 from phase5_terraform_control import (
     BASE_ADDRESSES, PROCESSOR_RESOURCE, ProductTerraformError, decode_github_base64,
-    expected_creates, material_effect, resource_document, routing_binding_from_documents,
-    state_identity, validate_candidate, verify_caller_context,
+    expected_creates, material_effect, prepare_plan_workdir, resource_document,
+    routing_binding_from_documents, state_identity, validate_candidate, verify_caller_context,
 )
 from services.resilio_app.server import PUSH_PATH
 SOURCE="1"*40
@@ -313,6 +313,53 @@ class TerraformControlTests(unittest.TestCase):
         self.assertEqual([r["address"] for r in material_effect(plan,"base")],sorted(BASE_ADDRESSES))
         bad=copy.deepcopy(plan);bad["resource_changes"][0]["change"]["actions"]=["update"]
         with self.assertRaises(ProductTerraformError): material_effect(bad,"base")
+    def test_absent_state_planning_workdir_omits_only_backend(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)
+            source=root/"assembled";source.mkdir()
+            payloads={
+                "backend.tf":b'backend = "gcs"\n',
+                "provider.tf":b'provider = "google"\n',
+                "versions.tf":b'terraform = "1.15.8"\n',
+                ".terraform.lock.hcl":b'lock\n',
+                "resources.tf.json":b'{"resource":{}}\n',
+            }
+            for name,raw in payloads.items(): (source/name).write_bytes(raw)
+
+            absent=root/"absent"
+            result=prepare_plan_workdir(source,"ABSENT",absent)
+            self.assertEqual(result["mode"],"local-absent-state")
+            self.assertFalse(result["backend_present"])
+            self.assertFalse((absent/"backend.tf").exists())
+            self.assertEqual(
+                {p.name for p in absent.iterdir()},
+                set(payloads)-{"backend.tf"},
+            )
+            for name in set(payloads)-{"backend.tf"}:
+                self.assertEqual((absent/name).read_bytes(),payloads[name])
+
+            present=root/"present"
+            result=prepare_plan_workdir(source,"123",present)
+            self.assertEqual(result["mode"],"gcs-existing-state")
+            self.assertTrue(result["backend_present"])
+            for name,raw in payloads.items():
+                self.assertEqual((present/name).read_bytes(),raw)
+
+            with self.assertRaises(ProductTerraformError):
+                prepare_plan_workdir(source,"0",root/"zero")
+            with self.assertRaises(ProductTerraformError):
+                prepare_plan_workdir(source,"invalid",root/"invalid")
+            with self.assertRaises(ProductTerraformError):
+                prepare_plan_workdir(source,"ABSENT",source/"nested")
+
+    def test_planner_uses_state_sensitive_ephemeral_workdir(self):
+        text=(ROOT/".github/workflows/phase5-terraform-plan-reusable.yml").read_text(encoding="utf-8")
+        self.assertIn("prepare-plan-workdir",text)
+        self.assertIn('terraform -chdir="$PLAN_WORK" init',text)
+        self.assertIn('terraform -chdir="$PLAN_WORK" plan',text)
+        self.assertIn('test "$POST_META" = "$META"',text)
+        self.assertNotIn('terraform -chdir="$WORK" plan',text)
+
     def test_absent_state_is_explicit(self):
         state=state_identity({},"ABSENT");self.assertEqual(state["generation"],"ABSENT")
         with self.assertRaises(ProductTerraformError): state_identity({"resources":[]},"ABSENT")
