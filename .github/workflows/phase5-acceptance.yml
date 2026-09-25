@@ -17,6 +17,6 @@ jobs:
       contents: read
       issues: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase5-acceptance-reusable.yml@67e61a6c0d4930f8a5c5db545ef84d8430e437bc
+    uses: 8ft0-ai/resilio/.github/workflows/phase5-acceptance-reusable.yml@9513cd2a93241a8f870d85b4261102327574da5b
     with:
       release_record_comment_id: ${{ inputs.release_record_comment_id }}

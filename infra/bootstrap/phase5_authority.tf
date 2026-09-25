@@ -1,5 +1,5 @@
 locals {
-  phase5_control_sha = "67e61a6c0d4930f8a5c5db545ef84d8430e437bc"
+  phase5_control_sha = "9513cd2a93241a8f870d85b4261102327574da5b"
 
   phase5_build_workflow_ref         = "8ft0-ai/resilio/.github/workflows/phase5-build-reusable.yml@${local.phase5_control_sha}"
   phase5_evidence_workflow_ref      = "8ft0-ai/resilio/.github/workflows/phase5-evidence-reusable.yml@${local.phase5_control_sha}"
