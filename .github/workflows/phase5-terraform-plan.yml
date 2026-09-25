@@ -30,6 +30,6 @@ jobs:
       id-token: write
     uses: 8ft0-ai/resilio/.github/workflows/phase5-terraform-plan-reusable.yml@67e61a6c0d4930f8a5c5db545ef84d8430e437bc
     with:
-      pr_number: ${{ inputs.pr_number }}
+      pr_number: ${{ fromJSON(inputs.pr_number) }}
       candidate_sha: ${{ inputs.candidate_sha }}
       base_sha: ${{ inputs.base_sha }}
