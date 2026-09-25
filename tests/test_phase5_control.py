@@ -1,6 +1,6 @@
 """Credential-free Phase 5 supply-chain, authority and Terraform-control tests."""
 from __future__ import annotations
-import copy, json
+import base64, copy, json
 from pathlib import Path
 import sys, unittest
 ROOT=Path(__file__).resolve().parents[1]
@@ -19,8 +19,8 @@ from phase5_supply_chain import (
 from phase5_build_select import select
 from phase5_release_record import record_body, validate_record
 from phase5_terraform_control import (
-    BASE_ADDRESSES, PROCESSOR_RESOURCE, ProductTerraformError, expected_creates,
-    material_effect, resource_document, routing_binding_from_documents,
+    BASE_ADDRESSES, PROCESSOR_RESOURCE, ProductTerraformError, decode_github_base64,
+    expected_creates, material_effect, resource_document, routing_binding_from_documents,
     state_identity, validate_candidate, verify_caller_context,
 )
 from services.resilio_app.server import PUSH_PATH
@@ -228,6 +228,17 @@ class TerraformControlTests(unittest.TestCase):
         return {"contract":"resilio-product-terraform-candidate/v1","stage":stage,
                 "processor_uri":uri,
                 "processor_verification_comment_id":verification_comment_id}
+    def test_github_contents_base64_transport_wrapping_is_normalized_strictly(self):
+        raw=json.dumps(self.candidate("base"),sort_keys=True,separators=(",",":")).encode()+b"\n"
+        encoded=base64.b64encode(raw).decode()
+        wrapped="\n".join(encoded[i:i+60] for i in range(0,len(encoded),60))+"\n"
+        self.assertEqual(decode_github_base64(wrapped),raw)
+        self.assertEqual(decode_github_base64(wrapped.replace("\n","\r\n")),raw)
+        with self.assertRaises(ProductTerraformError):
+            decode_github_base64(wrapped.replace("\n"," ",1))
+        with self.assertRaises(ProductTerraformError):
+            decode_github_base64(wrapped[:10]+"!"+wrapped[11:])
+
     def test_closed_candidate_stages(self):
         for stage in ("empty","base"): self.assertEqual(validate_candidate(self.candidate(stage))["stage"],stage)
         routing=self.candidate("routing","https://resilio-processor-abc-uc.a.run.app","123")
