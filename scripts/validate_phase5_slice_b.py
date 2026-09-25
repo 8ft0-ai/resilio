@@ -91,7 +91,7 @@ def check() -> None:
     except ProductTerraformError as exc:
         errors.append(f"PHASE5_PRODUCT_CANDIDATE_INVALID:{exc}")
     else:
-        if CANDIDATE.read_bytes() != canonical(candidate) + b"\\n":
+        if CANDIDATE.read_bytes() != canonical(candidate) + b"\n":
             errors.append("PHASE5_PRODUCT_CANDIDATE_NOT_CANONICAL")
 
     require(authority, (
