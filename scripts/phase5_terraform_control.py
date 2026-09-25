@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -105,6 +106,16 @@ def strict_bytes(raw: bytes) -> Any:
 
 def strict_file(path: str | Path) -> Any:
     return strict_bytes(Path(path).read_bytes())
+
+
+def decode_github_base64(content: Any) -> bytes:
+    if not isinstance(content, str):
+        raise ProductTerraformError("CANDIDATE_CONTENT_INVALID")
+    transport_normalized = content.replace("\r", "").replace("\n", "")
+    try:
+        return base64.b64decode(transport_normalized, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ProductTerraformError("CANDIDATE_CONTENT_INVALID") from exc
 
 
 def validate_candidate(value: Any) -> dict[str, Any]:
@@ -597,10 +608,9 @@ def fetch_candidate(sha: str, output: str | Path) -> dict[str, Any]:
     payload = github(f"/repos/{REPOSITORY}/contents/{encoded}?ref={sha}")
     if not isinstance(payload, dict) or payload.get("type") != "file" or payload.get("path") != CANDIDATE_PATH:
         raise ProductTerraformError("CANDIDATE_PATH_MISMATCH")
-    try:
-        raw = base64.b64decode(payload.get("content", ""), validate=True)
-    except ValueError as exc:
-        raise ProductTerraformError("CANDIDATE_CONTENT_INVALID") from exc
+    if payload.get("encoding") != "base64":
+        raise ProductTerraformError("CANDIDATE_CONTENT_INVALID")
+    raw = decode_github_base64(payload.get("content"))
     candidate = validate_candidate(strict_bytes(raw))
     canonical_candidate = canonical(candidate) + b"\n"
     Path(output).write_bytes(canonical_candidate)
