@@ -25,7 +25,7 @@ PHASE4_BLOBS={
 ".github/workflows/phase4-revision-transition.yml":"5c9713162ff3ad374e147a34514d66d651c27f18",
 ".github/workflows/phase4-revision-update-reusable.yml":"7201d7aadd48d1c7f4e84916ee6f611be5f79b9a",
 ".github/workflows/phase4-revision-verify-reusable.yml":"dc2c0079df21c7dec7f9ab7cdcad8a6488915db6",
-"infra/bootstrap/phase4_authority.tf":"5f7439a3aa3e4d67233dda46f9508f73becf6675",
+"infra/bootstrap/phase4_authority.tf":"87d58edf550ee52cccd13dee5b4a0a48303a59cb",
 "infra/foundation/resources.tf.json":"4242a7e8f32e713268d53e1baa9afc69fed4ce8d",
 "services/phase4-proof/Dockerfile":"fce20f77922b303773b4302d1b421c0aea4d3de9",
 "services/phase4-proof/app.py":"1faf98e8cc2d67905c9c896cbc3ae30dccfe6b34",
