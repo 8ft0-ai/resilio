@@ -98,6 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           WORK="$RUNNER_TEMP/product"
+          PLAN_WORK="$RUNNER_TEMP/product-plan"
           STATE="$RUNNER_TEMP/state.json"
           STATE_ID="$RUNNER_TEMP/state-id.json"
           POST_STATE="$RUNNER_TEMP/post-state.json"
@@ -116,23 +117,27 @@ jobs:
             GENERATION="$(printf '%s' "$META" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
           fi
 
-          terraform -chdir="$WORK" init -input=false -lockfile=readonly >/dev/null
+          python3 scripts/phase5_terraform_control.py prepare-plan-workdir \
+            --assembled-root "$WORK" --generation "$GENERATION" --output "$PLAN_WORK" \
+            > "$RUNNER_TEMP/plan-workdir.json"
+          terraform -chdir="$PLAN_WORK" init -input=false -lockfile=readonly >/dev/null
           if test "$GENERATION" != "ABSENT"; then
-            terraform -chdir="$WORK" state pull > "$STATE"
+            terraform -chdir="$PLAN_WORK" state pull > "$STATE"
           fi
           python3 scripts/phase5_terraform_control.py state-identity \
             --state-json "$STATE" --generation "$GENERATION" --output "$STATE_ID"
 
-          terraform -chdir="$WORK" plan -input=false -out="$PLAN" >/dev/null
-          terraform -chdir="$WORK" show -json "$PLAN" > "$PLAN_JSON"
+          terraform -chdir="$PLAN_WORK" plan -input=false -out="$PLAN" >/dev/null
+          terraform -chdir="$PLAN_WORK" show -json "$PLAN" > "$PLAN_JSON"
 
           POST_META="$(python3 scripts/phase5_terraform_control.py gcs-metadata --object product/default.tfstate --allow-absent)"
+          test "$POST_META" = "$META"
           if test "$POST_META" = "ABSENT"; then
             printf '{}\n' > "$POST_STATE"
             POST_GENERATION=ABSENT
           else
             POST_GENERATION="$(printf '%s' "$POST_META" | python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])')"
-            terraform -chdir="$WORK" state pull > "$POST_STATE"
+            terraform -chdir="$PLAN_WORK" state pull > "$POST_STATE"
           fi
           python3 scripts/phase5_terraform_control.py state-identity \
             --state-json "$POST_STATE" --generation "$POST_GENERATION" --output "$POST_STATE_ID"
