@@ -246,6 +246,12 @@ def check() -> None:
         if "${{ secrets." in text:
             errors.append(f"PHASE5_CALLER_SECRET_SURFACE:{caller}")
 
+    for caller in ("phase5-terraform-plan.yml", "phase5-terraform-apply.yml"):
+        text = (workflows / caller).read_text(encoding="utf-8")
+        require(text, (
+            "pr_number: ${{ fromJSON(inputs.pr_number) }}",
+        ), f"PHASE5_TERRAFORM_CALLER_NUMERIC_PR_INPUT:{caller}", errors)
+
     if errors:
         raise SystemExit("\n".join(errors))
     print("Phase 5 Slice B authority/state-domain validation passed.")
