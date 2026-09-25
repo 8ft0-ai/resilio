@@ -17,9 +17,7 @@ locals {
   phase5_lock_object               = "projects/_/buckets/${google_storage_bucket.terraform_state.name}/objects/product/default.tflock"
   phase5_plan_evidence_prefix      = "projects/_/buckets/${google_storage_bucket.terraform_state.name}/objects/plan-evidence/product/"
   phase5_product_evidence_prefix   = "projects/_/buckets/${local.phase5_product_evidence_bucket}/objects/"
-  phase5_product_repository_prefix = "projects/${google_project.control.project_id}/locations/${local.phase5_region}/repositories/${local.phase5_product_repository}"
-  phase5_topic_resource            = "projects/${google_project.reference.project_id}/topics/${local.phase5_product_topic}"
-  phase5_firestore_document_prefix = "projects/${google_project.reference.project_id}/databases/(default)/documents/"
+  phase5_firestore_database_target = "projects/${google_project.reference.project_id}/databases/(default)"
   phase4_proof_service_resource    = "projects/${google_project.reference.project_id}/locations/${local.phase5_region}/services/phase4-proof"
   phase4_proof_revision_prefix     = "${local.phase4_proof_service_resource}/revisions/"
 }
@@ -246,17 +244,6 @@ resource "google_project_iam_custom_role" "phase5_builder_registry" {
   ]
 }
 
-resource "google_project_iam_member" "phase5_builder_registry" {
-  project = google_project.control.project_id
-  role    = google_project_iam_custom_role.phase5_builder_registry.name
-  member  = "serviceAccount:${google_service_account.phase5_builder.email}"
-
-  condition {
-    title       = "phase5-product-registry-builder"
-    description = "Restrict builder authority to the future product repository."
-    expression  = "resource.name.startsWith(\"${local.phase5_product_repository_prefix}\")"
-  }
-}
 
 resource "google_project_iam_custom_role" "phase5_evidence_analysis" {
   project     = google_project.control.project_id
@@ -329,43 +316,9 @@ resource "google_project_iam_member" "phase5_deployer_product_evidence_reader" {
   }
 }
 
-resource "google_project_iam_member" "phase5_evidence_registry_reader" {
-  project = google_project.control.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.phase5_evidence.email}"
 
-  condition {
-    title       = "phase5-product-registry-evidence-read"
-    description = "Read only the future product repository."
-    expression  = "resource.name.startsWith(\"${local.phase5_product_repository_prefix}\")"
-  }
-}
 
-resource "google_project_iam_member" "phase5_deployer_registry_reader" {
-  project = google_project.control.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.phase5_deployer.email}"
 
-  condition {
-    title       = "phase5-product-registry-deployer-read"
-    description = "Read only the future product repository."
-    expression  = "resource.name.startsWith(\"${local.phase5_product_repository_prefix}\")"
-  }
-}
-
-resource "google_project_iam_member" "phase5_cloud_run_registry_reader" {
-  project = google_project.control.project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:service-${google_project.reference.number}@serverless-robot-prod.iam.gserviceaccount.com"
-
-  condition {
-    title       = "phase5-product-registry-cloud-run-read"
-    description = "Allow the reference-project Cloud Run service agent to read only the future product repository."
-    expression  = "resource.name.startsWith(\"${local.phase5_product_repository_prefix}\")"
-  }
-}
-
-# Product Terraform state path and immutable reviewed-plan evidence.
 resource "google_project_iam_custom_role" "phase5_state_list" {
   project     = google_project.control.project_id
   role_id     = "resilio_p5_state_list"
@@ -625,25 +578,17 @@ resource "google_project_iam_custom_role" "phase5_acceptance_reader" {
   ]
 }
 
-# Runtime authority is already bounded to exact future product resource names.
+# Runtime custom roles are declared here. Resource-level Pub/Sub and Artifact
+# Registry bindings that require Slice C resources are deferred to the reviewed
+# post-Slice-C / pre-Slice-D resource-level IAM activation stage.
 resource "google_project_iam_custom_role" "phase5_ingest_publisher" {
   project     = google_project.reference.project_id
   role_id     = "resilio_p5_ingest_publisher"
   title       = "Resilio Phase 5 ingest publisher"
-  description = "Publish only to the accepted deployment-events topic when conditionally bound."
+  description = "Publish only when later bound on the exact deployment-events topic resource."
   permissions = ["pubsub.topics.publish"]
 }
 
-resource "google_project_iam_member" "phase5_ingest_publisher" {
-  project = google_project.reference.project_id
-  role    = google_project_iam_custom_role.phase5_ingest_publisher.name
-  member  = "serviceAccount:${google_service_account.phase5_ingest_runtime.email}"
-  condition {
-    title       = "phase5-ingest-topic-only"
-    description = "Publish only to the future deployment-events topic."
-    expression  = "resource.name == \"${local.phase5_topic_resource}\""
-  }
-}
 
 resource "google_project_iam_custom_role" "phase5_processor_store" {
   project     = google_project.reference.project_id
@@ -662,8 +607,8 @@ resource "google_project_iam_member" "phase5_processor_store" {
   member  = "serviceAccount:${google_service_account.phase5_processor_runtime.email}"
   condition {
     title       = "phase5-processor-firestore-only"
-    description = "Restrict processor data authority to the default product database documents."
-    expression  = "resource.name.startsWith(\"${local.phase5_firestore_document_prefix}\")"
+    description = "Restrict processor data authority to the exact default product database."
+    expression  = "resource.name == \"${local.phase5_firestore_database_target}\""
   }
 }
 
@@ -681,8 +626,8 @@ resource "google_project_iam_member" "phase5_api_store" {
   member  = "serviceAccount:${google_service_account.phase5_api_runtime.email}"
   condition {
     title       = "phase5-api-firestore-only"
-    description = "Restrict API data authority to the default product database documents."
-    expression  = "resource.name.startsWith(\"${local.phase5_firestore_document_prefix}\")"
+    description = "Restrict API data authority to the exact default product database."
+    expression  = "resource.name == \"${local.phase5_firestore_database_target}\""
   }
 }
 
