@@ -1,8 +1,14 @@
 """Credential-free Phase 5 Slice B authority/state-domain invariants."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from phase5_terraform_control import (
+    ProductTerraformError,
+    canonical,
+    strict_file,
+    validate_candidate,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROL_SHA = "67e61a6c0d4930f8a5c5db545ef84d8430e437bc"
@@ -80,19 +86,13 @@ def check() -> None:
     authority = AUTHORITY.read_text(encoding="utf-8")
     phase4 = PHASE4.read_text(encoding="utf-8")
 
-    candidate = json.loads(CANDIDATE.read_text(encoding="utf-8"))
-    expected_candidate = {
-        "contract": "resilio-product-terraform-candidate/v1",
-        "processor_uri": None,
-        "processor_verification_comment_id": None,
-        "stage": "empty",
-    }
-    if candidate != expected_candidate:
-        errors.append("PHASE5_SLICE_B_PRODUCT_ROOT_NOT_EMPTY_DECLARATION")
-    if CANDIDATE.read_text(encoding="utf-8") != json.dumps(
-        expected_candidate, sort_keys=True, separators=(",", ":")
-    ) + "\n":
-        errors.append("PHASE5_SLICE_B_CANDIDATE_NOT_CANONICAL")
+    try:
+        candidate = validate_candidate(strict_file(CANDIDATE))
+    except ProductTerraformError as exc:
+        errors.append(f"PHASE5_PRODUCT_CANDIDATE_INVALID:{exc}")
+    else:
+        if CANDIDATE.read_bytes() != canonical(candidate) + b"\n":
+            errors.append("PHASE5_PRODUCT_CANDIDATE_NOT_CANONICAL")
 
     require(authority, (
         f'phase5_control_sha = "{CONTROL_SHA}"',
