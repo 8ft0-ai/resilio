@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free validation for the inert Slice C recovery control seed."""
+"""Credential-free validation for the Slice C recovery R2 activation candidate."""
 from __future__ import annotations
 
 import re
@@ -15,6 +15,7 @@ VALIDATE = ROOT / ".github/workflows/validate.yml"
 CANDIDATE = ROOT / "infra/product/candidate.json"
 
 NORMAL_CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
+RECOVERY_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
 BOUNDARY = "5833629251"
 RECOVERY_DESIGN = "5963131897"
 GENERATION = "1790344068764582"
@@ -142,7 +143,7 @@ def require(text: str, tokens: tuple[str, ...], label: str, errors: list[str]) -
 
 def main() -> int:
     errors: list[str] = []
-    for path in (WORKFLOW, HELPER, AUTHORITY, VALIDATE, CANDIDATE):
+    for path in (WORKFLOW, CALLER, HELPER, AUTHORITY, VALIDATE, CANDIDATE):
         if not path.is_file():
             errors.append(f"RECOVERY_REQUIRED_FILE_MISSING:{path.relative_to(ROOT)}")
     if errors:
@@ -151,6 +152,7 @@ def main() -> int:
         return 1
 
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    caller = CALLER.read_text(encoding="utf-8")
     helper = HELPER.read_text(encoding="utf-8")
     authority = AUTHORITY.read_text(encoding="utf-8")
     validate = VALIDATE.read_text(encoding="utf-8")
@@ -211,8 +213,7 @@ def main() -> int:
         errors.append("RECOVERY_WORKFLOW_ID_TOKEN_COUNT")
     if workflow.count('terraform -chdir="$PLAN_WORK" plan') != 1:
         errors.append("RECOVERY_WORKFLOW_PLAN_COUNT")
-    if CALLER.exists():
-        errors.append("RECOVERY_R1_CALLER_MUST_BE_ABSENT")
+    errors.extend(r2_caller_structure_errors(caller, RECOVERY_CONTROL_SHA))
 
     require(
         helper,
@@ -275,13 +276,30 @@ def main() -> int:
             errors.append(f"RECOVERY_HELPER_FORBIDDEN:{token}")
 
     if f'phase5_control_sha = "{NORMAL_CONTROL_SHA}"' not in authority:
-        errors.append("RECOVERY_R1_NORMAL_CONTROL_IDENTITY_CHANGED")
-    if "phase5-slice-c-recovery-reusable.yml" in authority:
-        errors.append("RECOVERY_R1_WIF_MUST_BE_ABSENT")
-    if "datastore.databases.getMetadata" in authority:
-        errors.append("RECOVERY_R1_METADATA_PERMISSION_MUST_BE_ABSENT")
-    if authority.count('role               = "roles/iam.workloadIdentityUser"') != 7:
-        errors.append("RECOVERY_R1_WIF_COUNT_CHANGED")
+        errors.append("RECOVERY_R2_NORMAL_CONTROL_IDENTITY_CHANGED")
+    expected_recovery_ref = (
+        'phase5_slice_c_recovery_workflow_ref = '
+        f'"8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{RECOVERY_CONTROL_SHA}"'
+    )
+    if authority.count(expected_recovery_ref) != 1:
+        errors.append("RECOVERY_R2_CONTROL_REF_NOT_EXACT")
+    if authority.count("${local.phase5_control_sha}") != 7:
+        errors.append("RECOVERY_R2_NORMAL_WORKFLOW_REF_COUNT_CHANGED")
+    recovery_wif = (
+        'resource "google_service_account_iam_member" "github_phase5_slice_c_recovery" {'
+        '\n  service_account_id = google_service_account.phase5_product_planner.name'
+        '\n  role               = "roles/iam.workloadIdentityUser"'
+        '\n  member             = "principalSet://iam.googleapis.com/'
+        '${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/'
+        '${local.phase5_slice_c_recovery_workflow_ref}"'
+        '\n}'
+    )
+    if authority.count(recovery_wif) != 1:
+        errors.append("RECOVERY_R2_WIF_BINDING_NOT_EXACT")
+    if authority.count("datastore.databases.getMetadata") != 2:
+        errors.append("RECOVERY_R2_METADATA_PERMISSION_COUNT_INVALID")
+    if authority.count('role               = "roles/iam.workloadIdentityUser"') != 8:
+        errors.append("RECOVERY_R2_WIF_COUNT_INVALID")
 
     expected_candidate = (
         '{"contract":"resilio-product-terraform-candidate/v1",'
@@ -298,7 +316,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Phase 5 Slice C inert recovery control seed validation passed")
+    print("Phase 5 Slice C recovery R2 activation validation passed")
     return 0
 
 

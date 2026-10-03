@@ -545,6 +545,17 @@ jobs:
             r2_caller_structure_errors(mutable, control),
         )
 
+    def test_actual_r2_caller_pins_immutable_r1_control(self):
+        caller = (
+            ROOT / ".github/workflows/phase5-slice-c-recovery.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            r2_caller_structure_errors(
+                caller, "ae4960dd8db54849e7aa3698877c877bdb6433fd"
+            ),
+            [],
+        )
+
     def test_repository_shaped_r2_to_dispatch_chain_is_reachable(self):
         fixture = github_boundary_fixture()
         result, candidate = run_boundary(fixture)

@@ -12,6 +12,7 @@ from phase5_terraform_control import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
+RECOVERY_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
 AUTHORITY = ROOT / "infra/bootstrap/phase5_authority.tf"
 PHASE4 = ROOT / "infra/bootstrap/phase4_authority.tf"
 CANDIDATE = ROOT / "infra/product/candidate.json"
@@ -125,6 +126,7 @@ def check() -> None:
         "github_phase5_acceptance": "phase5_acceptance_workflow_ref",
         "github_phase5_product_planner": "phase5_product_plan_workflow_ref",
         "github_phase5_product_applier": "phase5_product_apply_workflow_ref",
+        "github_phase5_slice_c_recovery": "phase5_slice_c_recovery_workflow_ref",
     }
     for name, local in wif.items():
         block = resource_block(authority, "google_service_account_iam_member", name)
@@ -135,7 +137,60 @@ def check() -> None:
     if authority.count('role               = "roles/iam.workloadIdentityUser"') != len(wif):
         errors.append("PHASE5_WIF_BINDING_COUNT_MISMATCH")
 
+    recovery_wif = resource_block(
+        authority, "google_service_account_iam_member", "github_phase5_slice_c_recovery"
+    )
+    require(
+        recovery_wif,
+        (
+            "service_account_id = google_service_account.phase5_product_planner.name",
+            f"attribute.job_workflow_ref/${{local.phase5_slice_c_recovery_workflow_ref}}",
+        ),
+        "PHASE5_RECOVERY_WIF",
+        errors,
+    )
+    require(
+        authority,
+        (
+            f'phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{RECOVERY_CONTROL_SHA}"',
+        ),
+        "PHASE5_RECOVERY_CONTROL_REF",
+        errors,
+    )
+
     exact_roles = {
+        "phase5_product_reference_planner": (
+            "datastore.databases.get",
+            "datastore.databases.getMetadata",
+            "datastore.databases.list",
+            "pubsub.subscriptions.get",
+            "pubsub.subscriptions.list",
+            "pubsub.topics.get",
+            "pubsub.topics.list",
+            "resourcemanager.projects.get",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+        ),
+        "phase5_product_reference_applier": (
+            "datastore.databases.create",
+            "datastore.databases.get",
+            "datastore.databases.getMetadata",
+            "datastore.databases.list",
+            "datastore.databases.update",
+            "pubsub.subscriptions.create",
+            "pubsub.subscriptions.get",
+            "pubsub.subscriptions.list",
+            "pubsub.subscriptions.update",
+            "pubsub.topics.attachSubscription",
+            "pubsub.topics.create",
+            "pubsub.topics.get",
+            "pubsub.topics.list",
+            "pubsub.topics.update",
+            "resourcemanager.projects.get",
+            "serviceusage.services.enable",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+        ),
         "phase5_deployer": (
             "run.operations.get",
             "run.services.create",
@@ -232,7 +287,8 @@ def check() -> None:
 
     workflows = ROOT / ".github/workflows"
     actual_callers = {path.name for path in workflows.glob("phase5-*.yml") if "-reusable" not in path.name}
-    if actual_callers != set(CALLERS):
+    expected_callers = set(CALLERS) | {"phase5-slice-c-recovery.yml"}
+    if actual_callers != expected_callers:
         errors.append(f"PHASE5_CALLER_SET_MISMATCH:{sorted(actual_callers)}")
     for caller, reusable in CALLERS.items():
         text = (workflows / caller).read_text(encoding="utf-8")
@@ -245,6 +301,32 @@ def check() -> None:
                 errors.append(f"PHASE5_CALLER_AUTOMATIC_TRIGGER:{caller}:{event.strip()}")
         if "${{ secrets." in text:
             errors.append(f"PHASE5_CALLER_SECRET_SURFACE:{caller}")
+
+    recovery_caller = (workflows / "phase5-slice-c-recovery.yml").read_text(encoding="utf-8")
+    require(
+        recovery_caller,
+        (
+            "\n  workflow_dispatch:",
+            f"uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{RECOVERY_CONTROL_SHA}",
+            "contents: read",
+            "issues: read",
+            "actions: read",
+            "pull-requests: read",
+            "id-token: write",
+        ),
+        "PHASE5_RECOVERY_CALLER",
+        errors,
+    )
+    for token in (
+        "\n  push:",
+        "\n  pull_request:",
+        "\n  schedule:",
+        "\n  workflow_run:",
+        "inputs:",
+        "${{ secrets.",
+    ):
+        if token in recovery_caller:
+            errors.append(f"PHASE5_RECOVERY_CALLER_FORBIDDEN:{token.strip()}")
 
     for caller in ("phase5-terraform-plan.yml", "phase5-terraform-apply.yml"):
         text = (workflows / caller).read_text(encoding="utf-8")

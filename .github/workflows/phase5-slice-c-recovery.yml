@@ -1,0 +1,14 @@
+name: Phase 5 Slice C reconciliation-only recovery
+
+on:
+  workflow_dispatch:
+
+jobs:
+  recover:
+    permissions:
+      contents: read
+      issues: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@ae4960dd8db54849e7aa3698877c877bdb6433fd
