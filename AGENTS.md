@@ -67,6 +67,30 @@ When a governing issue requires a genuinely fresh independent substantive review
 
 A review disposition does not by itself grant merge authority unless the governing record explicitly says so.
 
+## Review/fix loop circuit-breaker pilot
+
+Issue #120 pilots a Resilio-local circuit breaker for repeated fresh-review/remediation loops. This section is repository-local only and does not change Praxis, Switchboard or any other repository.
+
+Set `REVIEW_FIX_LOOP_DETECTED=TRUE` for one governed transaction when either:
+
+- a fresh substantive review after remediation discovers a new material blocker in architecture, authority, identity, currentness or supersession, positive reachability, permission envelopes, external-platform semantics, or terminal provenance that was not in the prior defect set; or
+- two consecutive fresh substantive reviews of the same governed transaction require remediation.
+
+A plainly bounded implementation defect such as a typo, an omitted local test case or a mechanically obvious API misuse does not by itself trigger the circuit breaker unless it exposes one of the systemic categories above.
+
+While the circuit breaker is active:
+
+- do not perform another narrow local remediation; a `/fix` request routes to architecture closure rather than patching only the latest finding;
+- freeze implementation except for artefacts required to complete the closure analysis;
+- reconstruct the complete affected lifecycle and produce, at minimum, a canonical identity DAG, authority/permission producer-to-consumer matrix, global transition matrix, currentness/supersession model, adversarial/interleaving matrix, positive-reachability proof, terminal-provenance check, and complete material defect set;
+- record the closure artefact durably and treat its complete defect set as the frozen remediation scope;
+- remediate that frozen set together in one encompassing candidate where technically coherent;
+- before requesting another fresh substantive review, perform a closure-based candidate-readiness check against every frozen row and record the result.
+
+If the next fresh substantive review discovers another new systemic blocker, treat the closure model itself as incomplete and return to architecture closure instead of continuing incremental patching.
+
+The first live pilot is issue #109 / PR #119. At that pilot's next stable review boundary, record a repository-local `RETAIN`, `AMEND` or `REJECT` disposition covering the trigger quality, closure usefulness, remediation convergence and whether the subsequent fresh review exposed any new systemic blocker. Any wider adoption is a separate governed change.
+
 ## Validation
 
 - Run repository-owned mechanical validation before requesting substantive review.
