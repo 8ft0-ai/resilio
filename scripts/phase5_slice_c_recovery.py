@@ -1075,6 +1075,14 @@ def verify_github_boundary(
         ],
         "r2_activation_record_comment_id": activation_record["comment_id"],
         "r2_activation_record_body_sha256": activation_record["body_sha256"],
+        "bootstrap_fresh_review_comment_id": bootstrap_record["review_comment_id"],
+        "bootstrap_fresh_review_body_sha256": bootstrap_record["review_body_sha256"],
+        "bootstrap_owner_apply_authority_comment_id": bootstrap_record[
+            "apply_authority_comment_id"
+        ],
+        "bootstrap_owner_apply_authority_body_sha256": bootstrap_record[
+            "apply_authority_body_sha256"
+        ],
         "bootstrap_terminal_record_comment_id": bootstrap_record["comment_id"],
         "bootstrap_terminal_record_body_sha256": bootstrap_record["body_sha256"],
         "bootstrap_reviewed_effect_sha256": bootstrap_record[
@@ -1115,7 +1123,13 @@ def verify_github_boundary_document(
         "r2_merge_authority_body_sha256",
         "r2_activation_record_comment_id",
         "r2_activation_record_body_sha256",
+        "bootstrap_fresh_review_comment_id",
+        "bootstrap_fresh_review_body_sha256",
+        "bootstrap_owner_apply_authority_comment_id",
+        "bootstrap_owner_apply_authority_body_sha256",
         "bootstrap_terminal_record_comment_id",
+        "bootstrap_fresh_review_body_sha256",
+        "bootstrap_owner_apply_authority_body_sha256",
         "bootstrap_terminal_record_body_sha256",
         "bootstrap_reviewed_effect_sha256",
         "bootstrap_apply_run",
@@ -1165,6 +1179,8 @@ def verify_github_boundary_document(
         "r2_fresh_review_id",
         "r2_merge_authority_comment_id",
         "r2_activation_record_comment_id",
+        "bootstrap_fresh_review_comment_id",
+        "bootstrap_owner_apply_authority_comment_id",
         "bootstrap_terminal_record_comment_id",
         "bootstrap_apply_run",
         "bootstrap_apply_job",
