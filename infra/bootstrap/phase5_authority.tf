@@ -8,6 +8,7 @@ locals {
   phase5_acceptance_workflow_ref    = "8ft0-ai/resilio/.github/workflows/phase5-acceptance-reusable.yml@${local.phase5_control_sha}"
   phase5_product_plan_workflow_ref  = "8ft0-ai/resilio/.github/workflows/phase5-terraform-plan-reusable.yml@${local.phase5_control_sha}"
   phase5_product_apply_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-terraform-apply-reusable.yml@${local.phase5_control_sha}"
+  phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@ae4960dd8db54849e7aa3698877c877bdb6433fd"
 
   phase5_region                    = "us-central1"
   phase5_product_repository        = "resilio-product"
@@ -125,6 +126,12 @@ resource "google_service_account_iam_member" "github_phase5_product_planner" {
   service_account_id = google_service_account.phase5_product_planner.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase5_product_plan_workflow_ref}"
+}
+
+resource "google_service_account_iam_member" "github_phase5_slice_c_recovery" {
+  service_account_id = google_service_account.phase5_product_planner.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.job_workflow_ref/${local.phase5_slice_c_recovery_workflow_ref}"
 }
 
 resource "google_service_account_iam_member" "github_phase5_product_applier" {
@@ -496,6 +503,7 @@ resource "google_project_iam_custom_role" "phase5_product_reference_planner" {
   description = "Read only accepted product service-enable, Firestore and Pub/Sub state."
   permissions = [
     "datastore.databases.get",
+    "datastore.databases.getMetadata",
     "datastore.databases.list",
     "pubsub.subscriptions.get",
     "pubsub.subscriptions.list",
@@ -515,6 +523,7 @@ resource "google_project_iam_custom_role" "phase5_product_reference_applier" {
   permissions = [
     "datastore.databases.create",
     "datastore.databases.get",
+    "datastore.databases.getMetadata",
     "datastore.databases.list",
     "datastore.databases.update",
     "pubsub.subscriptions.create",
