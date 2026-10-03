@@ -19,6 +19,8 @@ from phase5_slice_c_recovery import (
     EXPECTED_LINEAGE,
     EXPECTED_SERIAL,
     RecoveryError,
+    bootstrap_apply_authority_body,
+    bootstrap_effect_review_body,
     bootstrap_terminal_record_body,
     build_result,
     claim_document,
@@ -122,8 +124,10 @@ def github_boundary_fixture():
     review_id = 301
     merge_authority_id = 302
     activation_record_id = 303
-    bootstrap_id = 304
-    dispatch_id = 305
+    bootstrap_review_id = 304
+    bootstrap_authority_id = 305
+    bootstrap_id = 306
+    dispatch_id = 307
     bootstrap_run = 401
     bootstrap_job = 402
 
@@ -144,9 +148,34 @@ def github_boundary_fixture():
         merge_authority_sha,
     )
     activation_sha = recovery.sha256(activation_body.encode("utf-8"))
+
     bootstrap_effect_sha = "b" * 64
+    bootstrap_review_body = bootstrap_effect_review_body(
+        control, activation, bootstrap_effect_sha
+    )
+    bootstrap_review_sha = recovery.sha256(
+        bootstrap_review_body.encode("utf-8")
+    )
+    bootstrap_authority_body = bootstrap_apply_authority_body(
+        control,
+        activation,
+        bootstrap_effect_sha,
+        bootstrap_review_id,
+        bootstrap_review_sha,
+    )
+    bootstrap_authority_sha = recovery.sha256(
+        bootstrap_authority_body.encode("utf-8")
+    )
     bootstrap_body = bootstrap_terminal_record_body(
-        control, activation, bootstrap_effect_sha, bootstrap_run, bootstrap_job
+        control,
+        activation,
+        bootstrap_effect_sha,
+        bootstrap_review_id,
+        bootstrap_review_sha,
+        bootstrap_authority_id,
+        bootstrap_authority_sha,
+        bootstrap_run,
+        bootstrap_job,
     )
     bootstrap_sha = recovery.sha256(bootstrap_body.encode("utf-8"))
     dispatch_body = dispatch_authority_body(
@@ -161,10 +190,16 @@ def github_boundary_fixture():
     activation_record = owner_comment(
         activation_record_id, activation_body, "2026-10-03T02:03:30Z"
     )
-    bootstrap_record = owner_comment(
-        bootstrap_id, bootstrap_body, "2026-10-03T02:05:00Z"
+    bootstrap_review = owner_comment(
+        bootstrap_review_id, bootstrap_review_body, "2026-10-03T02:04:00Z"
     )
-    dispatch = owner_comment(dispatch_id, dispatch_body, "2026-10-03T02:06:00Z")
+    bootstrap_authority = owner_comment(
+        bootstrap_authority_id, bootstrap_authority_body, "2026-10-03T02:05:00Z"
+    )
+    bootstrap_record = owner_comment(
+        bootstrap_id, bootstrap_body, "2026-10-03T02:08:00Z"
+    )
+    dispatch = owner_comment(dispatch_id, dispatch_body, "2026-10-03T02:09:00Z")
 
     boundary_body = "\n".join(
         (
@@ -190,7 +225,13 @@ def github_boundary_fixture():
     candidate_raw = recovery.canonical(recovery.expected_candidate()) + b"\n"
     wrapped_candidate = base64.encodebytes(candidate_raw).decode("ascii")
 
-    comments = [activation_record, bootstrap_record, dispatch]
+    comments = [
+        activation_record,
+        bootstrap_review,
+        bootstrap_authority,
+        bootstrap_record,
+        dispatch,
+    ]
     fixtures = {
         f"/repos/{recovery.REPOSITORY}/branches/{recovery.DEFAULT_BRANCH}": {
             "commit": {"sha": activation}
@@ -280,6 +321,9 @@ def github_boundary_fixture():
             "conclusion": "success",
             "head_branch": "main",
             "head_sha": activation,
+            "event": "workflow_dispatch",
+            "created_at": "2026-10-03T02:06:00Z",
+            "updated_at": "2026-10-03T02:07:30Z",
             "repository": {"full_name": recovery.REPOSITORY},
             "head_repository": {"full_name": recovery.REPOSITORY},
         },
@@ -288,6 +332,7 @@ def github_boundary_fixture():
             "run_id": bootstrap_run,
             "status": "completed",
             "conclusion": "success",
+            "completed_at": "2026-10-03T02:07:20Z",
         },
     }
     return {
@@ -298,6 +343,8 @@ def github_boundary_fixture():
         "review_id": review_id,
         "merge_authority_id": merge_authority_id,
         "activation_record_id": activation_record_id,
+        "bootstrap_review_id": bootstrap_review_id,
+        "bootstrap_authority_id": bootstrap_authority_id,
         "bootstrap_id": bootstrap_id,
         "dispatch_id": dispatch_id,
         "boundary_body": boundary_body,
@@ -306,7 +353,6 @@ def github_boundary_fixture():
         "wrapped_candidate": wrapped_candidate,
         "fixtures": fixtures,
     }
-
 
 def run_boundary(fixture):
     def fake_github(path):
@@ -464,8 +510,10 @@ jobs:
         result, candidate = run_boundary(fixture)
         self.assertEqual(candidate, fixture["candidate_raw"])
         self.assertEqual(result["r2_activation_record_comment_id"], 303)
-        self.assertEqual(result["bootstrap_terminal_record_comment_id"], 304)
-        self.assertEqual(result["dispatch_authority_comment_id"], 305)
+        self.assertEqual(result["bootstrap_fresh_review_comment_id"], 304)
+        self.assertEqual(result["bootstrap_owner_apply_authority_comment_id"], 305)
+        self.assertEqual(result["bootstrap_terminal_record_comment_id"], 306)
+        self.assertEqual(result["dispatch_authority_comment_id"], 307)
         self.assertEqual(result["r2_reviewed_head"], fixture["reviewed_r2"])
         self.assertRegex(result["governance_chain_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
@@ -486,7 +534,14 @@ jobs:
             run_boundary(fixture)
 
     def test_authority_activation_and_dispatch_comments_are_not_editable(self):
-        for target in ("merge", "activation", "dispatch"):
+        for target in (
+            "merge",
+            "activation",
+            "bootstrap_review",
+            "bootstrap_authority",
+            "bootstrap_terminal",
+            "dispatch",
+        ):
             fixture = github_boundary_fixture()
             if target == "merge":
                 path = (
@@ -499,13 +554,18 @@ jobs:
                     f"/repos/{recovery.REPOSITORY}/issues/"
                     f"{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1"
                 )
-                wanted = (
-                    fixture["activation_record_id"]
-                    if target == "activation"
-                    else fixture["dispatch_id"]
+                ids = {
+                    "activation": fixture["activation_record_id"],
+                    "bootstrap_review": fixture["bootstrap_review_id"],
+                    "bootstrap_authority": fixture["bootstrap_authority_id"],
+                    "bootstrap_terminal": fixture["bootstrap_id"],
+                    "dispatch": fixture["dispatch_id"],
+                }
+                row = next(
+                    x for x in fixture["fixtures"][comments_path]
+                    if x["id"] == ids[target]
                 )
-                row = next(x for x in fixture["fixtures"][comments_path] if x["id"] == wanted)
-                row["updated_at"] = "2026-10-03T02:07:00Z"
+                row["updated_at"] = "2026-10-03T02:10:00Z"
             with self.subTest(target=target), self.assertRaises(RecoveryError):
                 run_boundary(fixture)
 
