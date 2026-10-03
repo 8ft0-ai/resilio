@@ -834,7 +834,8 @@ def validate_dispatch_authority(
 def github_issue_comments(issue_number: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen: set[int] = set()
-    for page in range(1, 101):
+    page = 1
+    while True:
         value = github(
             f"/repos/{REPOSITORY}/issues/{issue_number}/comments?per_page=100&page={page}"
         )
@@ -849,7 +850,7 @@ def github_issue_comments(issue_number: int) -> list[dict[str, Any]]:
             rows.append(comment)
         if len(value) < 100:
             return rows
-    raise RecoveryError("AUTHORITY_COMMENTS_PAGINATION_EXHAUSTED")
+        page += 1
 
 
 def validate_boundary_comment(comment: Any) -> dict[str, Any]:
