@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free validation for the Slice C recovery R2 activation candidate."""
+"""Credential-free validation for the inert Slice C successor recovery control candidate."""
 from __future__ import annotations
 
 import re
@@ -19,6 +19,7 @@ RECOVERY_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
 BOUNDARY = "5833629251"
 RECOVERY_DESIGN = "5963131897"
 GENERATION = "1790344068764582"
+SUCCESSOR_GENERATION = "1791024916608689"
 LINEAGE = "d479de40-2c31-d83b-d84b-f55e9301d3a2"
 EXPECTED_USES = (
     "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
@@ -170,16 +171,19 @@ def main() -> int:
             "Bind exact incident, activation and owner authority before OIDC",
             "Authenticate bounded product planner",
             "github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com",
-            "Consume immutable one-shot recovery claim",
+            "Verify repaired product state and predecessor claim before successor claim",
+            "Consume immutable one-shot successor recovery claim",
             "Reconcile exact accepted state without apply",
-            "phase5_slice_c_recovery.py verify-github-boundary",
-            "phase5_slice_c_recovery.py claim",
+            "phase5_slice_c_recovery.py verify-successor-github-boundary",
+            "phase5_slice_c_recovery.py verify-successor-cloud-boundary",
+            "phase5_slice_c_recovery.py successor-claim",
             "--github-boundary \"$RUNNER_TEMP/recovery-github-boundary.json\"",
-            "phase5_slice_c_recovery.py verify-state",
-            "phase5_slice_c_recovery.py verify-plan",
-            "phase5_slice_c_recovery.py build-result",
-            "phase5_slice_c_recovery.py upload-result",
-            'test "$GENERATION" = "1790344068764582"',
+            "phase5_slice_c_recovery.py successor-state-identity",
+            "phase5_slice_c_recovery.py verify-successor-state",
+            "phase5_slice_c_recovery.py verify-successor-plan",
+            "phase5_slice_c_recovery.py build-successor-result",
+            "phase5_slice_c_recovery.py upload-successor-result",
+            'test "$GENERATION" = "1791024916608689"',
             'test "$PLAN_RC" -eq 0',
             'test "$POST_META" = "$META"',
             'test "$POST_LOCK" = "ABSENT"',
@@ -223,6 +227,27 @@ def main() -> int:
             f"RECOVERY_DESIGN_COMMENT_ID = {RECOVERY_DESIGN}",
             f'EXPECTED_GENERATION = "{GENERATION}"',
             f'EXPECTED_LINEAGE = "{LINEAGE}"',
+            f'SUCCESSOR_EXPECTED_GENERATION = "{SUCCESSOR_GENERATION}"',
+            'SUCCESSOR_EXPECTED_SERIAL = 4',
+            'PREDECESSOR_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"',
+            'PREDECESSOR_RECOVERY_RUN = 37107984572',
+            'PREDECESSOR_FAILURE_RECORD_ID = 5967010836',
+            'S1_TERMINAL_COMMENT_ID = 5968501614',
+            'SUCCESSOR_VOLATILE_FIRESTORE_FIELDS',
+            "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_MERGE_AUTHORITY_V1",
+            "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_V1",
+            "PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_PLAN_FRESH_REVIEW_V1",
+            "PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_APPLY_AUTHORITY_V1",
+            "PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_TERMINAL_V1",
+            "PHASE5_SLICE_C_SUCCESSOR_DISPATCH_AUTHORITY_V1",
+            "resilio-phase5-slice-c-successor-github-boundary/v1",
+            "resilio-phase5-slice-c-successor-state/v1",
+            "resilio-phase5-slice-c-successor-claim/v1",
+            "resilio-phase5-slice-c-successor-result/v1",
+            "resilio-phase5-slice-c-successor-manifest/v1",
+            "verify_successor_cloud_boundary",
+            "successor_state_identity_from_state",
+            "verify_successor_no_change_plan",
             "PHASE5_SLICE_C_RECOVERY_R2_MERGE_AUTHORITY_V2",
             "PHASE5_SLICE_C_RECOVERY_R2_ACTIVATION_V2",
             "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_PLAN_FRESH_REVIEW_V1",
@@ -316,7 +341,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Phase 5 Slice C recovery R2 activation validation passed")
+    print("Phase 5 Slice C inert successor recovery control validation passed")
     return 0
 
 
