@@ -78,16 +78,21 @@ Set `REVIEW_FIX_LOOP_DETECTED=TRUE` for one governed transaction when either:
 
 A plainly bounded implementation defect such as a typo, an omitted local test case or a mechanically obvious API misuse does not by itself trigger the circuit breaker unless it exposes one of the systemic categories above.
 
+Before closure work begins, record `REVIEW_FIX_LOOP_DETECTED` durably on the governing issue. Bind that activation record to the triggering review or reviews, the affected PR/candidate identity, the prior remediation identity where applicable, and `NEXT_PHASE=ARCHITECTURE_CLOSURE`. Later sessions must treat that durable record, not an inferred historical pattern alone, as the transaction-level activation state.
+
 While the circuit breaker is active:
 
-- do not perform another narrow local remediation; a `/fix` request routes to architecture closure rather than patching only the latest finding;
+- do not remediate only the latest systemic finding before architecture closure; a `/fix` request routes to closure first;
 - freeze implementation except for artefacts required to complete the closure analysis;
 - reconstruct the complete affected lifecycle and produce, at minimum, a canonical identity DAG, authority/permission producer-to-consumer matrix, global transition matrix, currentness/supersession model, adversarial/interleaving matrix, positive-reachability proof, terminal-provenance check, and complete material defect set;
-- record the closure artefact durably and treat its complete defect set as the frozen remediation scope;
+- record the closure artefact durably and treat its complete systemic defect set as the frozen remediation scope;
 - remediate that frozen set together in one encompassing candidate where technically coherent;
+- a plainly bounded implementation defect discovered during that remediation may be corrected only when it does not change the closure model, architecture, authority, scope or external consequence; record it with the candidate-readiness evidence rather than silently expanding the frozen systemic set;
 - before requesting another fresh substantive review, perform a closure-based candidate-readiness check against every frozen row and record the result.
 
-If the next fresh substantive review discovers another new systemic blocker, treat the closure model itself as incomplete and return to architecture closure instead of continuing incremental patching.
+If the next fresh substantive review discovers another new systemic blocker, keep the circuit breaker active, treat the closure model itself as incomplete, and return to architecture closure instead of patching the new finding directly. If it identifies only an incomplete implementation of an already frozen row or a plainly bounded non-systemic defect, remediation may continue within the frozen closure model and must again pass candidate readiness and fresh substantive review.
+
+Clear the transaction-level circuit breaker only after a fresh substantive review reports no material blockers. Record `REVIEW_FIX_LOOP_CLEARED` durably on the governing issue, binding the activation record, final closure artefact, exact reviewed candidate and passing review. Historical activation/closure records remain evidence and must not be interpreted as an active circuit breaker after this explicit clearing record.
 
 The first live pilot is issue #109 / PR #119. At that pilot's next stable review boundary, record a repository-local `RETAIN`, `AMEND` or `REJECT` disposition covering the trigger quality, closure usefulness, remediation convergence and whether the subsequent fresh review exposed any new systemic blocker. Any wider adoption is a separate governed change.
 
