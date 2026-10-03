@@ -50,6 +50,44 @@ EXPECTED_SERIAL = 2
 EXPECTED_ADDRESSES = tuple(sorted(BASE_ADDRESSES))
 EVIDENCE_PREFIX = "plan-evidence/product/"
 
+# Successor-v1 is a separate immutable recovery protocol.  The historical C1
+# constants/functions above remain intact so predecessor evidence stays
+# reconstructable; C2 uses only the SUCCESSOR_* surface below at runtime.
+SUCCESSOR_ARCHITECTURE_COMMENT_ID = 5967099006
+SUCCESSOR_ARCHITECTURE_BODY_SHA256 = "281564558d4df4cb5aab6e02d79738c27c1c3982c60c7384073bd774f22d8a16"
+SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID = 5967104661
+SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256 = "4a68498104cbd2d35eb4086ac85e20cec1a85ba1d014af1a41d0f94085e8b9cc"
+PREDECESSOR_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
+PREDECESSOR_ACTIVATION_SHA = "bea4af9ba159ff143bab3e695c0d43e1038691b2"
+PREDECESSOR_RECOVERY_RUN = 37107984572
+PREDECESSOR_RECOVERY_JOB = 111160154532
+PREDECESSOR_FAILURE_RECORD_ID = 5967010836
+PREDECESSOR_FAILURE_RECORD_BODY_SHA256 = "6fb66ba928b2ad6a7d1881db5494d17c7650e32a509431c460ef93c31471c400"
+PREDECESSOR_CLAIM_OBJECT = (
+    "plan-evidence/product/recovery-claim-5833629251-"
+    + PREDECESSOR_CONTROL_SHA
+    + ".json"
+)
+PREDECESSOR_CLAIM_GENERATION = "1791014163027927"
+PREDECESSOR_CLAIM_BODY_SHA256 = "0eadcb520882e0e14361f043ef8119e6dfe2fb6c1cce2d8feb85426bf43639f1"
+PREDECESSOR_CLAIM_SHA256 = "21fe2ca77b9bda8820d8336cefeb3940c324aa64762111e183fbc2a856c17624"
+PREDECESSOR_GOVERNANCE_CHAIN_SHA256 = "43d9e65c0c16f1b92017615cdeb940c04dea680155167fd985a66f8a4caed80b"
+PREDECESSOR_RESULT_OBJECT = (
+    "plan-evidence/product/recovery-result-5833629251-"
+    + PREDECESSOR_CONTROL_SHA
+    + ".json"
+)
+S1_TERMINAL_COMMENT_ID = 5968501614
+S1_TERMINAL_BODY_SHA256 = "958f75a9f533444f20910c33089c0b22146ad9c65826e12b1ed6c587dd7f29bd"
+SUCCESSOR_EXPECTED_GENERATION = "1791024916608689"
+SUCCESSOR_EXPECTED_STATE_BODY_SHA256 = "b68b0fbfe1d544666342fbc7092f5b7812cb907592c3a738d1e2a749d270c99b"
+SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256 = "a0bd9cbe5a901c2e465ab10a35f9868a90fb0367bb022dd1a72d93f45840bbee"
+SUCCESSOR_EXPECTED_LINEAGE = "d479de40-2c31-d83b-d84b-f55e9301d3a2"
+SUCCESSOR_EXPECTED_SERIAL = 4
+SUCCESSOR_EXPECTED_ADDRESSES = tuple(sorted(BASE_ADDRESSES))
+SUCCESSOR_EXPECTED_STATUSES = {address: "normal" for address in SUCCESSOR_EXPECTED_ADDRESSES}
+SUCCESSOR_VOLATILE_FIRESTORE_FIELDS = frozenset(("earliest_version_time", "etag"))
+
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 RUN_ID = re.compile(r"^[1-9][0-9]{0,19}$")
@@ -1493,6 +1531,521 @@ def build_result(
     return private, public
 
 
+
+def _successor_fixed_comment(
+    comments: list[dict[str, Any]], comment_id: int, body_sha256: str, label: str
+) -> dict[str, Any]:
+    matches = [row for row in comments if row.get("id") == comment_id]
+    if len(matches) != 1:
+        raise RecoveryError(f"{label}_NOT_UNIQUE")
+    comment = matches[0]
+    created, observed = _require_unedited_owner_comment(comment, GOVERNING_ISSUE, label)
+    if observed != body_sha256:
+        raise RecoveryError(f"{label}_BODY_HASH_MISMATCH")
+    return {"comment_id": comment_id, "created_at": created, "body_sha256": observed, "body": str(comment.get("body") or "")}
+
+
+def validate_successor_predecessor_records(comments: list[dict[str, Any]]) -> dict[str, Any]:
+    failure = _successor_fixed_comment(
+        comments, PREDECESSOR_FAILURE_RECORD_ID, PREDECESSOR_FAILURE_RECORD_BODY_SHA256,
+        "SUCCESSOR_PREDECESSOR_FAILURE",
+    )
+    required_failure = (
+        f"RECOVERY_RUN={PREDECESSOR_RECOVERY_RUN}",
+        f"RECOVERY_JOB={PREDECESSOR_RECOVERY_JOB}",
+        f"RECOVERY_CONTROL_SHA={PREDECESSOR_CONTROL_SHA}",
+        f"RECOVERY_ACTIVATION_MAIN={PREDECESSOR_ACTIVATION_SHA}",
+        f"RECOVERY_CLAIM_GENERATION={PREDECESSOR_CLAIM_GENERATION}",
+        "RECOVERY_RESULT_OBJECT=ABSENT",
+        "FIRESTORE_STATE_INSTANCE_STATUS=tainted",
+        "RETRY_THIS_CONTROL=FORBIDDEN",
+    )
+    if any(token not in failure["body"] for token in required_failure):
+        raise RecoveryError("SUCCESSOR_PREDECESSOR_FAILURE_CONTRACT_MISMATCH")
+
+    terminal = _successor_fixed_comment(
+        comments, S1_TERMINAL_COMMENT_ID, S1_TERMINAL_BODY_SHA256, "SUCCESSOR_S1_TERMINAL"
+    )
+    required_terminal = (
+        f"STATE_GENERATION_AFTER={SUCCESSOR_EXPECTED_GENERATION}",
+        f"STATE_BODY_SHA256_AFTER={SUCCESSOR_EXPECTED_STATE_BODY_SHA256}",
+        f"STATE_SERIAL_AFTER={SUCCESSOR_EXPECTED_SERIAL}",
+        f"STATE_LINEAGE={SUCCESSOR_EXPECTED_LINEAGE}",
+        "ALL_INSTANCE_STATUSES=normal",
+        "LIVE_CLOUD_SEMANTICS_CHANGED=NO",
+        "TERMINAL_NORMAL_PLAN_EXIT=0",
+        "TERMINAL_MATERIAL_RESOURCE_CHANGES=0",
+        "TERMINAL_MATERIAL_OUTPUT_CHANGES=0",
+        "TERMINAL_DEFERRED_ACTION_CONSEQUENCES=0",
+        "TERMINAL_RESIDUAL_DRIFT=google_firestore_database.operational__earliest_version_time+etag_only",
+        "FINAL_PRODUCT_LOCK=ABSENT",
+        "S1_TERMINAL_DISPOSITION=RECONCILED",
+    )
+    if any(token not in terminal["body"] for token in required_terminal):
+        raise RecoveryError("SUCCESSOR_S1_TERMINAL_CONTRACT_MISMATCH")
+    if terminal["created_at"] <= failure["created_at"]:
+        raise RecoveryError("SUCCESSOR_S1_TERMINAL_TIMELINE_INVALID")
+    return {"failure": failure, "s1_terminal": terminal}
+
+
+def _successor_review_fields(body: str) -> dict[str, str]:
+    lines = str(body or "").splitlines()
+    header = "COMPLETELY_FRESH_SUBSTANTIVE_SUCCESSOR_RECOVERY_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW"
+    if not lines or lines[0].strip() != header:
+        raise RecoveryError("SUCCESSOR_FRESH_REVIEW_HEADER_INVALID")
+    wanted = (
+        "DISPOSITION", "PR", "EXACT_HEAD", "EXACT_BASE", "GOVERNING_ISSUE",
+        "SUCCESSOR_ARCHITECTURE", "S1_TERMINAL", "MATERIAL_BLOCKERS",
+    )
+    values = {name: [] for name in wanted}
+    for line in lines[1:]:
+        for name in wanted:
+            prefix = name + "="
+            if line.startswith(prefix): values[name].append(line[len(prefix):].strip())
+    if any(len(values[name]) != 1 for name in wanted):
+        raise RecoveryError("SUCCESSOR_FRESH_REVIEW_FIELDS_NOT_EXACT")
+    return {name: values[name][0] for name in wanted}
+
+
+def successor_activation_merge_authority_body(
+    control_sha: str, pr_number: int, reviewed_head: str, review_id: int,
+    review_body_sha256: str,
+) -> str:
+    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(reviewed_head):
+        raise RecoveryError("SUCCESSOR_MERGE_AUTHORITY_SHA_INVALID")
+    if pr_number <= 0 or review_id <= 0 or not HEX64.fullmatch(review_body_sha256):
+        raise RecoveryError("SUCCESSOR_MERGE_AUTHORITY_IDENTITY_INVALID")
+    return "\n".join((
+        "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_MERGE_AUTHORITY_V1",
+        "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+        f"SUCCESSOR_ARCHITECTURE={SUCCESSOR_ARCHITECTURE_COMMENT_ID}",
+        f"S1_TERMINAL={S1_TERMINAL_COMMENT_ID}",
+        f"SUCCESSOR_CONTROL_SHA={control_sha}",
+        f"SUCCESSOR_PR={pr_number}",
+        f"SUCCESSOR_REVIEWED_HEAD={reviewed_head}",
+        f"SUCCESSOR_BASE={control_sha}",
+        f"SUCCESSOR_FRESH_REVIEW_ID={review_id}",
+        f"SUCCESSOR_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+        "AUTHORITY=MERGE_EXACT_REVIEWED_SUCCESSOR_ACTIVATION_ONLY",
+    ))
+
+
+def successor_activation_record_body(
+    control_sha: str, activation_sha: str, pr_number: int, reviewed_head: str,
+    review_id: int, review_body_sha256: str, authority_id: int,
+    authority_body_sha256: str,
+) -> str:
+    if not all(FULL_SHA.fullmatch(x) for x in (control_sha, activation_sha, reviewed_head)):
+        raise RecoveryError("SUCCESSOR_ACTIVATION_SHA_INVALID")
+    if min(pr_number, review_id, authority_id) <= 0:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_ID_INVALID")
+    if not all(HEX64.fullmatch(x) for x in (review_body_sha256, authority_body_sha256)):
+        raise RecoveryError("SUCCESSOR_ACTIVATION_HASH_INVALID")
+    return "\n".join((
+        "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_V1",
+        "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+        f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
+        f"SUCCESSOR_ARCHITECTURE={SUCCESSOR_ARCHITECTURE_COMMENT_ID}",
+        f"S1_TERMINAL={S1_TERMINAL_COMMENT_ID}",
+        f"S1_TERMINAL_BODY_SHA256={S1_TERMINAL_BODY_SHA256}",
+        f"SUCCESSOR_CONTROL_SHA={control_sha}",
+        f"SUCCESSOR_PR={pr_number}",
+        f"SUCCESSOR_REVIEWED_HEAD={reviewed_head}",
+        f"SUCCESSOR_BASE={control_sha}",
+        f"SUCCESSOR_MERGE={activation_sha}",
+        f"SUCCESSOR_FRESH_REVIEW_ID={review_id}",
+        f"SUCCESSOR_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+        f"SUCCESSOR_OWNER_MERGE_AUTHORITY_COMMENT_ID={authority_id}",
+        f"SUCCESSOR_OWNER_MERGE_AUTHORITY_BODY_SHA256={authority_body_sha256}",
+        "STATUS=SUCCESSOR_ACTIVATION_MERGED_EXACT",
+    ))
+
+
+def validate_successor_activation_record(
+    comments: list[dict[str, Any]], control_sha: str, activation_sha: str
+) -> dict[str, Any]:
+    header = "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_V1"
+    matches = [c for c in comments if _owner_issue_comment(c, GOVERNING_ISSUE)
+               and str(c.get("body") or "").strip().startswith(header + "\n")
+               and f"SUCCESSOR_CONTROL_SHA={control_sha}" in str(c.get("body") or "")]
+    if len(matches) != 1:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_RECORD_NOT_UNIQUE")
+    comment = matches[0]
+    created, body_sha = _require_unedited_owner_comment(comment, GOVERNING_ISSUE, "SUCCESSOR_ACTIVATION")
+    fields = _record_fields(str(comment.get("body") or ""), header, (
+        "GOVERNING_ISSUE","SOURCE_BOUNDARY","SUCCESSOR_ARCHITECTURE","S1_TERMINAL",
+        "S1_TERMINAL_BODY_SHA256","SUCCESSOR_CONTROL_SHA","SUCCESSOR_PR",
+        "SUCCESSOR_REVIEWED_HEAD","SUCCESSOR_BASE","SUCCESSOR_MERGE",
+        "SUCCESSOR_FRESH_REVIEW_ID","SUCCESSOR_FRESH_REVIEW_BODY_SHA256",
+        "SUCCESSOR_OWNER_MERGE_AUTHORITY_COMMENT_ID",
+        "SUCCESSOR_OWNER_MERGE_AUTHORITY_BODY_SHA256","STATUS",
+    ))
+    expected_fixed = {
+        "GOVERNING_ISSUE":"8ft0-ai/resilio#109",
+        "SOURCE_BOUNDARY":str(SOURCE_BOUNDARY_COMMENT_ID),
+        "SUCCESSOR_ARCHITECTURE":str(SUCCESSOR_ARCHITECTURE_COMMENT_ID),
+        "S1_TERMINAL":str(S1_TERMINAL_COMMENT_ID),
+        "S1_TERMINAL_BODY_SHA256":S1_TERMINAL_BODY_SHA256,
+        "SUCCESSOR_CONTROL_SHA":control_sha,"SUCCESSOR_BASE":control_sha,
+        "SUCCESSOR_MERGE":activation_sha,"STATUS":"SUCCESSOR_ACTIVATION_MERGED_EXACT",
+    }
+    for key,value in expected_fixed.items():
+        if fields[key] != value: raise RecoveryError(f"SUCCESSOR_ACTIVATION_FIELD_MISMATCH:{key}")
+    if not FULL_SHA.fullmatch(fields["SUCCESSOR_REVIEWED_HEAD"]):
+        raise RecoveryError("SUCCESSOR_REVIEWED_HEAD_INVALID")
+    for key in ("SUCCESSOR_FRESH_REVIEW_BODY_SHA256","SUCCESSOR_OWNER_MERGE_AUTHORITY_BODY_SHA256"):
+        if not HEX64.fullmatch(fields[key]): raise RecoveryError(f"SUCCESSOR_ACTIVATION_HASH_INVALID:{key}")
+    return {
+        "comment_id":int(comment["id"]),"created_at":created,"body_sha256":body_sha,
+        "pr_number":_positive_int(fields["SUCCESSOR_PR"],"SUCCESSOR_PR"),
+        "reviewed_head":fields["SUCCESSOR_REVIEWED_HEAD"],
+        "review_id":_positive_int(fields["SUCCESSOR_FRESH_REVIEW_ID"],"SUCCESSOR_FRESH_REVIEW_ID"),
+        "review_body_sha256":fields["SUCCESSOR_FRESH_REVIEW_BODY_SHA256"],
+        "authority_id":_positive_int(fields["SUCCESSOR_OWNER_MERGE_AUTHORITY_COMMENT_ID"],"SUCCESSOR_OWNER_MERGE_AUTHORITY_COMMENT_ID"),
+        "authority_body_sha256":fields["SUCCESSOR_OWNER_MERGE_AUTHORITY_BODY_SHA256"],
+    }
+
+
+def validate_successor_activation_transaction(
+    pr: Any, review: Any, authority_comment: Any, record: dict[str, Any],
+    control_sha: str, activation_sha: str,
+) -> None:
+    if not isinstance(pr,dict) or pr.get("number") != record["pr_number"] or pr.get("state") != "closed" or pr.get("merged_at") is None:
+        raise RecoveryError("SUCCESSOR_PR_INVALID")
+    if pr.get("merge_commit_sha") != activation_sha or pr.get("head",{}).get("sha") != record["reviewed_head"]:
+        raise RecoveryError("SUCCESSOR_PR_IDENTITY_MISMATCH")
+    if pr.get("base",{}).get("ref") != DEFAULT_BRANCH or pr.get("base",{}).get("sha") != control_sha:
+        raise RecoveryError("SUCCESSOR_PR_BASE_MISMATCH")
+    hr=pr.get("head",{}).get("repo") or {}
+    if hr.get("id") != REPOSITORY_ID or hr.get("full_name") != REPOSITORY:
+        raise RecoveryError("SUCCESSOR_PR_REPOSITORY_MISMATCH")
+    if not isinstance(review,dict) or review.get("id") != record["review_id"] or review.get("state") != "COMMENTED" or review.get("commit_id") != record["reviewed_head"]:
+        raise RecoveryError("SUCCESSOR_REVIEW_IDENTITY_MISMATCH")
+    user=review.get("user") or {}
+    if user.get("login") != OWNER_LOGIN or user.get("id") != OWNER_ID:
+        raise RecoveryError("SUCCESSOR_REVIEW_AUTHOR_MISMATCH")
+    fields=_successor_review_fields(str(review.get("body") or ""))
+    expected={
+        "DISPOSITION":"APPROVED","PR":f"8ft0-ai/resilio#{record['pr_number']}",
+        "EXACT_HEAD":record["reviewed_head"],"EXACT_BASE":control_sha,
+        "GOVERNING_ISSUE":"8ft0-ai/resilio#109",
+        "SUCCESSOR_ARCHITECTURE":str(SUCCESSOR_ARCHITECTURE_COMMENT_ID),
+        "S1_TERMINAL":str(S1_TERMINAL_COMMENT_ID),"MATERIAL_BLOCKERS":"NONE",
+    }
+    if fields != expected: raise RecoveryError("SUCCESSOR_REVIEW_CONTRACT_MISMATCH")
+    review_sha=sha256(str(review.get("body") or "").encode())
+    if review_sha != record["review_body_sha256"]: raise RecoveryError("SUCCESSOR_REVIEW_HASH_MISMATCH")
+    if not isinstance(authority_comment,dict) or authority_comment.get("id") != record["authority_id"]:
+        raise RecoveryError("SUCCESSOR_MERGE_AUTHORITY_INVALID")
+    authority_created,authority_sha=_require_unedited_owner_comment(authority_comment,record["pr_number"],"SUCCESSOR_MERGE_AUTHORITY")
+    expected_authority=successor_activation_merge_authority_body(control_sha,record["pr_number"],record["reviewed_head"],record["review_id"],record["review_body_sha256"])
+    if str(authority_comment.get("body") or "").strip() != expected_authority or authority_sha != record["authority_body_sha256"]:
+        raise RecoveryError("SUCCESSOR_MERGE_AUTHORITY_CONTRACT_MISMATCH")
+    review_time=_timestamp(review.get("submitted_at"),"SUCCESSOR_REVIEW_SUBMITTED")
+    merge_time=_timestamp(pr.get("merged_at"),"SUCCESSOR_MERGED")
+    if not (review_time <= authority_created < merge_time <= record["created_at"]):
+        raise RecoveryError("SUCCESSOR_ACTIVATION_TIMELINE_INVALID")
+
+
+def successor_wif_repin_review_body(
+    control_sha: str, activation_sha: str, plan_sha: str, manifest_sha: str,
+    state_lineage: str, state_serial: int,
+) -> str:
+    if not all(FULL_SHA.fullmatch(x) for x in (control_sha,activation_sha)) or not all(HEX64.fullmatch(x) for x in (plan_sha,manifest_sha)):
+        raise RecoveryError("SUCCESSOR_WIF_REPIN_REVIEW_IDENTITY_INVALID")
+    return "\n".join((
+        "PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_PLAN_FRESH_REVIEW_V1",
+        "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+        f"SUCCESSOR_CONTROL_SHA={control_sha}",f"SUCCESSOR_ACTIVATION_MAIN={activation_sha}",
+        f"SAVED_PLAN_SHA256={plan_sha}",f"STRUCTURAL_MANIFEST_SHA256={manifest_sha}",
+        f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",f"BOOTSTRAP_STATE_SERIAL={state_serial}",
+        "TERRAFORM_VERSION=1.15.8","PLAN_FORMAT_VERSION=1.2",
+        "PLAN_EFFECTS=EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_C1_TO_C2",
+        "REVIEW_DISPOSITION=APPROVED","MATERIAL_BLOCKERS=NONE","APPLY_AUTHORITY=NOT_GRANTED",
+    ))
+
+
+def successor_wif_repin_authority_body(
+    control_sha: str, activation_sha: str, plan_sha: str, manifest_sha: str,
+    state_lineage: str, state_serial: int, review_id: int, review_sha: str,
+) -> str:
+    return "\n".join((
+        "PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_APPLY_AUTHORITY_V1",
+        "GOVERNING_ISSUE=8ft0-ai/resilio#109",f"SUCCESSOR_CONTROL_SHA={control_sha}",
+        f"SUCCESSOR_ACTIVATION_MAIN={activation_sha}",f"SAVED_PLAN_SHA256={plan_sha}",
+        f"STRUCTURAL_MANIFEST_SHA256={manifest_sha}",f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+        f"BOOTSTRAP_STATE_SERIAL={state_serial}",f"FRESH_REVIEW_COMMENT_ID={review_id}",
+        f"FRESH_REVIEW_BODY_SHA256={review_sha}","AUTHORITY=APPLY_EXACT_REVIEWED_WIF_REPIN_PLAN_ONCE",
+        "REPLAN=NOT_AUTHORISED","PLAN_REPLACEMENT=NOT_AUTHORISED","BLIND_RETRY=NOT_AUTHORISED",
+    ))
+
+
+def successor_wif_repin_terminal_body(
+    control_sha: str, activation_sha: str, plan_sha: str, manifest_sha: str,
+    state_lineage: str, serial_before: int, serial_after: int, review_id: int,
+    review_sha: str, authority_id: int, authority_sha: str,
+) -> str:
+    return "\n".join((
+        "PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_TERMINAL_V1",
+        "GOVERNING_ISSUE=8ft0-ai/resilio#109",f"SUCCESSOR_CONTROL_SHA={control_sha}",
+        f"SUCCESSOR_ACTIVATION_MAIN={activation_sha}",f"SAVED_PLAN_SHA256={plan_sha}",
+        f"STRUCTURAL_MANIFEST_SHA256={manifest_sha}",f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+        f"BOOTSTRAP_STATE_SERIAL_BEFORE={serial_before}",f"BOOTSTRAP_STATE_SERIAL_AFTER={serial_after}",
+        f"FRESH_REVIEW_COMMENT_ID={review_id}",f"FRESH_REVIEW_BODY_SHA256={review_sha}",
+        f"OWNER_APPLY_AUTHORITY_COMMENT_ID={authority_id}",f"OWNER_APPLY_AUTHORITY_BODY_SHA256={authority_sha}",
+        "WIF_REPIN=EXACT_C1_TO_C2_LIVE","OLD_C1_RECOVERY_WIF=ABSENT","NEW_C2_RECOVERY_WIF=EXACT_ONE",
+        "GETMETADATA=UNCHANGED_LIVE","NORMAL_PHASE5_IDENTITIES=UNCHANGED",
+        "BOOTSTRAP_RECONCILIATION=EXACT_NO_CHANGE","FINAL_BOOTSTRAP_LOCK=ABSENT","TERMINAL_DISPOSITION=RECONCILED",
+    ))
+
+
+def validate_successor_wif_repin_terminal(
+    comments: list[dict[str,Any]], control_sha: str, activation_sha: str,
+    activation_created_at: datetime,
+) -> dict[str,Any]:
+    header="PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_TERMINAL_V1"
+    matches=[c for c in comments if _owner_issue_comment(c,GOVERNING_ISSUE) and str(c.get("body") or "").strip().startswith(header+"\n") and f"SUCCESSOR_CONTROL_SHA={control_sha}" in str(c.get("body") or "")]
+    if len(matches)!=1: raise RecoveryError("SUCCESSOR_WIF_REPIN_TERMINAL_NOT_UNIQUE")
+    c=matches[0]; created,body_sha=_require_unedited_owner_comment(c,GOVERNING_ISSUE,"SUCCESSOR_WIF_REPIN_TERMINAL")
+    f=_record_fields(str(c.get("body") or ""),header,(
+        "GOVERNING_ISSUE","SUCCESSOR_CONTROL_SHA","SUCCESSOR_ACTIVATION_MAIN","SAVED_PLAN_SHA256","STRUCTURAL_MANIFEST_SHA256","BOOTSTRAP_STATE_LINEAGE","BOOTSTRAP_STATE_SERIAL_BEFORE","BOOTSTRAP_STATE_SERIAL_AFTER","FRESH_REVIEW_COMMENT_ID","FRESH_REVIEW_BODY_SHA256","OWNER_APPLY_AUTHORITY_COMMENT_ID","OWNER_APPLY_AUTHORITY_BODY_SHA256","WIF_REPIN","OLD_C1_RECOVERY_WIF","NEW_C2_RECOVERY_WIF","GETMETADATA","NORMAL_PHASE5_IDENTITIES","BOOTSTRAP_RECONCILIATION","FINAL_BOOTSTRAP_LOCK","TERMINAL_DISPOSITION"))
+    expected={"GOVERNING_ISSUE":"8ft0-ai/resilio#109","SUCCESSOR_CONTROL_SHA":control_sha,"SUCCESSOR_ACTIVATION_MAIN":activation_sha,"WIF_REPIN":"EXACT_C1_TO_C2_LIVE","OLD_C1_RECOVERY_WIF":"ABSENT","NEW_C2_RECOVERY_WIF":"EXACT_ONE","GETMETADATA":"UNCHANGED_LIVE","NORMAL_PHASE5_IDENTITIES":"UNCHANGED","BOOTSTRAP_RECONCILIATION":"EXACT_NO_CHANGE","FINAL_BOOTSTRAP_LOCK":"ABSENT","TERMINAL_DISPOSITION":"RECONCILED"}
+    for k,v in expected.items():
+        if f[k]!=v: raise RecoveryError(f"SUCCESSOR_WIF_REPIN_FIELD_MISMATCH:{k}")
+    for k in ("SAVED_PLAN_SHA256","STRUCTURAL_MANIFEST_SHA256","FRESH_REVIEW_BODY_SHA256","OWNER_APPLY_AUTHORITY_BODY_SHA256"):
+        if not HEX64.fullmatch(f[k]): raise RecoveryError(f"SUCCESSOR_WIF_REPIN_HASH_INVALID:{k}")
+    sb=_nonnegative_int(f["BOOTSTRAP_STATE_SERIAL_BEFORE"],"SUCCESSOR_WIF_REPIN_SERIAL_BEFORE"); sa=_nonnegative_int(f["BOOTSTRAP_STATE_SERIAL_AFTER"],"SUCCESSOR_WIF_REPIN_SERIAL_AFTER")
+    if sa < sb: raise RecoveryError("SUCCESSOR_WIF_REPIN_SERIAL_REVERSED")
+    review_id=_positive_int(f["FRESH_REVIEW_COMMENT_ID"],"SUCCESSOR_WIF_REPIN_REVIEW_ID"); authority_id=_positive_int(f["OWNER_APPLY_AUTHORITY_COMMENT_ID"],"SUCCESSOR_WIF_REPIN_AUTHORITY_ID")
+    review_matches=[x for x in comments if x.get("id")==review_id]; authority_matches=[x for x in comments if x.get("id")==authority_id]
+    if len(review_matches)!=1 or len(authority_matches)!=1: raise RecoveryError("SUCCESSOR_WIF_REPIN_PREREQUISITE_NOT_UNIQUE")
+    review=review_matches[0]; review_created,review_sha=_require_unedited_owner_comment(review,GOVERNING_ISSUE,"SUCCESSOR_WIF_REPIN_REVIEW")
+    expected_review=successor_wif_repin_review_body(control_sha,activation_sha,f["SAVED_PLAN_SHA256"],f["STRUCTURAL_MANIFEST_SHA256"],f["BOOTSTRAP_STATE_LINEAGE"],sb)
+    if str(review.get("body") or "").strip()!=expected_review or review_sha!=f["FRESH_REVIEW_BODY_SHA256"]: raise RecoveryError("SUCCESSOR_WIF_REPIN_REVIEW_MISMATCH")
+    authority=authority_matches[0]; authority_created,authority_sha=_require_unedited_owner_comment(authority,GOVERNING_ISSUE,"SUCCESSOR_WIF_REPIN_AUTHORITY")
+    expected_authority=successor_wif_repin_authority_body(control_sha,activation_sha,f["SAVED_PLAN_SHA256"],f["STRUCTURAL_MANIFEST_SHA256"],f["BOOTSTRAP_STATE_LINEAGE"],sb,review_id,review_sha)
+    if str(authority.get("body") or "").strip()!=expected_authority or authority_sha!=f["OWNER_APPLY_AUTHORITY_BODY_SHA256"]: raise RecoveryError("SUCCESSOR_WIF_REPIN_AUTHORITY_MISMATCH")
+    if not (activation_created_at <= review_created <= authority_created <= created): raise RecoveryError("SUCCESSOR_WIF_REPIN_TIMELINE_INVALID")
+    return {"comment_id":int(c["id"]),"created_at":created,"body_sha256":body_sha,"saved_plan_sha256":f["SAVED_PLAN_SHA256"],"manifest_sha256":f["STRUCTURAL_MANIFEST_SHA256"],"review_id":review_id,"review_sha256":review_sha,"authority_id":authority_id,"authority_sha256":authority_sha,"state_lineage":f["BOOTSTRAP_STATE_LINEAGE"],"serial_before":sb,"serial_after":sa}
+
+
+def successor_dispatch_authority_body(
+    control_sha: str, activation_sha: str, activation_record: dict[str,Any],
+    repin_terminal: dict[str,Any],
+) -> str:
+    return "\n".join((
+        "PHASE5_SLICE_C_SUCCESSOR_DISPATCH_AUTHORITY_V1","GOVERNING_ISSUE=8ft0-ai/resilio#109",
+        f"SUCCESSOR_CONTROL_SHA={control_sha}",f"SUCCESSOR_ACTIVATION_MAIN={activation_sha}",
+        f"SUCCESSOR_ACTIVATION_RECORD={activation_record['comment_id']}",f"SUCCESSOR_ACTIVATION_RECORD_BODY_SHA256={activation_record['body_sha256']}",
+        f"SUCCESSOR_WIF_REPIN_TERMINAL={repin_terminal['comment_id']}",f"SUCCESSOR_WIF_REPIN_TERMINAL_BODY_SHA256={repin_terminal['body_sha256']}",
+        f"PRODUCT_STATE_GENERATION={SUCCESSOR_EXPECTED_GENERATION}",f"PRODUCT_STATE_LINEAGE={SUCCESSOR_EXPECTED_LINEAGE}",f"PRODUCT_STATE_SERIAL={SUCCESSOR_EXPECTED_SERIAL}",f"PRODUCT_STATE_CANONICAL_SHA256={SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256}",
+        f"S1_TERMINAL={S1_TERMINAL_COMMENT_ID}",f"S1_TERMINAL_BODY_SHA256={S1_TERMINAL_BODY_SHA256}",
+        "AUTHORITY=DISPATCH_EXACTLY_ONE_SUCCESSOR_RECONCILIATION_ONLY_RECOVERY",
+    ))
+
+
+def validate_successor_dispatch_authority(
+    comments: list[dict[str,Any]], control_sha: str, activation_sha: str,
+    activation_record: dict[str,Any], repin_terminal: dict[str,Any],
+) -> dict[str,Any]:
+    expected=successor_dispatch_authority_body(control_sha,activation_sha,activation_record,repin_terminal)
+    matches=[c for c in comments if _owner_issue_comment(c,GOVERNING_ISSUE) and str(c.get("body") or "").strip()==expected]
+    if len(matches)!=1: raise RecoveryError("SUCCESSOR_DISPATCH_AUTHORITY_NOT_UNIQUE")
+    c=matches[0]; created,body_sha=_require_unedited_owner_comment(c,GOVERNING_ISSUE,"SUCCESSOR_DISPATCH_AUTHORITY")
+    if created < activation_record["created_at"] or created < repin_terminal["created_at"]: raise RecoveryError("SUCCESSOR_DISPATCH_AUTHORITY_PRECEDES_PREREQUISITE")
+    return {"comment_id":int(c["id"]),"created_at":created,"body_sha256":body_sha}
+
+
+
+def validate_predecessor_recovery_run(run: Any, job: Any) -> None:
+    if not isinstance(run,dict) or run.get("id")!=PREDECESSOR_RECOVERY_RUN:
+        raise RecoveryError("SUCCESSOR_PREDECESSOR_RUN_ID_MISMATCH")
+    if run.get("run_attempt")!=1 or run.get("status")!="completed" or run.get("conclusion")!="failure" or run.get("head_branch")!=DEFAULT_BRANCH or run.get("head_sha")!=PREDECESSOR_ACTIVATION_SHA or run.get("event")!="workflow_dispatch" or str(run.get("path") or "").split("@",1)[0] != ".github/workflows/phase5-slice-c-recovery.yml":
+        raise RecoveryError("SUCCESSOR_PREDECESSOR_RUN_STATE_MISMATCH")
+    for key in ("repository","head_repository"):
+        if (run.get(key) or {}).get("full_name")!=REPOSITORY:
+            raise RecoveryError("SUCCESSOR_PREDECESSOR_RUN_REPOSITORY_MISMATCH")
+    refs=run.get("referenced_workflows")
+    expected=f"{REPOSITORY}/{RECOVERY_REUSABLE_PATH}@{PREDECESSOR_CONTROL_SHA}"
+    matches=[x for x in refs or [] if isinstance(x,dict) and str(x.get("path") or "").split("@",1)[0]==f"{REPOSITORY}/{RECOVERY_REUSABLE_PATH}"]
+    if len(matches)!=1 or matches[0].get("path")!=expected or matches[0].get("sha")!=PREDECESSOR_CONTROL_SHA:
+        raise RecoveryError("SUCCESSOR_PREDECESSOR_RUN_REUSABLE_MISMATCH")
+    if not isinstance(job,dict) or job.get("id")!=PREDECESSOR_RECOVERY_JOB or job.get("run_id")!=PREDECESSOR_RECOVERY_RUN or job.get("status")!="completed" or job.get("conclusion")!="failure" or job.get("name")!="recover / slice-c-recovery":
+        raise RecoveryError("SUCCESSOR_PREDECESSOR_JOB_STATE_MISMATCH")
+
+
+def verify_successor_github_boundary(
+    activation_sha: str, control_sha: str, candidate_output: str | Path
+) -> dict[str,Any]:
+    branch=github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if not isinstance(branch,dict) or branch.get("commit",{}).get("sha")!=activation_sha: raise RecoveryError("SUCCESSOR_ACTIVATION_MAIN_MISMATCH")
+    issue=github(f"/repos/{REPOSITORY}/issues/{GOVERNING_ISSUE}")
+    if not isinstance(issue,dict) or issue.get("state")!="open": raise RecoveryError("GOVERNING_ISSUE_NOT_OPEN")
+    boundary=github(f"/repos/{REPOSITORY}/issues/comments/{SOURCE_BOUNDARY_COMMENT_ID}"); boundary_result=validate_boundary_comment(boundary)
+    pr=github(f"/repos/{REPOSITORY}/pulls/{SLICE_C_PR}"); files=github(f"/repos/{REPOSITORY}/pulls/{SLICE_C_PR}/files?per_page=100"); validate_pr(pr,files)
+    run=github(f"/repos/{REPOSITORY}/actions/runs/{FAILED_APPLY_RUN}"); job=github(f"/repos/{REPOSITORY}/actions/jobs/{FAILED_APPLY_JOB}"); validate_failed_apply(run,job)
+    predecessor_run=github(f"/repos/{REPOSITORY}/actions/runs/{PREDECESSOR_RECOVERY_RUN}")
+    predecessor_job=github(f"/repos/{REPOSITORY}/actions/jobs/{PREDECESSOR_RECOVERY_JOB}")
+    validate_predecessor_recovery_run(predecessor_run,predecessor_job)
+    comments=github_issue_comments(GOVERNING_ISSUE); predecessor=validate_successor_predecessor_records(comments)
+    activation=validate_successor_activation_record(comments,control_sha,activation_sha)
+    apr=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}"); areview=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}/reviews/{activation['review_id']}"); aauth=github(f"/repos/{REPOSITORY}/issues/comments/{activation['authority_id']}")
+    validate_successor_activation_transaction(apr,areview,aauth,activation,control_sha,activation_sha)
+    repin=validate_successor_wif_repin_terminal(comments,control_sha,activation_sha,activation["created_at"])
+    dispatch=validate_successor_dispatch_authority(comments,control_sha,activation_sha,activation,repin)
+    reviewed=fetch_candidate(REVIEWED_HEAD); merged=fetch_candidate(SLICE_C_MERGE); active=fetch_candidate(activation_sha)
+    if reviewed!=merged or reviewed!=active: raise RecoveryError("SUCCESSOR_CANDIDATE_IDENTITY_DRIFT")
+    Path(candidate_output).write_bytes(canonical(active)+b"\n")
+    doc={
+      "contract":"resilio-phase5-slice-c-successor-github-boundary/v1","governing_issue":GOVERNING_ISSUE,
+      "source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"source_boundary_body_sha256":boundary_result["body_sha256"],
+      "failed_apply_run":FAILED_APPLY_RUN,"failed_apply_job":FAILED_APPLY_JOB,
+      "predecessor_control_sha":PREDECESSOR_CONTROL_SHA,"predecessor_activation_sha":PREDECESSOR_ACTIVATION_SHA,
+      "predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"predecessor_recovery_job":PREDECESSOR_RECOVERY_JOB,
+      "predecessor_failure_record_id":predecessor["failure"]["comment_id"],"predecessor_failure_record_body_sha256":predecessor["failure"]["body_sha256"],
+      "predecessor_claim_object":PREDECESSOR_CLAIM_OBJECT,"predecessor_claim_generation":PREDECESSOR_CLAIM_GENERATION,"predecessor_claim_body_sha256":PREDECESSOR_CLAIM_BODY_SHA256,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"predecessor_governance_chain_sha256":PREDECESSOR_GOVERNANCE_CHAIN_SHA256,"predecessor_result_object":PREDECESSOR_RESULT_OBJECT,
+      "s1_terminal_comment_id":predecessor["s1_terminal"]["comment_id"],"s1_terminal_body_sha256":predecessor["s1_terminal"]["body_sha256"],
+      "control_sha":control_sha,"activation_sha":activation_sha,"successor_pr":activation["pr_number"],"successor_reviewed_head":activation["reviewed_head"],"successor_fresh_review_id":activation["review_id"],"successor_fresh_review_body_sha256":activation["review_body_sha256"],"successor_merge_authority_comment_id":activation["authority_id"],"successor_merge_authority_body_sha256":activation["authority_body_sha256"],"successor_activation_record_comment_id":activation["comment_id"],"successor_activation_record_body_sha256":activation["body_sha256"],
+      "wif_repin_saved_plan_sha256":repin["saved_plan_sha256"],"wif_repin_structural_manifest_sha256":repin["manifest_sha256"],"wif_repin_review_comment_id":repin["review_id"],"wif_repin_review_body_sha256":repin["review_sha256"],"wif_repin_apply_authority_comment_id":repin["authority_id"],"wif_repin_apply_authority_body_sha256":repin["authority_sha256"],"wif_repin_terminal_comment_id":repin["comment_id"],"wif_repin_terminal_body_sha256":repin["body_sha256"],
+      "dispatch_authority_comment_id":dispatch["comment_id"],"dispatch_authority_body_sha256":dispatch["body_sha256"],
+      "product_state_generation":SUCCESSOR_EXPECTED_GENERATION,"product_state_lineage":SUCCESSOR_EXPECTED_LINEAGE,"product_state_serial":SUCCESSOR_EXPECTED_SERIAL,"product_state_canonical_sha256":SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256,
+    }
+    doc["governance_chain_sha256"]=sha256(canonical(doc)); return doc
+
+
+def verify_successor_github_boundary_document(value: Any, control_sha: str, activation_sha: str) -> dict[str,Any]:
+    expected_keys={"contract","governing_issue","source_boundary_comment_id","source_boundary_body_sha256","failed_apply_run","failed_apply_job","predecessor_control_sha","predecessor_activation_sha","predecessor_recovery_run","predecessor_recovery_job","predecessor_failure_record_id","predecessor_failure_record_body_sha256","predecessor_claim_object","predecessor_claim_generation","predecessor_claim_body_sha256","predecessor_claim_sha256","predecessor_governance_chain_sha256","predecessor_result_object","s1_terminal_comment_id","s1_terminal_body_sha256","control_sha","activation_sha","successor_pr","successor_reviewed_head","successor_fresh_review_id","successor_fresh_review_body_sha256","successor_merge_authority_comment_id","successor_merge_authority_body_sha256","successor_activation_record_comment_id","successor_activation_record_body_sha256","wif_repin_saved_plan_sha256","wif_repin_structural_manifest_sha256","wif_repin_review_comment_id","wif_repin_review_body_sha256","wif_repin_apply_authority_comment_id","wif_repin_apply_authority_body_sha256","wif_repin_terminal_comment_id","wif_repin_terminal_body_sha256","dispatch_authority_comment_id","dispatch_authority_body_sha256","product_state_generation","product_state_lineage","product_state_serial","product_state_canonical_sha256","governance_chain_sha256"}
+    if not isinstance(value,dict) or set(value)!=expected_keys or value.get("contract")!="resilio-phase5-slice-c-successor-github-boundary/v1": raise RecoveryError("SUCCESSOR_BOUNDARY_DOCUMENT_INVALID")
+    if value.get("control_sha")!=control_sha or value.get("activation_sha")!=activation_sha: raise RecoveryError("SUCCESSOR_BOUNDARY_CONTROL_INVALID")
+    if value.get("product_state_generation")!=SUCCESSOR_EXPECTED_GENERATION or value.get("product_state_lineage")!=SUCCESSOR_EXPECTED_LINEAGE or value.get("product_state_serial")!=SUCCESSOR_EXPECTED_SERIAL or value.get("product_state_canonical_sha256")!=SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256: raise RecoveryError("SUCCESSOR_BOUNDARY_STATE_INVALID")
+    required_hashes=("source_boundary_body_sha256","predecessor_failure_record_body_sha256","predecessor_claim_body_sha256","predecessor_claim_sha256","predecessor_governance_chain_sha256","s1_terminal_body_sha256","successor_fresh_review_body_sha256","successor_merge_authority_body_sha256","successor_activation_record_body_sha256","wif_repin_saved_plan_sha256","wif_repin_structural_manifest_sha256","wif_repin_review_body_sha256","wif_repin_apply_authority_body_sha256","wif_repin_terminal_body_sha256","dispatch_authority_body_sha256","product_state_canonical_sha256","governance_chain_sha256")
+    for key in required_hashes:
+        if not HEX64.fullmatch(str(value.get(key) or "")): raise RecoveryError(f"SUCCESSOR_BOUNDARY_HASH_INVALID:{key}")
+    chain=value["governance_chain_sha256"]; copy=dict(value); del copy["governance_chain_sha256"]
+    if sha256(canonical(copy))!=chain: raise RecoveryError("SUCCESSOR_BOUNDARY_HASH_MISMATCH")
+    if value.get("governing_issue")!=GOVERNING_ISSUE or value.get("source_boundary_comment_id")!=SOURCE_BOUNDARY_COMMENT_ID or value.get("failed_apply_run")!=FAILED_APPLY_RUN or value.get("failed_apply_job")!=FAILED_APPLY_JOB or value.get("predecessor_control_sha")!=PREDECESSOR_CONTROL_SHA or value.get("predecessor_activation_sha")!=PREDECESSOR_ACTIVATION_SHA or value.get("predecessor_recovery_run")!=PREDECESSOR_RECOVERY_RUN or value.get("predecessor_recovery_job")!=PREDECESSOR_RECOVERY_JOB or value.get("predecessor_failure_record_id")!=PREDECESSOR_FAILURE_RECORD_ID or value.get("predecessor_failure_record_body_sha256")!=PREDECESSOR_FAILURE_RECORD_BODY_SHA256 or value.get("predecessor_claim_object")!=PREDECESSOR_CLAIM_OBJECT or value.get("predecessor_claim_generation")!=PREDECESSOR_CLAIM_GENERATION or value.get("predecessor_claim_body_sha256")!=PREDECESSOR_CLAIM_BODY_SHA256 or value.get("predecessor_claim_sha256")!=PREDECESSOR_CLAIM_SHA256 or value.get("predecessor_governance_chain_sha256")!=PREDECESSOR_GOVERNANCE_CHAIN_SHA256 or value.get("predecessor_result_object")!=PREDECESSOR_RESULT_OBJECT or value.get("s1_terminal_comment_id")!=S1_TERMINAL_COMMENT_ID or value.get("s1_terminal_body_sha256")!=S1_TERMINAL_BODY_SHA256: raise RecoveryError("SUCCESSOR_BOUNDARY_PREDECESSOR_INVALID")
+    if not FULL_SHA.fullmatch(str(value.get("successor_reviewed_head") or "")): raise RecoveryError("SUCCESSOR_BOUNDARY_REVIEWED_HEAD_INVALID")
+    for key in ("predecessor_failure_record_id","s1_terminal_comment_id","successor_pr","successor_fresh_review_id","successor_merge_authority_comment_id","successor_activation_record_comment_id","wif_repin_review_comment_id","wif_repin_apply_authority_comment_id","wif_repin_terminal_comment_id","dispatch_authority_comment_id"):
+        if not isinstance(value.get(key),int) or isinstance(value.get(key),bool) or value[key]<=0: raise RecoveryError(f"SUCCESSOR_BOUNDARY_ID_INVALID:{key}")
+    return value
+
+
+def successor_state_identity_from_state(state: Any, generation: str) -> dict[str,Any]:
+    if not isinstance(state,dict) or generation!=SUCCESSOR_EXPECTED_GENERATION: raise RecoveryError("SUCCESSOR_STATE_GENERATION_MISMATCH")
+    if state.get("lineage")!=SUCCESSOR_EXPECTED_LINEAGE or state.get("serial")!=SUCCESSOR_EXPECTED_SERIAL: raise RecoveryError("SUCCESSOR_STATE_VERSION_MISMATCH")
+    observed={}
+    for resource in state.get("resources") or []:
+        if resource.get("mode","managed")!="managed": continue
+        module=resource.get("module")
+        for inst in resource.get("instances") or []:
+            if inst.get("index_key") is not None: raise RecoveryError("SUCCESSOR_STATE_INDEXED_RESOURCE_FORBIDDEN")
+            if inst.get("deposed") not in (None, ""):
+                raise RecoveryError("SUCCESSOR_STATE_DEPOSED_INSTANCE_FORBIDDEN")
+            address=f"{resource.get('type')}.{resource.get('name')}"
+            if module: address=f"{module}.{address}"
+            if address in observed: raise RecoveryError("SUCCESSOR_STATE_ADDRESS_DUPLICATE")
+            observed[address]=str(inst.get("status") or "normal")
+    if tuple(sorted(observed))!=SUCCESSOR_EXPECTED_ADDRESSES: raise RecoveryError("SUCCESSOR_STATE_ADDRESS_SET_MISMATCH")
+    if observed!=SUCCESSOR_EXPECTED_STATUSES: raise RecoveryError("SUCCESSOR_STATE_STATUS_PROJECTION_MISMATCH")
+    state_hash=sha256(canonical(state))
+    if state_hash!=SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256: raise RecoveryError("SUCCESSOR_STATE_CANONICAL_HASH_MISMATCH")
+    return {"contract":"resilio-phase5-slice-c-successor-state/v1","generation":generation,"lineage":SUCCESSOR_EXPECTED_LINEAGE,"serial":SUCCESSOR_EXPECTED_SERIAL,"managed_addresses":list(SUCCESSOR_EXPECTED_ADDRESSES),"instance_statuses":observed,"state_canonical_sha256":state_hash}
+
+
+def verify_successor_state_identity(value: Any) -> dict[str,Any]:
+    expected_keys={"contract","generation","lineage","serial","managed_addresses","instance_statuses","state_canonical_sha256"}
+    if not isinstance(value,dict) or set(value)!=expected_keys or value.get("contract")!="resilio-phase5-slice-c-successor-state/v1": raise RecoveryError("SUCCESSOR_STATE_IDENTITY_FIELDS_INVALID")
+    if value.get("generation")!=SUCCESSOR_EXPECTED_GENERATION or value.get("lineage")!=SUCCESSOR_EXPECTED_LINEAGE or value.get("serial")!=SUCCESSOR_EXPECTED_SERIAL: raise RecoveryError("SUCCESSOR_STATE_IDENTITY_VERSION_MISMATCH")
+    if tuple(value.get("managed_addresses") or ())!=SUCCESSOR_EXPECTED_ADDRESSES or value.get("instance_statuses")!=SUCCESSOR_EXPECTED_STATUSES or value.get("state_canonical_sha256")!=SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256: raise RecoveryError("SUCCESSOR_STATE_IDENTITY_PROJECTION_MISMATCH")
+    return value
+
+
+def verify_successor_no_change_plan(plan: Any) -> dict[str,Any]:
+    if not isinstance(plan,dict) or plan.get("format_version")!="1.2" or plan.get("terraform_version")!="1.15.8": raise RecoveryError("SUCCESSOR_PLAN_VERSION_INVALID")
+    if plan.get("errored") is not False or plan.get("complete") is not True or plan.get("applyable") not in (False,None): raise RecoveryError("SUCCESSOR_PLAN_TERMINALITY_INVALID")
+    for key in ("deferred_changes","deferred_action_invocations","action_invocations","output_changes"):
+        if plan.get(key) not in (None,[],{}): raise RecoveryError(f"SUCCESSOR_PLAN_{key.upper()}_FORBIDDEN")
+    rows=plan.get("resource_changes")
+    if not isinstance(rows,list): raise RecoveryError("SUCCESSOR_PLAN_RESOURCE_CHANGES_INVALID")
+    observed=[]
+    for row in rows:
+        if not isinstance(row,dict) or row.get("mode","managed")!="managed": raise RecoveryError("SUCCESSOR_PLAN_RESOURCE_ROW_INVALID")
+        address=row.get("address"); change=row.get("change") or {}
+        if row.get("previous_address") is not None:
+            raise RecoveryError(f"SUCCESSOR_PLAN_PREVIOUS_ADDRESS_FORBIDDEN:{address}")
+        if not isinstance(address,str) or change.get("actions") != ["no-op"]: raise RecoveryError(f"SUCCESSOR_PLAN_NON_NOOP_EFFECT:{address}")
+        observed.append(address)
+    if tuple(sorted(observed))!=SUCCESSOR_EXPECTED_ADDRESSES or _planned_addresses(plan)!=SUCCESSOR_EXPECTED_ADDRESSES: raise RecoveryError("SUCCESSOR_PLAN_ADDRESS_SET_MISMATCH")
+    drift=plan.get("resource_drift") or []
+    if len(drift)>1: raise RecoveryError("SUCCESSOR_PLAN_DRIFT_ROW_COUNT_INVALID")
+    drift_fields=[]
+    if drift:
+        row=drift[0]
+        if row.get("mode", "managed") != "managed" or row.get("previous_address") is not None:
+            raise RecoveryError("SUCCESSOR_PLAN_DRIFT_ROW_INVALID")
+        if row.get("address")!="google_firestore_database.operational": raise RecoveryError("SUCCESSOR_PLAN_DRIFT_ADDRESS_INVALID")
+        change=row.get("change") or {}
+        if change.get("actions") != ["update"]:
+            raise RecoveryError("SUCCESSOR_PLAN_DRIFT_ACTION_INVALID")
+        before=change.get("before") or {}; after=change.get("after") or {}
+        fields={k for k in set(before)|set(after) if before.get(k)!=after.get(k)}
+        if not fields or not fields <= SUCCESSOR_VOLATILE_FIRESTORE_FIELDS: raise RecoveryError("SUCCESSOR_PLAN_DRIFT_FIELDS_INVALID")
+        drift_fields=sorted(fields)
+    return {"addresses":list(SUCCESSOR_EXPECTED_ADDRESSES),"no_change":True,"residual_firestore_drift_fields":drift_fields}
+
+
+def _successor_gcs_metadata(object_name: str, allow_absent: bool=False) -> dict[str,Any] | None:
+    path=urllib.parse.quote(object_name,safe="")
+    try: value=request_json(f"https://storage.googleapis.com/storage/v1/b/{STATE_BUCKET}/o/{path}",google_token())
+    except RecoveryError as exc:
+        if allow_absent and str(exc).startswith("HTTP_404"): return None
+        raise
+    if not isinstance(value,dict): raise RecoveryError("SUCCESSOR_GCS_METADATA_INVALID")
+    return value
+
+
+def _successor_gcs_json(object_name: str) -> Any:
+    path=urllib.parse.quote(object_name,safe="")
+    return request_json(f"https://storage.googleapis.com/storage/v1/b/{STATE_BUCKET}/o/{path}?alt=media",google_token())
+
+
+def verify_successor_cloud_boundary(control_sha: str) -> dict[str,Any]:
+    if not FULL_SHA.fullmatch(control_sha) or control_sha==PREDECESSOR_CONTROL_SHA: raise RecoveryError("SUCCESSOR_CONTROL_IDENTITY_INVALID")
+    pm=_successor_gcs_metadata(PREDECESSOR_CLAIM_OBJECT)
+    if str(pm.get("generation"))!=PREDECESSOR_CLAIM_GENERATION: raise RecoveryError("SUCCESSOR_PREDECESSOR_CLAIM_GENERATION_MISMATCH")
+    claim=_successor_gcs_json(PREDECESSOR_CLAIM_OBJECT)
+    if sha256(canonical(claim)+b"\n")!=PREDECESSOR_CLAIM_BODY_SHA256 or claim.get("claim_sha256")!=PREDECESSOR_CLAIM_SHA256 or claim.get("governance_chain_sha256")!=PREDECESSOR_GOVERNANCE_CHAIN_SHA256 or claim.get("workflow_run_id")!=str(PREDECESSOR_RECOVERY_RUN) or claim.get("control_sha")!=PREDECESSOR_CONTROL_SHA or claim.get("activation_sha")!=PREDECESSOR_ACTIVATION_SHA: raise RecoveryError("SUCCESSOR_PREDECESSOR_CLAIM_BODY_MISMATCH")
+    if _successor_gcs_metadata(PREDECESSOR_RESULT_OBJECT,True) is not None: raise RecoveryError("SUCCESSOR_PREDECESSOR_RESULT_UNEXPECTED")
+    if _successor_gcs_metadata(evidence_object("claim",control_sha),True) is not None or _successor_gcs_metadata(evidence_object("result",control_sha),True) is not None: raise RecoveryError("SUCCESSOR_EVIDENCE_ALREADY_EXISTS")
+    sm=_successor_gcs_metadata(STATE_OBJECT)
+    if str(sm.get("generation"))!=SUCCESSOR_EXPECTED_GENERATION: raise RecoveryError("SUCCESSOR_CLOUD_STATE_GENERATION_MISMATCH")
+    state=_successor_gcs_json(STATE_OBJECT); state_id=successor_state_identity_from_state(state,SUCCESSOR_EXPECTED_GENERATION)
+    if _successor_gcs_metadata(LOCK_OBJECT,True) is not None: raise RecoveryError("SUCCESSOR_PRODUCT_LOCK_PRESENT")
+    return {"predecessor_claim_generation":PREDECESSOR_CLAIM_GENERATION,"predecessor_claim_body_sha256":PREDECESSOR_CLAIM_BODY_SHA256,"state_identity":state_id,"successor_claim_absent":True,"successor_result_absent":True,"product_lock_absent":True}
+
+
+def successor_claim_document(control_sha: str, activation_sha: str, run_id: str, github_boundary: Any) -> dict[str,Any]:
+    boundary=verify_successor_github_boundary_document(github_boundary,control_sha,activation_sha)
+    if not RUN_ID.fullmatch(run_id): raise RecoveryError("SUCCESSOR_CLAIM_RUN_ID_INVALID")
+    value={"contract":"resilio-phase5-slice-c-successor-claim/v1","governing_issue":GOVERNING_ISSUE,"source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"s1_terminal_comment_id":S1_TERMINAL_COMMENT_ID,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"github_boundary":boundary}
+    value["claim_sha256"]=sha256(canonical(value)); return value
+
+
+def successor_create_claim(control_sha: str, activation_sha: str, run_id: str, github_boundary: Any) -> dict[str,Any]:
+    return gcs_upload_once(evidence_object("claim",control_sha),successor_claim_document(control_sha,activation_sha,run_id,github_boundary))
+
+
+def successor_build_result(before: Any, after: Any, plan: Any, control_sha: str, activation_sha: str, run_id: str, github_boundary: Any) -> tuple[dict[str,Any],dict[str,Any]]:
+    b=verify_successor_state_identity(before); a=verify_successor_state_identity(after)
+    if b!=a: raise RecoveryError("SUCCESSOR_STATE_IDENTITY_CHANGED")
+    plan_result=verify_successor_no_change_plan(plan); boundary=verify_successor_github_boundary_document(github_boundary,control_sha,activation_sha)
+    claim=successor_claim_document(control_sha,activation_sha,run_id,boundary); plan_sha=sha256(canonical(plan))
+    private={"contract":"resilio-phase5-slice-c-successor-result/v1","governing_issue":GOVERNING_ISSUE,"source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"s1_terminal_comment_id":S1_TERMINAL_COMMENT_ID,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"github_boundary":boundary,"claim_sha256":claim["claim_sha256"],"claim_object":evidence_object("claim",control_sha),"result_object":evidence_object("result",control_sha),"state_before":b,"state_after":a,"plan_sha256":plan_sha,"residual_firestore_drift_fields":plan_result["residual_firestore_drift_fields"],"terraform_reconciliation":"EXACT_NO_MATERIAL_CHANGE"}
+    private["result_sha256"]=sha256(canonical(private))
+    public={"contract":"resilio-phase5-slice-c-successor-manifest/v1","source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"claim_sha256":claim["claim_sha256"],"state_generation":b["generation"],"state_lineage":b["lineage"],"state_serial":b["serial"],"managed_addresses":b["managed_addresses"],"instance_statuses":b["instance_statuses"],"state_canonical_sha256":b["state_canonical_sha256"],"plan_sha256":plan_sha,"residual_firestore_drift_fields":plan_result["residual_firestore_drift_fields"],"terraform_reconciliation":"EXACT_NO_MATERIAL_CHANGE","claim_object":private["claim_object"],"result_object":private["result_object"],"result_sha256":private["result_sha256"]}
+    return private,public
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1515,6 +2068,46 @@ def main() -> int:
     p.add_argument("--control-sha", required=True)
     p.add_argument("--run-id", required=True)
     p.add_argument("--github-boundary", required=True)
+
+    p = commands.add_parser("verify-successor-github-boundary")
+    p.add_argument("--activation-sha", required=True)
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--candidate-output", required=True)
+
+    p = commands.add_parser("verify-successor-cloud-boundary")
+    p.add_argument("--control-sha", required=True)
+
+    p = commands.add_parser("successor-state-identity")
+    p.add_argument("--state-json", required=True)
+    p.add_argument("--generation", required=True)
+    p.add_argument("--output", required=True)
+
+    p = commands.add_parser("successor-claim")
+    p.add_argument("--activation-sha", required=True)
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--github-boundary", required=True)
+
+    p = commands.add_parser("verify-successor-state")
+    p.add_argument("--file", required=True)
+
+    p = commands.add_parser("verify-successor-plan")
+    p.add_argument("--file", required=True)
+
+    p = commands.add_parser("build-successor-result")
+    p.add_argument("--before", required=True)
+    p.add_argument("--after", required=True)
+    p.add_argument("--plan-json", required=True)
+    p.add_argument("--activation-sha", required=True)
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--github-boundary", required=True)
+    p.add_argument("--private-output", required=True)
+    p.add_argument("--public-output", required=True)
+
+    p = commands.add_parser("upload-successor-result")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--file", required=True)
 
     p = commands.add_parser("verify-state")
     p.add_argument("--file", required=True)
@@ -1565,6 +2158,40 @@ def main() -> int:
                     separators=(",", ":"),
                 )
             )
+        elif args.command == "verify-successor-github-boundary":
+            result = verify_successor_github_boundary(args.activation_sha, args.control_sha, args.candidate_output)
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-successor-cloud-boundary":
+            result = verify_successor_cloud_boundary(args.control_sha)
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif args.command == "successor-state-identity":
+            state = strict_json(Path(args.state_json).read_bytes())
+            result = successor_state_identity_from_state(state, args.generation)
+            Path(args.output).write_bytes(canonical(result) + b"\n")
+        elif args.command == "successor-claim":
+            boundary = strict_json(Path(args.github_boundary).read_bytes())
+            result = successor_create_claim(args.control_sha, args.activation_sha, args.run_id, boundary)
+            print(json.dumps({key: result.get(key) for key in ("bucket", "name", "generation", "metageneration")}, sort_keys=True, separators=(",", ":")))
+        elif args.command == "verify-successor-state":
+            value = strict_json(Path(args.file).read_bytes())
+            verify_successor_state_identity(value)
+        elif args.command == "verify-successor-plan":
+            value = strict_json(Path(args.file).read_bytes())
+            verify_successor_no_change_plan(value)
+        elif args.command == "build-successor-result":
+            before = strict_json(Path(args.before).read_bytes())
+            after = strict_json(Path(args.after).read_bytes())
+            plan = strict_json(Path(args.plan_json).read_bytes())
+            boundary = strict_json(Path(args.github_boundary).read_bytes())
+            private, public = successor_build_result(before, after, plan, args.control_sha, args.activation_sha, args.run_id, boundary)
+            Path(args.private_output).write_bytes(canonical(private) + b"\n")
+            Path(args.public_output).write_bytes(canonical(public) + b"\n")
+        elif args.command == "upload-successor-result":
+            value = strict_json(Path(args.file).read_bytes())
+            if value.get("contract") != "resilio-phase5-slice-c-successor-result/v1": raise RecoveryError("SUCCESSOR_RESULT_CONTRACT_INVALID")
+            if value.get("control_sha") != args.control_sha: raise RecoveryError("SUCCESSOR_RESULT_CONTROL_MISMATCH")
+            result = gcs_upload_once(evidence_object("result", args.control_sha), value)
+            print(json.dumps({key: result.get(key) for key in ("bucket", "name", "generation", "metageneration")}, sort_keys=True, separators=(",", ":")))
         elif args.command == "verify-state":
             value = strict_json(Path(args.file).read_bytes())
             verify_state_identity(value)
