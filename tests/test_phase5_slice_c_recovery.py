@@ -421,6 +421,95 @@ def run_boundary(fixture):
         return result, output.read_bytes()
 
 
+def successor_state_raw():
+    resources=[]
+    for address in recovery.SUCCESSOR_EXPECTED_ADDRESSES:
+        typ,name=address.split('.',1)
+        resources.append({"mode":"managed","type":typ,"name":name,"instances":[{"schema_version":0,"attributes":{}}]})
+    return {"version":4,"terraform_version":"1.15.8","serial":4,"lineage":recovery.SUCCESSOR_EXPECTED_LINEAGE,"outputs":{},"resources":resources}
+
+
+def successor_no_change_plan(with_drift=True):
+    resources=[{"address":a,"mode":"managed","type":a.split('.',1)[0],"name":a.split('.',1)[1],"values":{}} for a in recovery.SUCCESSOR_EXPECTED_ADDRESSES]
+    changes=[{"address":a,"mode":"managed","type":a.split('.',1)[0],"name":a.split('.',1)[1],"change":{"actions":["no-op"],"before":{},"after":{}}} for a in recovery.SUCCESSOR_EXPECTED_ADDRESSES]
+    drift=[]
+    if with_drift:
+        drift=[{"address":"google_firestore_database.operational","mode":"managed","type":"google_firestore_database","name":"operational","change":{"actions":["update"],"before":{"earliest_version_time":"a","etag":"x","name":"(default)"},"after":{"earliest_version_time":"b","etag":"y","name":"(default)"}}}]
+    return {"format_version":"1.2","terraform_version":"1.15.8","planned_values":{"root_module":{"resources":resources}},"resource_changes":changes,"resource_drift":drift,"deferred_changes":[],"deferred_action_invocations":[],"action_invocations":[],"output_changes":{},"applyable":False,"complete":True,"errored":False}
+
+
+def successor_review_body(pr_number, head, control):
+    return "\n".join((
+        "COMPLETELY_FRESH_SUBSTANTIVE_SUCCESSOR_RECOVERY_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
+        "DISPOSITION=APPROVED",f"PR=8ft0-ai/resilio#{pr_number}",f"EXACT_HEAD={head}",f"EXACT_BASE={control}",
+        "GOVERNING_ISSUE=8ft0-ai/resilio#109",f"SUCCESSOR_ARCHITECTURE={recovery.SUCCESSOR_ARCHITECTURE_COMMENT_ID}",f"S1_TERMINAL={recovery.S1_TERMINAL_COMMENT_ID}","MATERIAL_BLOCKERS=NONE"))
+
+
+def successor_boundary_fixture():
+    control="4"*40; activation="5"*40; reviewed="6"*40; pr_number=130
+    review_id=401; authority_id=402; activation_id=403; repin_review_id=404; repin_authority_id=405; repin_terminal_id=406; dispatch_id=407
+    failure_body="\n".join((
+        "SLICE_C_RECOVERY_ATTEMPT_1_CONSUMED_FAILED_NO_RETRY",
+        f"RECOVERY_CONTROL_SHA={recovery.PREDECESSOR_CONTROL_SHA}",f"RECOVERY_ACTIVATION_MAIN={recovery.PREDECESSOR_ACTIVATION_SHA}",
+        f"RECOVERY_RUN={recovery.PREDECESSOR_RECOVERY_RUN}",f"RECOVERY_JOB={recovery.PREDECESSOR_RECOVERY_JOB}",
+        f"RECOVERY_CLAIM_GENERATION={recovery.PREDECESSOR_CLAIM_GENERATION}","RECOVERY_RESULT_OBJECT=ABSENT","FIRESTORE_STATE_INSTANCE_STATUS=tainted","RETRY_THIS_CONTROL=FORBIDDEN"))
+    failure_sha=recovery.sha256(failure_body.encode())
+    s1_body="\n".join((
+        "PHASE5_SLICE_C_S1_STATE_REPAIR_TERMINAL_V1",f"STATE_GENERATION_AFTER={recovery.SUCCESSOR_EXPECTED_GENERATION}",
+        f"STATE_BODY_SHA256_AFTER={recovery.SUCCESSOR_EXPECTED_STATE_BODY_SHA256}",f"STATE_SERIAL_AFTER={recovery.SUCCESSOR_EXPECTED_SERIAL}",
+        f"STATE_LINEAGE={recovery.SUCCESSOR_EXPECTED_LINEAGE}","ALL_INSTANCE_STATUSES=normal","LIVE_CLOUD_SEMANTICS_CHANGED=NO","TERMINAL_NORMAL_PLAN_EXIT=0","TERMINAL_MATERIAL_RESOURCE_CHANGES=0","TERMINAL_MATERIAL_OUTPUT_CHANGES=0","TERMINAL_DEFERRED_ACTION_CONSEQUENCES=0","TERMINAL_RESIDUAL_DRIFT=google_firestore_database.operational__earliest_version_time+etag_only","FINAL_PRODUCT_LOCK=ABSENT","S1_TERMINAL_DISPOSITION=RECONCILED"))
+    s1_sha=recovery.sha256(s1_body.encode())
+    with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",failure_sha), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",s1_sha):
+        review_body=successor_review_body(pr_number,reviewed,control); review_sha=recovery.sha256(review_body.encode())
+        authority_body=recovery.successor_activation_merge_authority_body(control,pr_number,reviewed,review_id,review_sha); authority_sha=recovery.sha256(authority_body.encode())
+        activation_body=recovery.successor_activation_record_body(control,activation,pr_number,reviewed,review_id,review_sha,authority_id,authority_sha); activation_sha=recovery.sha256(activation_body.encode())
+        activation_record={"comment_id":activation_id,"created_at":recovery._timestamp("2026-10-03T03:03:00Z","x"),"body_sha256":activation_sha}
+        plan_sha="b"*64; manifest_sha="c"*64; bootstrap_lineage="bootstrap-lineage"; sb=80; sa=81
+        repin_review_body=recovery.successor_wif_repin_review_body(control,activation,plan_sha,manifest_sha,bootstrap_lineage,sb); repin_review_sha=recovery.sha256(repin_review_body.encode())
+        repin_authority_body=recovery.successor_wif_repin_authority_body(control,activation,plan_sha,manifest_sha,bootstrap_lineage,sb,repin_review_id,repin_review_sha); repin_authority_sha=recovery.sha256(repin_authority_body.encode())
+        repin_terminal_body=recovery.successor_wif_repin_terminal_body(control,activation,plan_sha,manifest_sha,bootstrap_lineage,sb,sa,repin_review_id,repin_review_sha,repin_authority_id,repin_authority_sha); repin_terminal_sha=recovery.sha256(repin_terminal_body.encode())
+        repin_terminal={"comment_id":repin_terminal_id,"body_sha256":repin_terminal_sha}
+        dispatch_body=recovery.successor_dispatch_authority_body(control,activation,activation_record,repin_terminal)
+    comments=[
+      owner_comment(recovery.PREDECESSOR_FAILURE_RECORD_ID,failure_body,"2026-10-03T01:00:00Z"),
+      owner_comment(recovery.S1_TERMINAL_COMMENT_ID,s1_body,"2026-10-03T02:00:00Z"),
+      owner_comment(activation_id,activation_body,"2026-10-03T03:03:00Z"),
+      owner_comment(repin_review_id,repin_review_body,"2026-10-03T03:04:00Z"),
+      owner_comment(repin_authority_id,repin_authority_body,"2026-10-03T03:05:00Z"),
+      owner_comment(repin_terminal_id,repin_terminal_body,"2026-10-03T03:06:00Z"),
+      owner_comment(dispatch_id,dispatch_body,"2026-10-03T03:07:00Z"),
+    ]
+    boundary_body="\n".join(("STATUS=SLICE_C_BASE_RESOURCES_APPLIED_BUT_TERMINAL_NO_CHANGE_PROOF_FAILED",f"EXACT_REVIEWED_HEAD={recovery.REVIEWED_HEAD}",f"REVIEWED_BASE={recovery.REVIEWED_BASE}",f"MERGE_COMMIT={recovery.SLICE_C_MERGE}",f"PRODUCT_APPLY_RUN={recovery.FAILED_APPLY_RUN}",f"PRODUCT_APPLY_JOB={recovery.FAILED_APPLY_JOB}",f"PRODUCT_STATE_GENERATION={recovery.EXPECTED_GENERATION}",f"PRODUCT_STATE_SERIAL={recovery.EXPECTED_SERIAL}",f"PRODUCT_STATE_LINEAGE={recovery.EXPECTED_LINEAGE}","Retry prohibition","do **not** rerun the existing product apply workflow"))
+    boundary_sha=recovery.sha256(boundary_body.encode())
+    candidate_raw=recovery.canonical(recovery.expected_candidate())+b"\n"; wrapped=base64.encodebytes(candidate_raw).decode()
+    fixtures={
+      f"/repos/{recovery.REPOSITORY}/branches/{recovery.DEFAULT_BRANCH}":{"commit":{"sha":activation}},
+      f"/repos/{recovery.REPOSITORY}/issues/{recovery.GOVERNING_ISSUE}":{"state":"open"},
+      f"/repos/{recovery.REPOSITORY}/issues/comments/{recovery.SOURCE_BOUNDARY_COMMENT_ID}":owner_comment(recovery.SOURCE_BOUNDARY_COMMENT_ID,boundary_body,"2026-10-02T01:00:00Z"),
+      f"/repos/{recovery.REPOSITORY}/pulls/{recovery.SLICE_C_PR}":{"number":recovery.SLICE_C_PR,"state":"closed","merged_at":"2026-10-02T00:00:00Z","merge_commit_sha":recovery.SLICE_C_MERGE,"head":{"sha":recovery.REVIEWED_HEAD,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":recovery.REVIEWED_BASE}},
+      f"/repos/{recovery.REPOSITORY}/pulls/{recovery.SLICE_C_PR}/files?per_page=100":[{"filename":recovery.CANDIDATE_PATH}],
+      f"/repos/{recovery.REPOSITORY}/actions/runs/{recovery.FAILED_APPLY_RUN}":{"id":recovery.FAILED_APPLY_RUN,"run_attempt":1,"status":"completed","conclusion":"failure","head_branch":"main","head_sha":recovery.SLICE_C_MERGE,"event":"workflow_dispatch","path":recovery.NORMAL_APPLY_CALLER_PATH+"@refs/heads/main","repository":{"full_name":recovery.REPOSITORY},"head_repository":{"full_name":recovery.REPOSITORY},"referenced_workflows":[{"path":f"{recovery.REPOSITORY}/{recovery.NORMAL_APPLY_REUSABLE_PATH}@{recovery.NORMAL_CONTROL_SHA}","sha":recovery.NORMAL_CONTROL_SHA}]},
+      f"/repos/{recovery.REPOSITORY}/actions/jobs/{recovery.FAILED_APPLY_JOB}":{"id":recovery.FAILED_APPLY_JOB,"run_id":recovery.FAILED_APPLY_RUN,"status":"completed","conclusion":"failure","name":"apply / product-apply"},
+      f"/repos/{recovery.REPOSITORY}/actions/runs/{recovery.PREDECESSOR_RECOVERY_RUN}":{"id":recovery.PREDECESSOR_RECOVERY_RUN,"run_attempt":1,"status":"completed","conclusion":"failure","head_branch":"main","head_sha":recovery.PREDECESSOR_ACTIVATION_SHA,"event":"workflow_dispatch","path":".github/workflows/phase5-slice-c-recovery.yml","repository":{"full_name":recovery.REPOSITORY},"head_repository":{"full_name":recovery.REPOSITORY},"referenced_workflows":[{"path":f"{recovery.REPOSITORY}/{recovery.RECOVERY_REUSABLE_PATH}@{recovery.PREDECESSOR_CONTROL_SHA}","sha":recovery.PREDECESSOR_CONTROL_SHA}]},
+      f"/repos/{recovery.REPOSITORY}/actions/jobs/{recovery.PREDECESSOR_RECOVERY_JOB}":{"id":recovery.PREDECESSOR_RECOVERY_JOB,"run_id":recovery.PREDECESSOR_RECOVERY_RUN,"status":"completed","conclusion":"failure","name":"recover / slice-c-recovery"},
+      f"/repos/{recovery.REPOSITORY}/issues/{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1":comments,
+      f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}":{"number":pr_number,"state":"closed","merged_at":"2026-10-03T03:02:00Z","merge_commit_sha":activation,"head":{"sha":reviewed,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":control}},
+      f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/reviews/{review_id}":{"id":review_id,"state":"COMMENTED","commit_id":reviewed,"body":review_body,"submitted_at":"2026-10-03T03:00:00Z","user":{"login":"8ft0-ai","id":130460431}},
+      f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}":owner_comment(authority_id,authority_body,"2026-10-03T03:01:00Z",pr_number),
+    }
+    return {"control":control,"activation":activation,"failure_sha":failure_sha,"s1_sha":s1_sha,"boundary_sha":boundary_sha,"candidate_raw":candidate_raw,"wrapped":wrapped,"fixtures":fixtures}
+
+
+def run_successor_boundary(fixture):
+    def fake_github(path):
+        if path.startswith(f"/repos/{recovery.REPOSITORY}/contents/{recovery.CANDIDATE_PATH}?ref="):
+            return {"type":"file","path":recovery.CANDIDATE_PATH,"encoding":"base64","content":fixture["wrapped"]}
+        if path not in fixture["fixtures"]: raise AssertionError(f"unexpected GitHub path: {path}")
+        return copy.deepcopy(fixture["fixtures"][path])
+    with tempfile.TemporaryDirectory() as tmp, patch.object(recovery,"github",side_effect=fake_github), patch.object(recovery,"SOURCE_BOUNDARY_BODY_SHA256",fixture["boundary_sha"]), patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]):
+        output=Path(tmp)/"candidate.json"; result=recovery.verify_successor_github_boundary(fixture["activation"],fixture["control"],output); return result,output.read_bytes()
+
+
 class SliceCRecoveryTests(unittest.TestCase):
     def test_exact_state_identity_is_accepted(self):
         self.assertEqual(verify_state_identity(state_identity())["serial"], 2)
@@ -909,6 +998,75 @@ jobs:
             validate_r2_activation_record(
                 [activation_record, replacement], fixture["control"], "4" * 40
             )
+
+
+    def test_successor_state_identity_requires_all_normal_statuses_and_exact_canonical_state(self):
+        raw=successor_state_raw(); expected=recovery.sha256(recovery.canonical(raw))
+        with patch.object(recovery,"SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256",expected):
+            identity=recovery.successor_state_identity_from_state(raw,recovery.SUCCESSOR_EXPECTED_GENERATION)
+            self.assertEqual(identity["serial"],4)
+            self.assertTrue(all(v=="normal" for v in identity["instance_statuses"].values()))
+            hostile=copy.deepcopy(raw); hostile["resources"][1]["instances"][0]["status"]="tainted"
+            with self.assertRaises(RecoveryError): recovery.successor_state_identity_from_state(hostile,recovery.SUCCESSOR_EXPECTED_GENERATION)
+            deposed=copy.deepcopy(raw); deposed["resources"][1]["instances"][0]["deposed"]="deadbeef"
+            with self.assertRaises(RecoveryError): recovery.successor_state_identity_from_state(deposed,recovery.SUCCESSOR_EXPECTED_GENERATION)
+
+    def test_successor_plan_accepts_only_firestore_volatile_drift(self):
+        good=successor_no_change_plan(); result=recovery.verify_successor_no_change_plan(good)
+        self.assertEqual(result["residual_firestore_drift_fields"],["earliest_version_time","etag"])
+        stable=successor_no_change_plan(); stable["resource_drift"][0]["change"]["after"]["concurrency_mode"]="OPTIMISTIC"
+        with self.assertRaises(RecoveryError): recovery.verify_successor_no_change_plan(stable)
+        wrong=successor_no_change_plan(); wrong["resource_drift"][0]["address"]="google_pubsub_topic.deployment_events"
+        with self.assertRaises(RecoveryError): recovery.verify_successor_no_change_plan(wrong)
+        effect=successor_no_change_plan(False); effect["resource_changes"][0]["change"]["actions"]=["update"]
+        with self.assertRaises(RecoveryError): recovery.verify_successor_no_change_plan(effect)
+        moved=successor_no_change_plan(False); moved["resource_changes"][0]["previous_address"]="google_storage_bucket.old"
+        with self.assertRaises(RecoveryError): recovery.verify_successor_no_change_plan(moved)
+
+    def test_successor_repository_shaped_activation_repin_dispatch_chain_is_reachable(self):
+        fixture=successor_boundary_fixture(); result,candidate=run_successor_boundary(fixture)
+        self.assertEqual(candidate,fixture["candidate_raw"])
+        self.assertEqual(result["predecessor_recovery_run"],recovery.PREDECESSOR_RECOVERY_RUN)
+        self.assertEqual(result["s1_terminal_comment_id"],recovery.S1_TERMINAL_COMMENT_ID)
+        self.assertEqual(result["control_sha"],fixture["control"])
+        self.assertEqual(result["activation_sha"],fixture["activation"])
+        self.assertRegex(result["governance_chain_sha256"],r"^[0-9a-f]{64}$")
+        with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]):
+            self.assertEqual(recovery.verify_successor_github_boundary_document(result,fixture["control"],fixture["activation"]),result)
+
+    def test_successor_claim_namespace_cannot_reuse_consumed_c1(self):
+        self.assertNotEqual(recovery.evidence_object("claim","4"*40),recovery.PREDECESSOR_CLAIM_OBJECT)
+        self.assertNotEqual(recovery.evidence_object("result","4"*40),recovery.PREDECESSOR_RESULT_OBJECT)
+
+
+    def test_successor_cloud_boundary_closes_predecessor_claim_state_and_lock(self):
+        control="4"*40
+        state=successor_state_raw(); state_sha=recovery.sha256(recovery.canonical(state))
+        claim={"contract":"resilio-phase5-slice-c-recovery-claim/v1","workflow_run_id":str(recovery.PREDECESSOR_RECOVERY_RUN),"governance_chain_sha256":recovery.PREDECESSOR_GOVERNANCE_CHAIN_SHA256,"control_sha":recovery.PREDECESSOR_CONTROL_SHA,"activation_sha":recovery.PREDECESSOR_ACTIVATION_SHA,"claim_sha256":"z"*64}
+        claim["claim_sha256"]=recovery.sha256(recovery.canonical({k:v for k,v in claim.items() if k!="claim_sha256"}))
+        claim_body_sha=recovery.sha256(recovery.canonical(claim)+b"\n")
+        metadata={
+            recovery.PREDECESSOR_CLAIM_OBJECT:{"generation":recovery.PREDECESSOR_CLAIM_GENERATION},
+            recovery.PREDECESSOR_RESULT_OBJECT:None,
+            recovery.evidence_object("claim",control):None,
+            recovery.evidence_object("result",control):None,
+            recovery.STATE_OBJECT:{"generation":recovery.SUCCESSOR_EXPECTED_GENERATION},
+            recovery.LOCK_OBJECT:None,
+        }
+        def meta(name,allow_absent=False):
+            value=metadata.get(name)
+            if value is None and not allow_absent and name not in metadata: raise AssertionError(name)
+            return copy.deepcopy(value)
+        def obj(name):
+            if name==recovery.PREDECESSOR_CLAIM_OBJECT: return copy.deepcopy(claim)
+            if name==recovery.STATE_OBJECT: return copy.deepcopy(state)
+            raise AssertionError(name)
+        with patch.object(recovery,"PREDECESSOR_CLAIM_SHA256",claim["claim_sha256"]), patch.object(recovery,"PREDECESSOR_CLAIM_BODY_SHA256",claim_body_sha), patch.object(recovery,"SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256",state_sha), patch.object(recovery,"_successor_gcs_metadata",side_effect=meta), patch.object(recovery,"_successor_gcs_json",side_effect=obj):
+            result=recovery.verify_successor_cloud_boundary(control)
+            self.assertTrue(result["successor_claim_absent"])
+            self.assertTrue(result["product_lock_absent"])
+            metadata[recovery.PREDECESSOR_RESULT_OBJECT]={"generation":"1"}
+            with self.assertRaises(RecoveryError): recovery.verify_successor_cloud_boundary(control)
 
 
 if __name__ == "__main__":

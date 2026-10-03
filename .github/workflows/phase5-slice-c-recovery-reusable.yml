@@ -1,4 +1,4 @@
-name: Phase 5 Slice C reconciliation-only recovery reusable
+name: Phase 5 Slice C successor reconciliation-only recovery reusable
 
 on:
   workflow_call:
@@ -48,7 +48,7 @@ jobs:
             --run-attempt "$GITHUB_RUN_ATTEMPT" \
             --activation-sha "$ACTIVATION_SHA" \
             --control-sha "$CONTROL_SHA"
-          python3 scripts/phase5_slice_c_recovery.py verify-github-boundary \
+          python3 scripts/phase5_slice_c_recovery.py verify-successor-github-boundary \
             --activation-sha "$ACTIVATION_SHA" \
             --control-sha "$CONTROL_SHA" \
             --candidate-output "$RUNNER_TEMP/recovery-candidate.json" \
@@ -71,14 +71,24 @@ jobs:
           create_credentials_file: true
           export_environment_variables: true
 
-      - name: Consume immutable one-shot recovery claim
+      - name: Verify repaired product state and predecessor claim before successor claim
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          CONTROL_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/phase5_slice_c_recovery.py verify-successor-cloud-boundary \
+            --control-sha "$CONTROL_SHA" \
+            > "$RUNNER_TEMP/recovery-successor-cloud-boundary.json"
+
+      - name: Consume immutable one-shot successor recovery claim
         env:
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
           ACTIVATION_SHA: ${{ github.sha }}
           CONTROL_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          python3 scripts/phase5_slice_c_recovery.py claim \
+          python3 scripts/phase5_slice_c_recovery.py successor-claim \
             --activation-sha "$ACTIVATION_SHA" \
             --control-sha "$CONTROL_SHA" \
             --run-id "$GITHUB_RUN_ID" \
@@ -107,7 +117,7 @@ jobs:
             --object product/default.tfstate)"
           GENERATION="$(printf '%s' "$META" | python3 -c \
             'import json,sys; print(json.load(sys.stdin)["generation"])')"
-          test "$GENERATION" = "1790344068764582"
+          test "$GENERATION" = "1791024916608689"
 
           LOCK="$(python3 scripts/phase5_terraform_control.py gcs-metadata \
             --object product/default.tflock --allow-absent)"
@@ -121,11 +131,11 @@ jobs:
 
           terraform -chdir="$PLAN_WORK" init -input=false -lockfile=readonly >/dev/null
           terraform -chdir="$PLAN_WORK" state pull > "$PRE_STATE"
-          python3 scripts/phase5_terraform_control.py state-identity \
+          python3 scripts/phase5_slice_c_recovery.py successor-state-identity \
             --state-json "$PRE_STATE" \
             --generation "$GENERATION" \
             --output "$PRE_ID"
-          python3 scripts/phase5_slice_c_recovery.py verify-state --file "$PRE_ID"
+          python3 scripts/phase5_slice_c_recovery.py verify-successor-state --file "$PRE_ID"
 
           set +e
           terraform -chdir="$PLAN_WORK" plan \
@@ -135,14 +145,14 @@ jobs:
           test "$PLAN_RC" -eq 0
 
           terraform -chdir="$PLAN_WORK" show -json "$PLAN" > "$PLAN_JSON"
-          python3 scripts/phase5_slice_c_recovery.py verify-plan --file "$PLAN_JSON"
+          python3 scripts/phase5_slice_c_recovery.py verify-successor-plan --file "$PLAN_JSON"
 
           terraform -chdir="$PLAN_WORK" state pull > "$POST_STATE"
-          python3 scripts/phase5_terraform_control.py state-identity \
+          python3 scripts/phase5_slice_c_recovery.py successor-state-identity \
             --state-json "$POST_STATE" \
             --generation "$GENERATION" \
             --output "$POST_ID"
-          python3 scripts/phase5_slice_c_recovery.py verify-state --file "$POST_ID"
+          python3 scripts/phase5_slice_c_recovery.py verify-successor-state --file "$POST_ID"
           cmp "$PRE_ID" "$POST_ID"
 
           POST_META="$(python3 scripts/phase5_terraform_control.py gcs-metadata \
@@ -152,7 +162,7 @@ jobs:
             --object product/default.tflock --allow-absent)"
           test "$POST_LOCK" = "ABSENT"
 
-          python3 scripts/phase5_slice_c_recovery.py build-result \
+          python3 scripts/phase5_slice_c_recovery.py build-successor-result \
             --before "$PRE_ID" \
             --after "$POST_ID" \
             --plan-json "$PLAN_JSON" \
@@ -162,7 +172,7 @@ jobs:
             --github-boundary "$RUNNER_TEMP/recovery-github-boundary.json" \
             --private-output "$PRIVATE" \
             --public-output "$PUBLIC"
-          python3 scripts/phase5_slice_c_recovery.py upload-result \
+          python3 scripts/phase5_slice_c_recovery.py upload-successor-result \
             --control-sha "$CONTROL_SHA" \
             --file "$PRIVATE" \
             > "$RUNNER_TEMP/recovery-result-upload.json"
