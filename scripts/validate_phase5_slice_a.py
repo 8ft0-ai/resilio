@@ -12,6 +12,7 @@ WORKFLOWS={
     "phase5-acceptance-reusable.yml":"github-p5-acceptance@resilio-reference-e882d4.iam.gserviceaccount.com",
     "phase5-terraform-plan-reusable.yml":"github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com",
     "phase5-terraform-apply-reusable.yml":"github-p5-product-applier@resilio-control-e882d4.iam.gserviceaccount.com",
+    "phase5-slice-c-recovery-reusable.yml":"github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com",
 }
 PHASE4_BLOBS={
 ".github/workflows/phase4-build-reusable.yml":"0c9666dbd3d8b3aaf6b4e912a09515da4cea4ec7",
