@@ -667,9 +667,8 @@ jobs:
             )
             lines = terminal["body"].splitlines()
             terminal["body"] = "\n".join(
-                value if line.startswith(field + "=") else line
+                field + "=" + value if line.startswith(field + "=") else line
                 for line in lines
-                for value in [field + "=" + value if line.startswith(field + "=") else line]
             )
             with self.subTest(field=field), self.assertRaises(RecoveryError):
                 run_boundary(fixture)
