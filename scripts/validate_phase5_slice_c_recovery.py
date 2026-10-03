@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free validation for the inert Slice C successor recovery control candidate."""
+"""Credential-free validation for the Slice C successor recovery activation candidate."""
 from __future__ import annotations
 
 import re
@@ -16,6 +16,7 @@ CANDIDATE = ROOT / "infra/product/candidate.json"
 
 NORMAL_CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
 RECOVERY_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
+SUCCESSOR_CONTROL_SHA = "af197af2b0c2d2b5a5b949aeb330e9ddf5d07884"
 BOUNDARY = "5833629251"
 RECOVERY_DESIGN = "5963131897"
 GENERATION = "1790344068764582"
@@ -217,7 +218,7 @@ def main() -> int:
         errors.append("RECOVERY_WORKFLOW_ID_TOKEN_COUNT")
     if workflow.count('terraform -chdir="$PLAN_WORK" plan') != 1:
         errors.append("RECOVERY_WORKFLOW_PLAN_COUNT")
-    errors.extend(r2_caller_structure_errors(caller, RECOVERY_CONTROL_SHA))
+    errors.extend(r2_caller_structure_errors(caller, SUCCESSOR_CONTROL_SHA))
 
     require(
         helper,
@@ -304,7 +305,7 @@ def main() -> int:
         errors.append("RECOVERY_R2_NORMAL_CONTROL_IDENTITY_CHANGED")
     expected_recovery_ref = (
         'phase5_slice_c_recovery_workflow_ref = '
-        f'"8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{RECOVERY_CONTROL_SHA}"'
+        f'"8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{SUCCESSOR_CONTROL_SHA}"'
     )
     if authority.count(expected_recovery_ref) != 1:
         errors.append("RECOVERY_R2_CONTROL_REF_NOT_EXACT")
@@ -341,7 +342,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Phase 5 Slice C inert successor recovery control validation passed")
+    print("Phase 5 Slice C successor recovery activation validation passed")
     return 0
 
 
