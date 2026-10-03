@@ -634,13 +634,13 @@ jobs:
             r2_caller_structure_errors(mutable, control),
         )
 
-    def test_actual_r2_caller_pins_immutable_r1_control(self):
+    def test_actual_successor_caller_pins_immutable_c2_control(self):
         caller = (
             ROOT / ".github/workflows/phase5-slice-c-recovery.yml"
         ).read_text(encoding="utf-8")
         self.assertEqual(
             r2_caller_structure_errors(
-                caller, "ae4960dd8db54849e7aa3698877c877bdb6433fd"
+                caller, "af197af2b0c2d2b5a5b949aeb330e9ddf5d07884"
             ),
             [],
         )
