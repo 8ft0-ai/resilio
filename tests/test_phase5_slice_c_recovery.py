@@ -20,7 +20,6 @@ from phase5_slice_c_recovery import (
     EXPECTED_SERIAL,
     RecoveryError,
     bootstrap_apply_authority_body,
-    bootstrap_effect_review_body,
     bootstrap_terminal_record_body,
     build_result,
     claim_document,
@@ -116,6 +115,50 @@ def fresh_review_body(pr_number, head, control):
     )
 
 
+def bootstrap_review_body(
+    control,
+    activation,
+    saved_plan_sha,
+    manifest_sha,
+    state_lineage,
+    state_serial,
+):
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_PLAN_FRESH_REVIEW_V1",
+            "REVIEW_TARGET=PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_ACTIVATION_SAVED_PLAN",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"SOURCE_BOUNDARY={recovery.SOURCE_BOUNDARY_COMMENT_ID}",
+            f"RECOVERY_CONTROL_SHA={control}",
+            f"RECOVERY_ACTIVATION_MAIN={activation}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha}",
+            f"STRUCTURAL_MANIFEST_SHA256={manifest_sha}",
+            f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+            f"BOOTSTRAP_STATE_SERIAL={state_serial}",
+            "TERRAFORM_VERSION=1.15.8",
+            "PLAN_FORMAT_VERSION=1.2",
+            "PLAN_APPLYABLE=true",
+            "PLAN_COMPLETE=true",
+            "PLAN_ERRORED=false",
+            "PLAN_EFFECTS=EXACT_TWO_GETMETADATA_ADDITIONS_PLUS_ONE_RECOVERY_WIF_BINDING",
+            "OUTPUT_CHANGES=0",
+            "REVIEW_DISPOSITION=APPROVED",
+            "MATERIAL_BLOCKERS=NONE",
+            "APPLY_AUTHORITY=NOT_GRANTED",
+            "",
+            "Fresh exact-effect/security/authority review reconstructed from the exact "
+            "saved plan and structural manifest.",
+        )
+    )
+
+
+def rehash_boundary(value):
+    value = copy.deepcopy(value)
+    value.pop("governance_chain_sha256", None)
+    value["governance_chain_sha256"] = recovery.sha256(recovery.canonical(value))
+    return value
+
+
 def github_boundary_fixture():
     control = "1" * 40
     activation = "2" * 40
@@ -128,8 +171,12 @@ def github_boundary_fixture():
     bootstrap_authority_id = 305
     bootstrap_id = 306
     dispatch_id = 307
-    bootstrap_run = 401
-    bootstrap_job = 402
+
+    saved_plan_sha = "b" * 64
+    manifest_sha = "c" * 64
+    bootstrap_lineage = "ae08b2f4-f18f-204c-72aa-53e17f12eea7"
+    bootstrap_serial_before = 70
+    bootstrap_serial_after = 73
 
     review_body = fresh_review_body(r2_pr_number, reviewed_r2, control)
     review_sha = recovery.sha256(review_body.encode("utf-8"))
@@ -149,17 +196,22 @@ def github_boundary_fixture():
     )
     activation_sha = recovery.sha256(activation_body.encode("utf-8"))
 
-    bootstrap_effect_sha = "b" * 64
-    bootstrap_review_body = bootstrap_effect_review_body(
-        control, activation, bootstrap_effect_sha
+    bootstrap_review = bootstrap_review_body(
+        control,
+        activation,
+        saved_plan_sha,
+        manifest_sha,
+        bootstrap_lineage,
+        bootstrap_serial_before,
     )
-    bootstrap_review_sha = recovery.sha256(
-        bootstrap_review_body.encode("utf-8")
-    )
+    bootstrap_review_sha = recovery.sha256(bootstrap_review.encode("utf-8"))
     bootstrap_authority_body = bootstrap_apply_authority_body(
         control,
         activation,
-        bootstrap_effect_sha,
+        saved_plan_sha,
+        manifest_sha,
+        bootstrap_lineage,
+        bootstrap_serial_before,
         bootstrap_review_id,
         bootstrap_review_sha,
     )
@@ -169,13 +221,15 @@ def github_boundary_fixture():
     bootstrap_body = bootstrap_terminal_record_body(
         control,
         activation,
-        bootstrap_effect_sha,
+        saved_plan_sha,
+        manifest_sha,
+        bootstrap_lineage,
+        bootstrap_serial_before,
+        bootstrap_serial_after,
         bootstrap_review_id,
         bootstrap_review_sha,
         bootstrap_authority_id,
         bootstrap_authority_sha,
-        bootstrap_run,
-        bootstrap_job,
     )
     bootstrap_sha = recovery.sha256(bootstrap_body.encode("utf-8"))
     dispatch_body = dispatch_authority_body(
@@ -190,8 +244,8 @@ def github_boundary_fixture():
     activation_record = owner_comment(
         activation_record_id, activation_body, "2026-10-03T02:03:30Z"
     )
-    bootstrap_review = owner_comment(
-        bootstrap_review_id, bootstrap_review_body, "2026-10-03T02:04:00Z"
+    bootstrap_review_record = owner_comment(
+        bootstrap_review_id, bootstrap_review, "2026-10-03T02:04:00Z"
     )
     bootstrap_authority = owner_comment(
         bootstrap_authority_id, bootstrap_authority_body, "2026-10-03T02:05:00Z"
@@ -227,7 +281,7 @@ def github_boundary_fixture():
 
     comments = [
         activation_record,
-        bootstrap_review,
+        bootstrap_review_record,
         bootstrap_authority,
         bootstrap_record,
         dispatch,
@@ -315,25 +369,6 @@ def github_boundary_fixture():
             "2026-10-03T02:02:00Z",
             r2_pr_number,
         ),
-        f"/repos/{recovery.REPOSITORY}/actions/runs/{bootstrap_run}": {
-            "id": bootstrap_run,
-            "status": "completed",
-            "conclusion": "success",
-            "head_branch": "main",
-            "head_sha": activation,
-            "event": "workflow_dispatch",
-            "created_at": "2026-10-03T02:06:00Z",
-            "updated_at": "2026-10-03T02:07:30Z",
-            "repository": {"full_name": recovery.REPOSITORY},
-            "head_repository": {"full_name": recovery.REPOSITORY},
-        },
-        f"/repos/{recovery.REPOSITORY}/actions/jobs/{bootstrap_job}": {
-            "id": bootstrap_job,
-            "run_id": bootstrap_run,
-            "status": "completed",
-            "conclusion": "success",
-            "completed_at": "2026-10-03T02:07:20Z",
-        },
     }
     return {
         "control": control,
@@ -347,6 +382,11 @@ def github_boundary_fixture():
         "bootstrap_authority_id": bootstrap_authority_id,
         "bootstrap_id": bootstrap_id,
         "dispatch_id": dispatch_id,
+        "saved_plan_sha": saved_plan_sha,
+        "manifest_sha": manifest_sha,
+        "bootstrap_lineage": bootstrap_lineage,
+        "bootstrap_serial_before": bootstrap_serial_before,
+        "bootstrap_serial_after": bootstrap_serial_after,
         "boundary_body": boundary_body,
         "boundary_sha": recovery.sha256(boundary_body.encode("utf-8")),
         "candidate_raw": candidate_raw,
@@ -569,25 +609,126 @@ jobs:
             with self.subTest(target=target), self.assertRaises(RecoveryError):
                 run_boundary(fixture)
 
-    def test_bootstrap_terminal_record_and_successful_run_are_required(self):
+    def test_bootstrap_owner_local_saved_plan_chain_is_exact(self):
         fixture = github_boundary_fixture()
-        comments_path = (
-            f"/repos/{recovery.REPOSITORY}/issues/"
-            f"{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1"
+        result, _ = run_boundary(fixture)
+        self.assertEqual(result["bootstrap_saved_plan_sha256"], fixture["saved_plan_sha"])
+        self.assertEqual(
+            result["bootstrap_structural_manifest_sha256"], fixture["manifest_sha"]
         )
-        fixture["fixtures"][comments_path] = [
-            x
-            for x in fixture["fixtures"][comments_path]
-            if x["id"] != fixture["bootstrap_id"]
-        ]
-        with self.assertRaises(RecoveryError):
-            run_boundary(fixture)
+        self.assertEqual(
+            result["bootstrap_state_lineage"], fixture["bootstrap_lineage"]
+        )
+        self.assertEqual(
+            result["bootstrap_state_serial_before"], fixture["bootstrap_serial_before"]
+        )
+        self.assertEqual(
+            result["bootstrap_state_serial_after"], fixture["bootstrap_serial_after"]
+        )
+        self.assertFalse(
+            any(
+                "/actions/runs/401" in path or "/actions/jobs/402" in path
+                for path in fixture["fixtures"]
+            )
+        )
 
-        fixture = github_boundary_fixture()
-        run_path = f"/repos/{recovery.REPOSITORY}/actions/runs/401"
-        fixture["fixtures"][run_path]["conclusion"] = "failure"
-        with self.assertRaises(RecoveryError):
-            run_boundary(fixture)
+    def test_bootstrap_terminal_and_predecessor_records_are_required(self):
+        for key in ("bootstrap_review_id", "bootstrap_authority_id", "bootstrap_id"):
+            fixture = github_boundary_fixture()
+            comments_path = (
+                f"/repos/{recovery.REPOSITORY}/issues/"
+                f"{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1"
+            )
+            fixture["fixtures"][comments_path] = [
+                row
+                for row in fixture["fixtures"][comments_path]
+                if row["id"] != fixture[key]
+            ]
+            with self.subTest(key=key), self.assertRaises(RecoveryError):
+                run_boundary(fixture)
+
+    def test_bootstrap_saved_plan_manifest_and_state_cannot_be_replaced(self):
+        replacements = (
+            ("SAVED_PLAN_SHA256", "d" * 64),
+            ("STRUCTURAL_MANIFEST_SHA256", "e" * 64),
+            ("BOOTSTRAP_STATE_LINEAGE", "replacement-lineage"),
+            ("BOOTSTRAP_STATE_SERIAL_BEFORE", "71"),
+        )
+        for field, value in replacements:
+            fixture = github_boundary_fixture()
+            comments_path = (
+                f"/repos/{recovery.REPOSITORY}/issues/"
+                f"{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1"
+            )
+            terminal = next(
+                row
+                for row in fixture["fixtures"][comments_path]
+                if row["id"] == fixture["bootstrap_id"]
+            )
+            lines = terminal["body"].splitlines()
+            terminal["body"] = "\n".join(
+                value if line.startswith(field + "=") else line
+                for line in lines
+                for value in [field + "=" + value if line.startswith(field + "=") else line]
+            )
+            with self.subTest(field=field), self.assertRaises(RecoveryError):
+                run_boundary(fixture)
+
+    def test_bootstrap_terminal_requires_no_change_no_unrelated_effect_and_no_lock(self):
+        replacements = (
+            (
+                "BOOTSTRAP_RECONCILIATION=EXACT_NO_CHANGE",
+                "BOOTSTRAP_RECONCILIATION=CHANGES_PRESENT",
+            ),
+            (
+                "UNRELATED_BOOTSTRAP_AUTHORITY_CONSEQUENCE=NONE",
+                "UNRELATED_BOOTSTRAP_AUTHORITY_CONSEQUENCE=PRESENT",
+            ),
+            ("FINAL_BOOTSTRAP_LOCK=ABSENT", "FINAL_BOOTSTRAP_LOCK=PRESENT"),
+            (
+                "IAM_CORRECTION=EXACT_TWO_GETMETADATA_ADDITIONS_LIVE",
+                "IAM_CORRECTION=PARTIAL",
+            ),
+            (
+                "RECOVERY_WIF_BINDING=EXACT_R1_RECOVERY_REUSABLE_LIVE",
+                "RECOVERY_WIF_BINDING=MISSING",
+            ),
+        )
+        for old, new in replacements:
+            fixture = github_boundary_fixture()
+            comments_path = (
+                f"/repos/{recovery.REPOSITORY}/issues/"
+                f"{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1"
+            )
+            terminal = next(
+                row
+                for row in fixture["fixtures"][comments_path]
+                if row["id"] == fixture["bootstrap_id"]
+            )
+            terminal["body"] = terminal["body"].replace(old, new)
+            with self.subTest(old=old), self.assertRaises(RecoveryError):
+                run_boundary(fixture)
+
+    def test_bootstrap_apply_authority_must_forbid_replan_replacement_and_retry(self):
+        for token in (
+            "REPLAN=NOT_AUTHORISED",
+            "PLAN_REPLACEMENT=NOT_AUTHORISED",
+            "BLIND_RETRY_AFTER_AMBIGUOUS_OUTCOME=NOT_AUTHORISED",
+        ):
+            fixture = github_boundary_fixture()
+            comments_path = (
+                f"/repos/{recovery.REPOSITORY}/issues/"
+                f"{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1"
+            )
+            authority = next(
+                row
+                for row in fixture["fixtures"][comments_path]
+                if row["id"] == fixture["bootstrap_authority_id"]
+            )
+            authority["body"] = authority["body"].replace(token, token.replace("NOT_AUTHORISED", "AUTHORISED"))
+            with self.subTest(token=token), self.assertRaises(RecoveryError):
+                run_boundary(fixture)
+
 
     def test_current_main_must_remain_exact_activation(self):
         fixture = github_boundary_fixture()
@@ -618,6 +759,76 @@ jobs:
         with patch.object(recovery, "github", side_effect=lambda path: copy.deepcopy(paths[path])):
             with self.assertRaises(RecoveryError):
                 github_issue_comments(109)
+
+    def test_boundary_document_closes_every_authority_hash_and_id(self):
+        fixture = github_boundary_fixture()
+        boundary, _ = run_boundary(fixture)
+
+        hash_fields = (
+            "source_boundary_body_sha256",
+            "r2_fresh_review_body_sha256",
+            "r2_merge_authority_body_sha256",
+            "r2_activation_record_body_sha256",
+            "bootstrap_saved_plan_sha256",
+            "bootstrap_structural_manifest_sha256",
+            "bootstrap_fresh_review_body_sha256",
+            "bootstrap_owner_apply_authority_body_sha256",
+            "bootstrap_terminal_record_body_sha256",
+            "dispatch_authority_body_sha256",
+        )
+        for field in hash_fields:
+            hostile = copy.deepcopy(boundary)
+            hostile[field] = "not-a-sha256"
+            hostile = rehash_boundary(hostile)
+            with self.subTest(hash_field=field), self.assertRaises(RecoveryError):
+                verify_github_boundary_document(
+                    hostile, fixture["control"], fixture["activation"]
+                )
+
+        id_fields = (
+            "r2_pr",
+            "r2_fresh_review_id",
+            "r2_merge_authority_comment_id",
+            "r2_activation_record_comment_id",
+            "bootstrap_fresh_review_comment_id",
+            "bootstrap_owner_apply_authority_comment_id",
+            "bootstrap_terminal_record_comment_id",
+            "dispatch_authority_comment_id",
+        )
+        for field in id_fields:
+            hostile = copy.deepcopy(boundary)
+            hostile[field] = 0
+            hostile = rehash_boundary(hostile)
+            with self.subTest(id_field=field), self.assertRaises(RecoveryError):
+                verify_github_boundary_document(
+                    hostile, fixture["control"], fixture["activation"]
+                )
+
+    def test_boundary_document_closes_bootstrap_state_and_schema(self):
+        fixture = github_boundary_fixture()
+        boundary, _ = run_boundary(fixture)
+
+        for field, value in (
+            ("bootstrap_state_lineage", ""),
+            ("bootstrap_state_serial_before", -1),
+            ("bootstrap_state_serial_after", fixture["bootstrap_serial_before"] - 1),
+        ):
+            hostile = copy.deepcopy(boundary)
+            hostile[field] = value
+            hostile = rehash_boundary(hostile)
+            with self.subTest(field=field), self.assertRaises(RecoveryError):
+                verify_github_boundary_document(
+                    hostile, fixture["control"], fixture["activation"]
+                )
+
+        hostile = copy.deepcopy(boundary)
+        hostile["unexpected"] = True
+        hostile = rehash_boundary(hostile)
+        with self.assertRaises(RecoveryError):
+            verify_github_boundary_document(
+                hostile, fixture["control"], fixture["activation"]
+            )
+
 
     def test_immutable_claim_and_result_snapshot_governance_chain(self):
         fixture = github_boundary_fixture()
