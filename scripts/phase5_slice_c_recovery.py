@@ -1092,15 +1092,6 @@ def verify_github_boundary(
     bootstrap_record = validate_bootstrap_terminal_record(
         comments, control_sha, activation_sha, activation_record["created_at"]
     )
-    bootstrap_run = github(
-        f"/repos/{REPOSITORY}/actions/runs/{bootstrap_record['apply_run']}"
-    )
-    bootstrap_job = github(
-        f"/repos/{REPOSITORY}/actions/jobs/{bootstrap_record['apply_job']}"
-    )
-    validate_bootstrap_apply_run(
-        bootstrap_run, bootstrap_job, bootstrap_record, activation_sha
-    )
 
     dispatch = validate_dispatch_authority(
         comments,
@@ -1118,7 +1109,7 @@ def verify_github_boundary(
     Path(candidate_output).write_bytes(canonical(active) + b"\n")
 
     document = {
-        "contract": "resilio-phase5-slice-c-recovery-github-boundary/v1",
+        "contract": "resilio-phase5-slice-c-recovery-github-boundary/v2",
         "governing_issue": GOVERNING_ISSUE,
         "source_boundary_comment_id": SOURCE_BOUNDARY_COMMENT_ID,
         "source_boundary_body_sha256": boundary_result["body_sha256"],
@@ -1142,6 +1133,13 @@ def verify_github_boundary(
         ],
         "r2_activation_record_comment_id": activation_record["comment_id"],
         "r2_activation_record_body_sha256": activation_record["body_sha256"],
+        "bootstrap_saved_plan_sha256": bootstrap_record["saved_plan_sha256"],
+        "bootstrap_structural_manifest_sha256": bootstrap_record[
+            "structural_manifest_sha256"
+        ],
+        "bootstrap_state_lineage": bootstrap_record["state_lineage"],
+        "bootstrap_state_serial_before": bootstrap_record["state_serial_before"],
+        "bootstrap_state_serial_after": bootstrap_record["state_serial_after"],
         "bootstrap_fresh_review_comment_id": bootstrap_record["review_comment_id"],
         "bootstrap_fresh_review_body_sha256": bootstrap_record["review_body_sha256"],
         "bootstrap_owner_apply_authority_comment_id": bootstrap_record[
@@ -1152,11 +1150,6 @@ def verify_github_boundary(
         ],
         "bootstrap_terminal_record_comment_id": bootstrap_record["comment_id"],
         "bootstrap_terminal_record_body_sha256": bootstrap_record["body_sha256"],
-        "bootstrap_reviewed_effect_sha256": bootstrap_record[
-            "reviewed_effect_sha256"
-        ],
-        "bootstrap_apply_run": bootstrap_record["apply_run"],
-        "bootstrap_apply_job": bootstrap_record["apply_job"],
         "dispatch_authority_comment_id": dispatch["comment_id"],
         "dispatch_authority_body_sha256": dispatch["body_sha256"],
     }
@@ -1169,7 +1162,7 @@ def verify_github_boundary_document(
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_INVALID")
-    expected_keys = {
+    expected_keys = (
         "contract",
         "governing_issue",
         "source_boundary_comment_id",
@@ -1190,24 +1183,26 @@ def verify_github_boundary_document(
         "r2_merge_authority_body_sha256",
         "r2_activation_record_comment_id",
         "r2_activation_record_body_sha256",
+        "bootstrap_saved_plan_sha256",
+        "bootstrap_structural_manifest_sha256",
+        "bootstrap_state_lineage",
+        "bootstrap_state_serial_before",
+        "bootstrap_state_serial_after",
         "bootstrap_fresh_review_comment_id",
         "bootstrap_fresh_review_body_sha256",
         "bootstrap_owner_apply_authority_comment_id",
         "bootstrap_owner_apply_authority_body_sha256",
         "bootstrap_terminal_record_comment_id",
-        "bootstrap_fresh_review_body_sha256",
-        "bootstrap_owner_apply_authority_body_sha256",
         "bootstrap_terminal_record_body_sha256",
-        "bootstrap_reviewed_effect_sha256",
-        "bootstrap_apply_run",
-        "bootstrap_apply_job",
         "dispatch_authority_comment_id",
         "dispatch_authority_body_sha256",
         "governance_chain_sha256",
-    }
-    if set(value) != expected_keys:
+    )
+    if len(expected_keys) != len(set(expected_keys)):
+        raise RecoveryError("GITHUB_BOUNDARY_SCHEMA_DUPLICATE_KEY")
+    if len(value) != len(expected_keys) or set(value) != set(expected_keys):
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_FIELDS_INVALID")
-    if value["contract"] != "resilio-phase5-slice-c-recovery-github-boundary/v1":
+    if value["contract"] != "resilio-phase5-slice-c-recovery-github-boundary/v2":
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_CONTRACT_INVALID")
     if value["governing_issue"] != GOVERNING_ISSUE:
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_ISSUE_INVALID")
@@ -1215,23 +1210,30 @@ def verify_github_boundary_document(
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_SOURCE_INVALID")
     if value["control_sha"] != control_sha or value["activation_sha"] != activation_sha:
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_CONTROL_INVALID")
-    for key in (
+
+    hash_keys = (
         "source_boundary_body_sha256",
         "r2_fresh_review_body_sha256",
         "r2_merge_authority_body_sha256",
         "r2_activation_record_body_sha256",
+        "bootstrap_saved_plan_sha256",
+        "bootstrap_structural_manifest_sha256",
+        "bootstrap_fresh_review_body_sha256",
+        "bootstrap_owner_apply_authority_body_sha256",
         "bootstrap_terminal_record_body_sha256",
-        "bootstrap_reviewed_effect_sha256",
         "dispatch_authority_body_sha256",
         "governance_chain_sha256",
-    ):
+    )
+    for key in hash_keys:
         if not HEX64.fullmatch(str(value.get(key) or "")):
             raise RecoveryError(f"GITHUB_BOUNDARY_DOCUMENT_HASH_INVALID:{key}")
+
     chain_sha = value["governance_chain_sha256"]
     unhashed = dict(value)
     del unhashed["governance_chain_sha256"]
     if sha256(canonical(unhashed)) != chain_sha:
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_HASH_MISMATCH")
+
     if (
         value["slice_c_pr"] != SLICE_C_PR
         or value["slice_c_reviewed_head"] != REVIEWED_HEAD
@@ -1241,7 +1243,8 @@ def verify_github_boundary_document(
         or value["failed_apply_job"] != FAILED_APPLY_JOB
     ):
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_INCIDENT_MISMATCH")
-    for key in (
+
+    id_keys = (
         "r2_pr",
         "r2_fresh_review_id",
         "r2_merge_authority_comment_id",
@@ -1249,14 +1252,28 @@ def verify_github_boundary_document(
         "bootstrap_fresh_review_comment_id",
         "bootstrap_owner_apply_authority_comment_id",
         "bootstrap_terminal_record_comment_id",
-        "bootstrap_apply_run",
-        "bootstrap_apply_job",
         "dispatch_authority_comment_id",
-    ):
-        if not isinstance(value.get(key), int) or value[key] <= 0:
+    )
+    for key in id_keys:
+        if not isinstance(value.get(key), int) or isinstance(value.get(key), bool) or value[key] <= 0:
             raise RecoveryError(f"GITHUB_BOUNDARY_DOCUMENT_ID_INVALID:{key}")
+
     if not FULL_SHA.fullmatch(str(value.get("r2_reviewed_head") or "")):
         raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_R2_HEAD_INVALID")
+    lineage = value.get("bootstrap_state_lineage")
+    if not isinstance(lineage, str) or not lineage or len(lineage) > 128:
+        raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_BOOTSTRAP_LINEAGE_INVALID")
+    serial_before = value.get("bootstrap_state_serial_before")
+    serial_after = value.get("bootstrap_state_serial_after")
+    if (
+        not isinstance(serial_before, int)
+        or isinstance(serial_before, bool)
+        or serial_before < 0
+        or not isinstance(serial_after, int)
+        or isinstance(serial_after, bool)
+        or serial_after < serial_before
+    ):
+        raise RecoveryError("GITHUB_BOUNDARY_DOCUMENT_BOOTSTRAP_SERIAL_INVALID")
     return value
 
 def verify_state_identity(value: Any) -> dict[str, Any]:
