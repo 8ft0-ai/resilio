@@ -1,13 +1,13 @@
 locals {
   phase5_control_sha = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
 
-  phase5_build_workflow_ref         = "8ft0-ai/resilio/.github/workflows/phase5-build-reusable.yml@${local.phase5_control_sha}"
-  phase5_evidence_workflow_ref      = "8ft0-ai/resilio/.github/workflows/phase5-evidence-reusable.yml@${local.phase5_control_sha}"
-  phase5_deploy_workflow_ref        = "8ft0-ai/resilio/.github/workflows/phase5-deploy-reusable.yml@${local.phase5_control_sha}"
-  phase5_verify_workflow_ref        = "8ft0-ai/resilio/.github/workflows/phase5-verify-reusable.yml@${local.phase5_control_sha}"
-  phase5_acceptance_workflow_ref    = "8ft0-ai/resilio/.github/workflows/phase5-acceptance-reusable.yml@${local.phase5_control_sha}"
-  phase5_product_plan_workflow_ref  = "8ft0-ai/resilio/.github/workflows/phase5-terraform-plan-reusable.yml@${local.phase5_control_sha}"
-  phase5_product_apply_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-terraform-apply-reusable.yml@${local.phase5_control_sha}"
+  phase5_build_workflow_ref            = "8ft0-ai/resilio/.github/workflows/phase5-build-reusable.yml@${local.phase5_control_sha}"
+  phase5_evidence_workflow_ref         = "8ft0-ai/resilio/.github/workflows/phase5-evidence-reusable.yml@${local.phase5_control_sha}"
+  phase5_deploy_workflow_ref           = "8ft0-ai/resilio/.github/workflows/phase5-deploy-reusable.yml@${local.phase5_control_sha}"
+  phase5_verify_workflow_ref           = "8ft0-ai/resilio/.github/workflows/phase5-verify-reusable.yml@${local.phase5_control_sha}"
+  phase5_acceptance_workflow_ref       = "8ft0-ai/resilio/.github/workflows/phase5-acceptance-reusable.yml@${local.phase5_control_sha}"
+  phase5_product_plan_workflow_ref     = "8ft0-ai/resilio/.github/workflows/phase5-terraform-plan-reusable.yml@${local.phase5_control_sha}"
+  phase5_product_apply_workflow_ref    = "8ft0-ai/resilio/.github/workflows/phase5-terraform-apply-reusable.yml@${local.phase5_control_sha}"
   phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@ae4960dd8db54849e7aa3698877c877bdb6433fd"
 
   phase5_region                    = "us-central1"
