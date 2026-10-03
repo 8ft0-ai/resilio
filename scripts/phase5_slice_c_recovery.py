@@ -458,122 +458,86 @@ def validate_r2_activation_transaction(
     }
 
 
-def bootstrap_effect_review_body(
-    control_sha: str, activation_sha: str, reviewed_effect_sha256: str
-) -> str:
-    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
-        raise RecoveryError("BOOTSTRAP_REVIEW_SHA_INVALID")
-    if not HEX64.fullmatch(reviewed_effect_sha256):
-        raise RecoveryError("BOOTSTRAP_EFFECT_HASH_INVALID")
-    return "\n".join(
-        (
-            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_EFFECT_REVIEW_V1",
-            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
-            f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
-            f"RECOVERY_CONTROL_SHA={control_sha}",
-            f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
-            f"BOOTSTRAP_REVIEWED_EFFECT_SHA256={reviewed_effect_sha256}",
-            "MATERIAL_EFFECT=EXACT_TWO_GETMETADATA_ADDITIONS_PLUS_ONE_RECOVERY_WIF_BINDING",
-            "DISPOSITION=APPROVED",
-            "MATERIAL_BLOCKERS=NONE",
-        )
-    )
+def _nonnegative_int(value: str, label: str) -> int:
+    if not re.fullmatch(r"(?:0|[1-9][0-9]{0,19})", str(value or "")):
+        raise RecoveryError(f"{label}_INVALID")
+    return int(value)
 
 
-def bootstrap_apply_authority_body(
-    control_sha: str,
-    activation_sha: str,
-    reviewed_effect_sha256: str,
-    review_comment_id: int,
-    review_body_sha256: str,
-) -> str:
-    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
-        raise RecoveryError("BOOTSTRAP_AUTHORITY_SHA_INVALID")
-    if not HEX64.fullmatch(reviewed_effect_sha256) or not HEX64.fullmatch(
-        review_body_sha256
+def _bootstrap_review_fields(body: str) -> dict[str, str]:
+    lines = str(body or "").splitlines()
+    if not lines or lines[0].strip() != (
+        "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_PLAN_FRESH_REVIEW_V1"
     ):
-        raise RecoveryError("BOOTSTRAP_AUTHORITY_HASH_INVALID")
-    if review_comment_id <= 0:
-        raise RecoveryError("BOOTSTRAP_AUTHORITY_REVIEW_ID_INVALID")
-    return "\n".join(
-        (
-            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_APPLY_AUTHORITY_V1",
-            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
-            f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
-            f"RECOVERY_CONTROL_SHA={control_sha}",
-            f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
-            f"BOOTSTRAP_REVIEWED_EFFECT_SHA256={reviewed_effect_sha256}",
-            f"BOOTSTRAP_FRESH_REVIEW_COMMENT_ID={review_comment_id}",
-            f"BOOTSTRAP_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
-            "AUTHORITY=APPLY_EXACT_REVIEWED_SAVED_BOOTSTRAP_PLAN_ONCE",
-        )
+        raise RecoveryError("BOOTSTRAP_FRESH_REVIEW_HEADER_INVALID")
+    wanted = (
+        "REVIEW_TARGET",
+        "GOVERNING_ISSUE",
+        "SOURCE_BOUNDARY",
+        "RECOVERY_CONTROL_SHA",
+        "RECOVERY_ACTIVATION_MAIN",
+        "SAVED_PLAN_SHA256",
+        "STRUCTURAL_MANIFEST_SHA256",
+        "BOOTSTRAP_STATE_LINEAGE",
+        "BOOTSTRAP_STATE_SERIAL",
+        "TERRAFORM_VERSION",
+        "PLAN_FORMAT_VERSION",
+        "PLAN_APPLYABLE",
+        "PLAN_COMPLETE",
+        "PLAN_ERRORED",
+        "PLAN_EFFECTS",
+        "OUTPUT_CHANGES",
+        "REVIEW_DISPOSITION",
+        "MATERIAL_BLOCKERS",
+        "APPLY_AUTHORITY",
     )
-
-
-def bootstrap_terminal_record_body(
-    control_sha: str,
-    activation_sha: str,
-    reviewed_effect_sha256: str,
-    review_comment_id: int,
-    review_body_sha256: str,
-    apply_authority_comment_id: int,
-    apply_authority_body_sha256: str,
-    apply_run: int,
-    apply_job: int,
-) -> str:
-    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
-        raise RecoveryError("BOOTSTRAP_TERMINAL_SHA_INVALID")
-    for value, label in (
-        (reviewed_effect_sha256, "BOOTSTRAP_EFFECT_HASH"),
-        (review_body_sha256, "BOOTSTRAP_REVIEW_HASH"),
-        (apply_authority_body_sha256, "BOOTSTRAP_AUTHORITY_HASH"),
-    ):
-        if not HEX64.fullmatch(value):
-            raise RecoveryError(f"{label}_INVALID")
-    for value, label in (
-        (review_comment_id, "BOOTSTRAP_REVIEW_ID"),
-        (apply_authority_comment_id, "BOOTSTRAP_AUTHORITY_ID"),
-        (apply_run, "BOOTSTRAP_RUN_ID"),
-        (apply_job, "BOOTSTRAP_JOB_ID"),
-    ):
-        if value <= 0:
-            raise RecoveryError(f"{label}_INVALID")
-    return "\n".join(
-        (
-            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V2",
-            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
-            f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
-            f"RECOVERY_CONTROL_SHA={control_sha}",
-            f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
-            f"BOOTSTRAP_REVIEWED_EFFECT_SHA256={reviewed_effect_sha256}",
-            f"BOOTSTRAP_FRESH_REVIEW_COMMENT_ID={review_comment_id}",
-            f"BOOTSTRAP_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
-            f"BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID={apply_authority_comment_id}",
-            f"BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256={apply_authority_body_sha256}",
-            f"BOOTSTRAP_APPLY_RUN={apply_run}",
-            f"BOOTSTRAP_APPLY_JOB={apply_job}",
-            "IAM_CORRECTION=EXACT_TWO_GETMETADATA_ADDITIONS_LIVE",
-            "RECOVERY_WIF_BINDING=EXACT_R1_RECOVERY_REUSABLE_LIVE",
-            "BOOTSTRAP_RECONCILIATION=EXACT_NO_CHANGE",
-            "STATUS=BOOTSTRAP_ACTIVATION_TERMINAL",
-        )
-    )
+    values: dict[str, list[str]] = {name: [] for name in wanted}
+    for line in lines[1:]:
+        for name in wanted:
+            prefix = name + "="
+            if line.startswith(prefix):
+                values[name].append(line[len(prefix):].strip())
+    if any(len(values[name]) != 1 for name in wanted):
+        raise RecoveryError("BOOTSTRAP_FRESH_REVIEW_FIELDS_NOT_EXACT")
+    return {name: values[name][0] for name in wanted}
 
 
 def validate_bootstrap_effect_review(
     comment: Any,
     control_sha: str,
     activation_sha: str,
-    reviewed_effect_sha256: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    state_lineage: str,
+    state_serial: int,
 ) -> dict[str, Any]:
     created, body_sha = _require_unedited_owner_comment(
         comment, GOVERNING_ISSUE, "BOOTSTRAP_EFFECT_REVIEW"
     )
-    expected = bootstrap_effect_review_body(
-        control_sha, activation_sha, reviewed_effect_sha256
-    )
-    if str(comment.get("body") or "").strip() != expected:
-        raise RecoveryError("BOOTSTRAP_EFFECT_REVIEW_BODY_MISMATCH")
+    fields = _bootstrap_review_fields(str(comment.get("body") or ""))
+    expected = {
+        "REVIEW_TARGET": "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_ACTIVATION_SAVED_PLAN",
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "SOURCE_BOUNDARY": str(SOURCE_BOUNDARY_COMMENT_ID),
+        "RECOVERY_CONTROL_SHA": control_sha,
+        "RECOVERY_ACTIVATION_MAIN": activation_sha,
+        "SAVED_PLAN_SHA256": saved_plan_sha256,
+        "STRUCTURAL_MANIFEST_SHA256": structural_manifest_sha256,
+        "BOOTSTRAP_STATE_LINEAGE": state_lineage,
+        "BOOTSTRAP_STATE_SERIAL": str(state_serial),
+        "TERRAFORM_VERSION": "1.15.8",
+        "PLAN_FORMAT_VERSION": "1.2",
+        "PLAN_APPLYABLE": "true",
+        "PLAN_COMPLETE": "true",
+        "PLAN_ERRORED": "false",
+        "PLAN_EFFECTS": "EXACT_TWO_GETMETADATA_ADDITIONS_PLUS_ONE_RECOVERY_WIF_BINDING",
+        "OUTPUT_CHANGES": "0",
+        "REVIEW_DISPOSITION": "APPROVED",
+        "MATERIAL_BLOCKERS": "NONE",
+        "APPLY_AUTHORITY": "NOT_GRANTED",
+    }
+    if fields != expected:
+        raise RecoveryError("BOOTSTRAP_FRESH_REVIEW_CONTRACT_MISMATCH")
     return {
         "comment_id": int(comment["id"]),
         "created_at": created,
@@ -581,11 +545,59 @@ def validate_bootstrap_effect_review(
     }
 
 
+def bootstrap_apply_authority_body(
+    control_sha: str,
+    activation_sha: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    state_lineage: str,
+    state_serial: int,
+    review_comment_id: int,
+    review_body_sha256: str,
+) -> str:
+    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
+        raise RecoveryError("BOOTSTRAP_AUTHORITY_SHA_INVALID")
+    for value, label in (
+        (saved_plan_sha256, "BOOTSTRAP_SAVED_PLAN_SHA256"),
+        (structural_manifest_sha256, "BOOTSTRAP_STRUCTURAL_MANIFEST_SHA256"),
+        (review_body_sha256, "BOOTSTRAP_REVIEW_BODY_SHA256"),
+    ):
+        if not HEX64.fullmatch(value):
+            raise RecoveryError(f"{label}_INVALID")
+    if not state_lineage or len(state_lineage) > 128:
+        raise RecoveryError("BOOTSTRAP_STATE_LINEAGE_INVALID")
+    if state_serial < 0 or review_comment_id <= 0:
+        raise RecoveryError("BOOTSTRAP_AUTHORITY_IDENTITY_INVALID")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_APPLY_AUTHORITY_V2",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
+            f"RECOVERY_CONTROL_SHA={control_sha}",
+            f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha256}",
+            f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
+            f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+            f"BOOTSTRAP_STATE_SERIAL={state_serial}",
+            f"BOOTSTRAP_FRESH_REVIEW_COMMENT_ID={review_comment_id}",
+            f"BOOTSTRAP_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            "AUTHORITY=APPLY_THIS_EXACT_REVIEWED_SAVED_BOOTSTRAP_PLAN_ONCE",
+            "REPLAN=NOT_AUTHORISED",
+            "PLAN_REPLACEMENT=NOT_AUTHORISED",
+            "BLIND_RETRY_AFTER_AMBIGUOUS_OUTCOME=NOT_AUTHORISED",
+            "RECOVERY_DISPATCH_AUTHORITY=NOT_GRANTED",
+        )
+    )
+
+
 def validate_bootstrap_apply_authority(
     comment: Any,
     control_sha: str,
     activation_sha: str,
-    reviewed_effect_sha256: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    state_lineage: str,
+    state_serial: int,
     review: dict[str, Any],
 ) -> dict[str, Any]:
     created, body_sha = _require_unedited_owner_comment(
@@ -594,7 +606,10 @@ def validate_bootstrap_apply_authority(
     expected = bootstrap_apply_authority_body(
         control_sha,
         activation_sha,
-        reviewed_effect_sha256,
+        saved_plan_sha256,
+        structural_manifest_sha256,
+        state_lineage,
+        state_serial,
         review["comment_id"],
         review["body_sha256"],
     )
@@ -609,6 +624,64 @@ def validate_bootstrap_apply_authority(
     }
 
 
+def bootstrap_terminal_record_body(
+    control_sha: str,
+    activation_sha: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    state_lineage: str,
+    state_serial_before: int,
+    state_serial_after: int,
+    review_comment_id: int,
+    review_body_sha256: str,
+    apply_authority_comment_id: int,
+    apply_authority_body_sha256: str,
+) -> str:
+    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
+        raise RecoveryError("BOOTSTRAP_TERMINAL_SHA_INVALID")
+    for value, label in (
+        (saved_plan_sha256, "BOOTSTRAP_SAVED_PLAN_SHA256"),
+        (structural_manifest_sha256, "BOOTSTRAP_STRUCTURAL_MANIFEST_SHA256"),
+        (review_body_sha256, "BOOTSTRAP_REVIEW_BODY_SHA256"),
+        (apply_authority_body_sha256, "BOOTSTRAP_AUTHORITY_BODY_SHA256"),
+    ):
+        if not HEX64.fullmatch(value):
+            raise RecoveryError(f"{label}_INVALID")
+    if not state_lineage or len(state_lineage) > 128:
+        raise RecoveryError("BOOTSTRAP_STATE_LINEAGE_INVALID")
+    if (
+        state_serial_before < 0
+        or state_serial_after < state_serial_before
+        or review_comment_id <= 0
+        or apply_authority_comment_id <= 0
+    ):
+        raise RecoveryError("BOOTSTRAP_TERMINAL_IDENTITY_INVALID")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V3",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
+            f"RECOVERY_CONTROL_SHA={control_sha}",
+            f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha256}",
+            f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
+            f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+            f"BOOTSTRAP_STATE_SERIAL_BEFORE={state_serial_before}",
+            f"BOOTSTRAP_STATE_SERIAL_AFTER={state_serial_after}",
+            f"BOOTSTRAP_FRESH_REVIEW_COMMENT_ID={review_comment_id}",
+            f"BOOTSTRAP_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            f"BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID={apply_authority_comment_id}",
+            f"BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256={apply_authority_body_sha256}",
+            "IAM_CORRECTION=EXACT_TWO_GETMETADATA_ADDITIONS_LIVE",
+            "RECOVERY_WIF_BINDING=EXACT_R1_RECOVERY_REUSABLE_LIVE",
+            "UNRELATED_BOOTSTRAP_AUTHORITY_CONSEQUENCE=NONE",
+            "BOOTSTRAP_RECONCILIATION=EXACT_NO_CHANGE",
+            "FINAL_BOOTSTRAP_LOCK=ABSENT",
+            "TERMINAL_DISPOSITION=RECONCILED",
+        )
+    )
+
+
 def validate_bootstrap_terminal_record(
     comments: Any,
     control_sha: str,
@@ -617,7 +690,7 @@ def validate_bootstrap_terminal_record(
 ) -> dict[str, Any]:
     if not isinstance(comments, list):
         raise RecoveryError("BOOTSTRAP_TERMINAL_COMMENTS_INVALID")
-    header = "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V2"
+    header = "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V3"
     candidates = [
         comment
         for comment in comments
@@ -632,8 +705,6 @@ def validate_bootstrap_terminal_record(
     created, body_sha = _require_unedited_owner_comment(
         comment, GOVERNING_ISSUE, "BOOTSTRAP_TERMINAL"
     )
-    if created < activation_created_at:
-        raise RecoveryError("BOOTSTRAP_TERMINAL_PRECEDES_R2_ACTIVATION")
     fields = _record_fields(
         str(comment.get("body") or ""),
         header,
@@ -642,17 +713,21 @@ def validate_bootstrap_terminal_record(
             "SOURCE_BOUNDARY",
             "RECOVERY_CONTROL_SHA",
             "RECOVERY_ACTIVATION_MAIN",
-            "BOOTSTRAP_REVIEWED_EFFECT_SHA256",
+            "SAVED_PLAN_SHA256",
+            "STRUCTURAL_MANIFEST_SHA256",
+            "BOOTSTRAP_STATE_LINEAGE",
+            "BOOTSTRAP_STATE_SERIAL_BEFORE",
+            "BOOTSTRAP_STATE_SERIAL_AFTER",
             "BOOTSTRAP_FRESH_REVIEW_COMMENT_ID",
             "BOOTSTRAP_FRESH_REVIEW_BODY_SHA256",
             "BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID",
             "BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256",
-            "BOOTSTRAP_APPLY_RUN",
-            "BOOTSTRAP_APPLY_JOB",
             "IAM_CORRECTION",
             "RECOVERY_WIF_BINDING",
+            "UNRELATED_BOOTSTRAP_AUTHORITY_CONSEQUENCE",
             "BOOTSTRAP_RECONCILIATION",
-            "STATUS",
+            "FINAL_BOOTSTRAP_LOCK",
+            "TERMINAL_DISPOSITION",
         ),
     )
     expected = {
@@ -662,20 +737,35 @@ def validate_bootstrap_terminal_record(
         "RECOVERY_ACTIVATION_MAIN": activation_sha,
         "IAM_CORRECTION": "EXACT_TWO_GETMETADATA_ADDITIONS_LIVE",
         "RECOVERY_WIF_BINDING": "EXACT_R1_RECOVERY_REUSABLE_LIVE",
+        "UNRELATED_BOOTSTRAP_AUTHORITY_CONSEQUENCE": "NONE",
         "BOOTSTRAP_RECONCILIATION": "EXACT_NO_CHANGE",
-        "STATUS": "BOOTSTRAP_ACTIVATION_TERMINAL",
+        "FINAL_BOOTSTRAP_LOCK": "ABSENT",
+        "TERMINAL_DISPOSITION": "RECONCILED",
     }
     for name, value in expected.items():
         if fields[name] != value:
             raise RecoveryError(f"BOOTSTRAP_TERMINAL_FIELD_MISMATCH:{name}")
     for name in (
-        "BOOTSTRAP_REVIEWED_EFFECT_SHA256",
+        "SAVED_PLAN_SHA256",
+        "STRUCTURAL_MANIFEST_SHA256",
         "BOOTSTRAP_FRESH_REVIEW_BODY_SHA256",
         "BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256",
     ):
         if not HEX64.fullmatch(fields[name]):
             raise RecoveryError(f"BOOTSTRAP_TERMINAL_HASH_INVALID:{name}")
-
+    lineage = fields["BOOTSTRAP_STATE_LINEAGE"]
+    if not lineage or len(lineage) > 128:
+        raise RecoveryError("BOOTSTRAP_STATE_LINEAGE_INVALID")
+    serial_before = _nonnegative_int(
+        fields["BOOTSTRAP_STATE_SERIAL_BEFORE"],
+        "BOOTSTRAP_STATE_SERIAL_BEFORE",
+    )
+    serial_after = _nonnegative_int(
+        fields["BOOTSTRAP_STATE_SERIAL_AFTER"],
+        "BOOTSTRAP_STATE_SERIAL_AFTER",
+    )
+    if serial_after < serial_before:
+        raise RecoveryError("BOOTSTRAP_STATE_SERIAL_REGRESSED")
     review_id = _positive_int(
         fields["BOOTSTRAP_FRESH_REVIEW_COMMENT_ID"],
         "BOOTSTRAP_FRESH_REVIEW_COMMENT_ID",
@@ -684,12 +774,17 @@ def validate_bootstrap_terminal_record(
         fields["BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID"],
         "BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID",
     )
-    by_id = {comment.get("id"): comment for comment in comments if isinstance(comment, dict)}
+    by_id = {
+        row.get("id"): row for row in comments if isinstance(row, dict)
+    }
     review = validate_bootstrap_effect_review(
         by_id.get(review_id),
         control_sha,
         activation_sha,
-        fields["BOOTSTRAP_REVIEWED_EFFECT_SHA256"],
+        fields["SAVED_PLAN_SHA256"],
+        fields["STRUCTURAL_MANIFEST_SHA256"],
+        lineage,
+        serial_before,
     )
     if review["body_sha256"] != fields["BOOTSTRAP_FRESH_REVIEW_BODY_SHA256"]:
         raise RecoveryError("BOOTSTRAP_EFFECT_REVIEW_HASH_MISMATCH")
@@ -697,66 +792,37 @@ def validate_bootstrap_terminal_record(
         by_id.get(authority_id),
         control_sha,
         activation_sha,
-        fields["BOOTSTRAP_REVIEWED_EFFECT_SHA256"],
+        fields["SAVED_PLAN_SHA256"],
+        fields["STRUCTURAL_MANIFEST_SHA256"],
+        lineage,
+        serial_before,
         review,
     )
     if authority["body_sha256"] != fields[
         "BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256"
     ]:
         raise RecoveryError("BOOTSTRAP_APPLY_AUTHORITY_HASH_MISMATCH")
-    if review["created_at"] < activation_created_at:
-        raise RecoveryError("BOOTSTRAP_EFFECT_REVIEW_PRECEDES_R2_ACTIVATION")
-    if created < authority["created_at"]:
-        raise RecoveryError("BOOTSTRAP_TERMINAL_PRECEDES_APPLY_AUTHORITY")
+    if not (
+        activation_created_at <= review["created_at"]
+        <= authority["created_at"]
+        <= created
+    ):
+        raise RecoveryError("BOOTSTRAP_TRANSACTION_TIMELINE_INVALID")
     return {
         "comment_id": int(comment["id"]),
         "created_at": created,
         "body_sha256": body_sha,
-        "reviewed_effect_sha256": fields["BOOTSTRAP_REVIEWED_EFFECT_SHA256"],
+        "saved_plan_sha256": fields["SAVED_PLAN_SHA256"],
+        "structural_manifest_sha256": fields["STRUCTURAL_MANIFEST_SHA256"],
+        "state_lineage": lineage,
+        "state_serial_before": serial_before,
+        "state_serial_after": serial_after,
         "review_comment_id": review["comment_id"],
         "review_body_sha256": review["body_sha256"],
         "apply_authority_comment_id": authority["comment_id"],
         "apply_authority_body_sha256": authority["body_sha256"],
-        "apply_authority_created_at": authority["created_at"],
-        "apply_run": _positive_int(fields["BOOTSTRAP_APPLY_RUN"], "BOOTSTRAP_APPLY_RUN"),
-        "apply_job": _positive_int(fields["BOOTSTRAP_APPLY_JOB"], "BOOTSTRAP_APPLY_JOB"),
     }
 
-
-def validate_bootstrap_apply_run(
-    run: Any, job: Any, record: dict[str, Any], activation_sha: str
-) -> None:
-    if not isinstance(run, dict) or run.get("id") != record["apply_run"]:
-        raise RecoveryError("BOOTSTRAP_APPLY_RUN_ID_MISMATCH")
-    if (
-        run.get("status") != "completed"
-        or run.get("conclusion") != "success"
-        or run.get("head_branch") != DEFAULT_BRANCH
-        or run.get("head_sha") != activation_sha
-        or run.get("event") != "workflow_dispatch"
-    ):
-        raise RecoveryError("BOOTSTRAP_APPLY_RUN_STATE_MISMATCH")
-    repository = run.get("repository") or {}
-    head_repository = run.get("head_repository") or {}
-    if repository.get("full_name") != REPOSITORY or head_repository.get("full_name") != REPOSITORY:
-        raise RecoveryError("BOOTSTRAP_APPLY_RUN_REPOSITORY_MISMATCH")
-    run_created = _timestamp(run.get("created_at"), "BOOTSTRAP_APPLY_RUN_CREATED")
-    run_completed = _timestamp(run.get("updated_at"), "BOOTSTRAP_APPLY_RUN_UPDATED")
-    if run_created < record["apply_authority_created_at"]:
-        raise RecoveryError("BOOTSTRAP_APPLY_RUN_PRECEDES_AUTHORITY")
-    if run_completed > record["created_at"]:
-        raise RecoveryError("BOOTSTRAP_TERMINAL_PRECEDES_APPLY_RUN_COMPLETION")
-    if not isinstance(job, dict) or job.get("id") != record["apply_job"]:
-        raise RecoveryError("BOOTSTRAP_APPLY_JOB_ID_MISMATCH")
-    if (
-        job.get("run_id") != record["apply_run"]
-        or job.get("status") != "completed"
-        or job.get("conclusion") != "success"
-    ):
-        raise RecoveryError("BOOTSTRAP_APPLY_JOB_STATE_MISMATCH")
-    job_completed = _timestamp(job.get("completed_at"), "BOOTSTRAP_APPLY_JOB_COMPLETED")
-    if job_completed > record["created_at"]:
-        raise RecoveryError("BOOTSTRAP_TERMINAL_PRECEDES_APPLY_JOB_COMPLETION")
 
 def dispatch_authority_body(
     control_sha: str,
