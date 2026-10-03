@@ -458,27 +458,98 @@ def validate_r2_activation_transaction(
     }
 
 
-def bootstrap_terminal_record_body(
-    control_sha: str,
-    activation_sha: str,
-    reviewed_effect_sha256: str,
-    apply_run: int,
-    apply_job: int,
+def bootstrap_effect_review_body(
+    control_sha: str, activation_sha: str, reviewed_effect_sha256: str
 ) -> str:
     if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
-        raise RecoveryError("BOOTSTRAP_TERMINAL_SHA_INVALID")
+        raise RecoveryError("BOOTSTRAP_REVIEW_SHA_INVALID")
     if not HEX64.fullmatch(reviewed_effect_sha256):
         raise RecoveryError("BOOTSTRAP_EFFECT_HASH_INVALID")
-    if apply_run <= 0 or apply_job <= 0:
-        raise RecoveryError("BOOTSTRAP_RUN_ID_INVALID")
     return "\n".join(
         (
-            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V1",
+            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_EFFECT_REVIEW_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
             f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
             f"RECOVERY_CONTROL_SHA={control_sha}",
             f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
             f"BOOTSTRAP_REVIEWED_EFFECT_SHA256={reviewed_effect_sha256}",
+            "MATERIAL_EFFECT=EXACT_TWO_GETMETADATA_ADDITIONS_PLUS_ONE_RECOVERY_WIF_BINDING",
+            "DISPOSITION=APPROVED",
+            "MATERIAL_BLOCKERS=NONE",
+        )
+    )
+
+
+def bootstrap_apply_authority_body(
+    control_sha: str,
+    activation_sha: str,
+    reviewed_effect_sha256: str,
+    review_comment_id: int,
+    review_body_sha256: str,
+) -> str:
+    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
+        raise RecoveryError("BOOTSTRAP_AUTHORITY_SHA_INVALID")
+    if not HEX64.fullmatch(reviewed_effect_sha256) or not HEX64.fullmatch(
+        review_body_sha256
+    ):
+        raise RecoveryError("BOOTSTRAP_AUTHORITY_HASH_INVALID")
+    if review_comment_id <= 0:
+        raise RecoveryError("BOOTSTRAP_AUTHORITY_REVIEW_ID_INVALID")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_APPLY_AUTHORITY_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
+            f"RECOVERY_CONTROL_SHA={control_sha}",
+            f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
+            f"BOOTSTRAP_REVIEWED_EFFECT_SHA256={reviewed_effect_sha256}",
+            f"BOOTSTRAP_FRESH_REVIEW_COMMENT_ID={review_comment_id}",
+            f"BOOTSTRAP_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            "AUTHORITY=APPLY_EXACT_REVIEWED_SAVED_BOOTSTRAP_PLAN_ONCE",
+        )
+    )
+
+
+def bootstrap_terminal_record_body(
+    control_sha: str,
+    activation_sha: str,
+    reviewed_effect_sha256: str,
+    review_comment_id: int,
+    review_body_sha256: str,
+    apply_authority_comment_id: int,
+    apply_authority_body_sha256: str,
+    apply_run: int,
+    apply_job: int,
+) -> str:
+    if not FULL_SHA.fullmatch(control_sha) or not FULL_SHA.fullmatch(activation_sha):
+        raise RecoveryError("BOOTSTRAP_TERMINAL_SHA_INVALID")
+    for value, label in (
+        (reviewed_effect_sha256, "BOOTSTRAP_EFFECT_HASH"),
+        (review_body_sha256, "BOOTSTRAP_REVIEW_HASH"),
+        (apply_authority_body_sha256, "BOOTSTRAP_AUTHORITY_HASH"),
+    ):
+        if not HEX64.fullmatch(value):
+            raise RecoveryError(f"{label}_INVALID")
+    for value, label in (
+        (review_comment_id, "BOOTSTRAP_REVIEW_ID"),
+        (apply_authority_comment_id, "BOOTSTRAP_AUTHORITY_ID"),
+        (apply_run, "BOOTSTRAP_RUN_ID"),
+        (apply_job, "BOOTSTRAP_JOB_ID"),
+    ):
+        if value <= 0:
+            raise RecoveryError(f"{label}_INVALID")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V2",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"SOURCE_BOUNDARY={SOURCE_BOUNDARY_COMMENT_ID}",
+            f"RECOVERY_CONTROL_SHA={control_sha}",
+            f"RECOVERY_ACTIVATION_MAIN={activation_sha}",
+            f"BOOTSTRAP_REVIEWED_EFFECT_SHA256={reviewed_effect_sha256}",
+            f"BOOTSTRAP_FRESH_REVIEW_COMMENT_ID={review_comment_id}",
+            f"BOOTSTRAP_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            f"BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID={apply_authority_comment_id}",
+            f"BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256={apply_authority_body_sha256}",
             f"BOOTSTRAP_APPLY_RUN={apply_run}",
             f"BOOTSTRAP_APPLY_JOB={apply_job}",
             "IAM_CORRECTION=EXACT_TWO_GETMETADATA_ADDITIONS_LIVE",
@@ -489,6 +560,55 @@ def bootstrap_terminal_record_body(
     )
 
 
+def validate_bootstrap_effect_review(
+    comment: Any,
+    control_sha: str,
+    activation_sha: str,
+    reviewed_effect_sha256: str,
+) -> dict[str, Any]:
+    created, body_sha = _require_unedited_owner_comment(
+        comment, GOVERNING_ISSUE, "BOOTSTRAP_EFFECT_REVIEW"
+    )
+    expected = bootstrap_effect_review_body(
+        control_sha, activation_sha, reviewed_effect_sha256
+    )
+    if str(comment.get("body") or "").strip() != expected:
+        raise RecoveryError("BOOTSTRAP_EFFECT_REVIEW_BODY_MISMATCH")
+    return {
+        "comment_id": int(comment["id"]),
+        "created_at": created,
+        "body_sha256": body_sha,
+    }
+
+
+def validate_bootstrap_apply_authority(
+    comment: Any,
+    control_sha: str,
+    activation_sha: str,
+    reviewed_effect_sha256: str,
+    review: dict[str, Any],
+) -> dict[str, Any]:
+    created, body_sha = _require_unedited_owner_comment(
+        comment, GOVERNING_ISSUE, "BOOTSTRAP_APPLY_AUTHORITY"
+    )
+    expected = bootstrap_apply_authority_body(
+        control_sha,
+        activation_sha,
+        reviewed_effect_sha256,
+        review["comment_id"],
+        review["body_sha256"],
+    )
+    if str(comment.get("body") or "").strip() != expected:
+        raise RecoveryError("BOOTSTRAP_APPLY_AUTHORITY_BODY_MISMATCH")
+    if created < review["created_at"]:
+        raise RecoveryError("BOOTSTRAP_APPLY_AUTHORITY_PRECEDES_REVIEW")
+    return {
+        "comment_id": int(comment["id"]),
+        "created_at": created,
+        "body_sha256": body_sha,
+    }
+
+
 def validate_bootstrap_terminal_record(
     comments: Any,
     control_sha: str,
@@ -497,7 +617,7 @@ def validate_bootstrap_terminal_record(
 ) -> dict[str, Any]:
     if not isinstance(comments, list):
         raise RecoveryError("BOOTSTRAP_TERMINAL_COMMENTS_INVALID")
-    header = "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V1"
+    header = "PHASE5_SLICE_C_RECOVERY_BOOTSTRAP_TERMINAL_V2"
     candidates = [
         comment
         for comment in comments
@@ -523,6 +643,10 @@ def validate_bootstrap_terminal_record(
             "RECOVERY_CONTROL_SHA",
             "RECOVERY_ACTIVATION_MAIN",
             "BOOTSTRAP_REVIEWED_EFFECT_SHA256",
+            "BOOTSTRAP_FRESH_REVIEW_COMMENT_ID",
+            "BOOTSTRAP_FRESH_REVIEW_BODY_SHA256",
+            "BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID",
+            "BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256",
             "BOOTSTRAP_APPLY_RUN",
             "BOOTSTRAP_APPLY_JOB",
             "IAM_CORRECTION",
@@ -544,17 +668,59 @@ def validate_bootstrap_terminal_record(
     for name, value in expected.items():
         if fields[name] != value:
             raise RecoveryError(f"BOOTSTRAP_TERMINAL_FIELD_MISMATCH:{name}")
-    if not HEX64.fullmatch(fields["BOOTSTRAP_REVIEWED_EFFECT_SHA256"]):
-        raise RecoveryError("BOOTSTRAP_EFFECT_HASH_INVALID")
+    for name in (
+        "BOOTSTRAP_REVIEWED_EFFECT_SHA256",
+        "BOOTSTRAP_FRESH_REVIEW_BODY_SHA256",
+        "BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256",
+    ):
+        if not HEX64.fullmatch(fields[name]):
+            raise RecoveryError(f"BOOTSTRAP_TERMINAL_HASH_INVALID:{name}")
+
+    review_id = _positive_int(
+        fields["BOOTSTRAP_FRESH_REVIEW_COMMENT_ID"],
+        "BOOTSTRAP_FRESH_REVIEW_COMMENT_ID",
+    )
+    authority_id = _positive_int(
+        fields["BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID"],
+        "BOOTSTRAP_OWNER_APPLY_AUTHORITY_COMMENT_ID",
+    )
+    by_id = {comment.get("id"): comment for comment in comments if isinstance(comment, dict)}
+    review = validate_bootstrap_effect_review(
+        by_id.get(review_id),
+        control_sha,
+        activation_sha,
+        fields["BOOTSTRAP_REVIEWED_EFFECT_SHA256"],
+    )
+    if review["body_sha256"] != fields["BOOTSTRAP_FRESH_REVIEW_BODY_SHA256"]:
+        raise RecoveryError("BOOTSTRAP_EFFECT_REVIEW_HASH_MISMATCH")
+    authority = validate_bootstrap_apply_authority(
+        by_id.get(authority_id),
+        control_sha,
+        activation_sha,
+        fields["BOOTSTRAP_REVIEWED_EFFECT_SHA256"],
+        review,
+    )
+    if authority["body_sha256"] != fields[
+        "BOOTSTRAP_OWNER_APPLY_AUTHORITY_BODY_SHA256"
+    ]:
+        raise RecoveryError("BOOTSTRAP_APPLY_AUTHORITY_HASH_MISMATCH")
+    if review["created_at"] < activation_created_at:
+        raise RecoveryError("BOOTSTRAP_EFFECT_REVIEW_PRECEDES_R2_ACTIVATION")
+    if created < authority["created_at"]:
+        raise RecoveryError("BOOTSTRAP_TERMINAL_PRECEDES_APPLY_AUTHORITY")
     return {
         "comment_id": int(comment["id"]),
         "created_at": created,
         "body_sha256": body_sha,
         "reviewed_effect_sha256": fields["BOOTSTRAP_REVIEWED_EFFECT_SHA256"],
+        "review_comment_id": review["comment_id"],
+        "review_body_sha256": review["body_sha256"],
+        "apply_authority_comment_id": authority["comment_id"],
+        "apply_authority_body_sha256": authority["body_sha256"],
+        "apply_authority_created_at": authority["created_at"],
         "apply_run": _positive_int(fields["BOOTSTRAP_APPLY_RUN"], "BOOTSTRAP_APPLY_RUN"),
         "apply_job": _positive_int(fields["BOOTSTRAP_APPLY_JOB"], "BOOTSTRAP_APPLY_JOB"),
     }
-
 
 
 def validate_bootstrap_apply_run(
@@ -567,12 +733,19 @@ def validate_bootstrap_apply_run(
         or run.get("conclusion") != "success"
         or run.get("head_branch") != DEFAULT_BRANCH
         or run.get("head_sha") != activation_sha
+        or run.get("event") != "workflow_dispatch"
     ):
         raise RecoveryError("BOOTSTRAP_APPLY_RUN_STATE_MISMATCH")
     repository = run.get("repository") or {}
     head_repository = run.get("head_repository") or {}
     if repository.get("full_name") != REPOSITORY or head_repository.get("full_name") != REPOSITORY:
         raise RecoveryError("BOOTSTRAP_APPLY_RUN_REPOSITORY_MISMATCH")
+    run_created = _timestamp(run.get("created_at"), "BOOTSTRAP_APPLY_RUN_CREATED")
+    run_completed = _timestamp(run.get("updated_at"), "BOOTSTRAP_APPLY_RUN_UPDATED")
+    if run_created < record["apply_authority_created_at"]:
+        raise RecoveryError("BOOTSTRAP_APPLY_RUN_PRECEDES_AUTHORITY")
+    if run_completed > record["created_at"]:
+        raise RecoveryError("BOOTSTRAP_TERMINAL_PRECEDES_APPLY_RUN_COMPLETION")
     if not isinstance(job, dict) or job.get("id") != record["apply_job"]:
         raise RecoveryError("BOOTSTRAP_APPLY_JOB_ID_MISMATCH")
     if (
@@ -581,7 +754,9 @@ def validate_bootstrap_apply_run(
         or job.get("conclusion") != "success"
     ):
         raise RecoveryError("BOOTSTRAP_APPLY_JOB_STATE_MISMATCH")
-
+    job_completed = _timestamp(job.get("completed_at"), "BOOTSTRAP_APPLY_JOB_COMPLETED")
+    if job_completed > record["created_at"]:
+        raise RecoveryError("BOOTSTRAP_TERMINAL_PRECEDES_APPLY_JOB_COMPLETION")
 
 def dispatch_authority_body(
     control_sha: str,
