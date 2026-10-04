@@ -525,6 +525,8 @@ def successor_boundary_fixture():
       f"/repos/{recovery.REPOSITORY}/pulls/{recovery.SUPERSEDED_ACTIVATION_PR}":{"number":recovery.SUPERSEDED_ACTIVATION_PR,"state":"closed","merged_at":"2026-10-03T02:12:00Z","merge_commit_sha":recovery.SUPERSEDED_ACTIVATION_MERGE_SHA,"head":{"sha":recovery.SUPERSEDED_ACTIVATION_REVIEWED_HEAD,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":recovery.SUPERSEDED_CONTROL_SHA}},
       f"/repos/{recovery.REPOSITORY}/pulls/{recovery.SUPERSEDED_ACTIVATION_PR}/reviews/{recovery.SUPERSEDED_ACTIVATION_REVIEW_ID}":{"id":recovery.SUPERSEDED_ACTIVATION_REVIEW_ID,"state":"COMMENTED","commit_id":recovery.SUPERSEDED_ACTIVATION_REVIEWED_HEAD,"body":superseded_review_body,"submitted_at":"2026-10-03T02:10:00Z","user":{"login":"8ft0-ai","id":130460431}},
       f"/repos/{recovery.REPOSITORY}/issues/comments/{recovery.SUPERSEDED_ACTIVATION_AUTHORITY_ID}":owner_comment(recovery.SUPERSEDED_ACTIVATION_AUTHORITY_ID,superseded_authority_body,"2026-10-03T02:11:00Z",recovery.SUPERSEDED_ACTIVATION_PR),
+      f"/repos/{recovery.REPOSITORY}/commits/{recovery.SUPERSEDED_ACTIVATION_REVIEWED_HEAD}":{"sha":recovery.SUPERSEDED_ACTIVATION_REVIEWED_HEAD,"commit":{"tree":{"sha":recovery.SUPERSEDED_ACTIVATION_REVIEWED_TREE}}},
+      f"/repos/{recovery.REPOSITORY}/commits/{recovery.SUPERSEDED_ACTIVATION_MERGE_SHA}":{"sha":recovery.SUPERSEDED_ACTIVATION_MERGE_SHA,"commit":{"tree":{"sha":recovery.SUPERSEDED_ACTIVATION_REVIEWED_TREE}}},
       f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}":{"number":pr_number,"state":"closed","merged_at":"2026-10-03T03:02:00Z","merge_commit_sha":activation,"head":{"sha":reviewed,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":control}},
       f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/reviews/{review_id}":{"id":review_id,"state":"COMMENTED","commit_id":reviewed,"body":review_body,"submitted_at":"2026-10-03T03:00:00Z","user":{"login":"8ft0-ai","id":130460431}},
       f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}":owner_comment(authority_id,authority_body,"2026-10-03T03:01:00Z",pr_number),
@@ -1065,6 +1067,13 @@ jobs:
         self.assertRegex(result["governance_chain_sha256"],r"^[0-9a-f]{64}$")
         with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]):
             self.assertEqual(recovery.verify_successor_github_boundary_document(result,fixture["control"],fixture["activation"]),result)
+
+    def test_successor_rejects_superseded_activation_tree_mismatch(self):
+        fixture=successor_boundary_fixture()
+        path=f"/repos/{recovery.REPOSITORY}/commits/{recovery.SUPERSEDED_ACTIVATION_MERGE_SHA}"
+        fixture["fixtures"][path]["commit"]["tree"]["sha"]="0"*40
+        with self.assertRaises(RecoveryError):
+            run_successor_boundary(fixture)
 
     def test_successor_claim_namespace_cannot_reuse_c1_or_superseded_c2(self):
         control="4"*40

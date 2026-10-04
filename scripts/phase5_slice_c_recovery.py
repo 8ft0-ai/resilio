@@ -1797,7 +1797,8 @@ def validate_successor_activation_transaction(
 
 
 def validate_superseded_activation_history(
-    pr: Any, review: Any, authority_comment: Any, failure_record: dict[str, Any]
+    pr: Any, review: Any, authority_comment: Any, reviewed_commit: Any,
+    merge_commit: Any, failure_record: dict[str, Any]
 ) -> None:
     if not isinstance(pr, dict) or pr.get("number") != SUPERSEDED_ACTIVATION_PR:
         raise RecoveryError("SUPERSEDED_ACTIVATION_PR_INVALID")
@@ -1809,6 +1810,14 @@ def validate_superseded_activation_history(
         raise RecoveryError("SUPERSEDED_ACTIVATION_HEAD_MISMATCH")
     if pr.get("base", {}).get("sha") != SUPERSEDED_CONTROL_SHA or pr.get("base", {}).get("ref") != DEFAULT_BRANCH:
         raise RecoveryError("SUPERSEDED_ACTIVATION_BASE_MISMATCH")
+    if not isinstance(reviewed_commit, dict) or reviewed_commit.get("sha") != SUPERSEDED_ACTIVATION_REVIEWED_HEAD:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEWED_COMMIT_INVALID")
+    if (reviewed_commit.get("commit") or {}).get("tree", {}).get("sha") != SUPERSEDED_ACTIVATION_REVIEWED_TREE:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEWED_TREE_MISMATCH")
+    if not isinstance(merge_commit, dict) or merge_commit.get("sha") != SUPERSEDED_ACTIVATION_MERGE_SHA:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_MERGE_COMMIT_INVALID")
+    if (merge_commit.get("commit") or {}).get("tree", {}).get("sha") != SUPERSEDED_ACTIVATION_REVIEWED_TREE:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_MERGED_TREE_MISMATCH")
     head_repo = pr.get("head", {}).get("repo") or {}
     if head_repo.get("id") != REPOSITORY_ID or head_repo.get("full_name") != REPOSITORY:
         raise RecoveryError("SUPERSEDED_ACTIVATION_REPOSITORY_MISMATCH")
@@ -2049,8 +2058,12 @@ def verify_successor_github_boundary(
     superseded_pr=github(f"/repos/{REPOSITORY}/pulls/{SUPERSEDED_ACTIVATION_PR}")
     superseded_review=github(f"/repos/{REPOSITORY}/pulls/{SUPERSEDED_ACTIVATION_PR}/reviews/{SUPERSEDED_ACTIVATION_REVIEW_ID}")
     superseded_authority=github(f"/repos/{REPOSITORY}/issues/comments/{SUPERSEDED_ACTIVATION_AUTHORITY_ID}")
+    superseded_reviewed_commit=github(f"/repos/{REPOSITORY}/commits/{SUPERSEDED_ACTIVATION_REVIEWED_HEAD}")
+    superseded_merge_commit=github(f"/repos/{REPOSITORY}/commits/{SUPERSEDED_ACTIVATION_MERGE_SHA}")
     validate_superseded_activation_history(
-        superseded_pr, superseded_review, superseded_authority, predecessor["superseded_activation"]
+        superseded_pr, superseded_review, superseded_authority,
+        superseded_reviewed_commit, superseded_merge_commit,
+        predecessor["superseded_activation"],
     )
     activation=validate_successor_activation_record(comments,control_sha,activation_sha)
     apr=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}"); areview=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}/reviews/{activation['review_id']}"); aauth=github(f"/repos/{REPOSITORY}/issues/comments/{activation['authority_id']}")
