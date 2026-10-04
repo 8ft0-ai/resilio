@@ -804,7 +804,7 @@ jobs:
         ).read_text(encoding="utf-8")
         self.assertEqual(
             r2_caller_structure_errors(
-                caller, "af197af2b0c2d2b5a5b949aeb330e9ddf5d07884"
+                caller, "03123864097df51e6edafd67acc34702f0819de3"
             ),
             [],
         )

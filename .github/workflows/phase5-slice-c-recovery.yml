@@ -11,4 +11,4 @@ jobs:
       actions: read
       pull-requests: read
       id-token: write
-    uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@af197af2b0c2d2b5a5b949aeb330e9ddf5d07884
+    uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@03123864097df51e6edafd67acc34702f0819de3
