@@ -53,10 +53,27 @@ EVIDENCE_PREFIX = "plan-evidence/product/"
 # Successor-v1 is a separate immutable recovery protocol.  The historical C1
 # constants/functions above remain intact so predecessor evidence stays
 # reconstructable; C2 uses only the SUCCESSOR_* surface below at runtime.
-SUCCESSOR_ARCHITECTURE_COMMENT_ID = 5967099006
-SUCCESSOR_ARCHITECTURE_BODY_SHA256 = "281564558d4df4cb5aab6e02d79738c27c1c3982c60c7384073bd774f22d8a16"
-SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID = 5967104661
-SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256 = "4a68498104cbd2d35eb4086ac85e20cec1a85ba1d014af1a41d0f94085e8b9cc"
+SUCCESSOR_ARCHITECTURE_COMMENT_ID = 5974709262
+SUCCESSOR_ARCHITECTURE_BODY_SHA256 = "b944165bd0c5967fbaf623478a27797026b92adda02791a1373183073618279b"
+SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID = 5974712806
+SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256 = "77bb31e58279401917787b9dddb18ca0b672cfd5e1ea1b7bfd3e67fcb76bdcca"
+SUPERSEDED_CONTROL_SHA = "af197af2b0c2d2b5a5b949aeb330e9ddf5d07884"
+SUPERSEDED_ACTIVATION_PR = 124
+SUPERSEDED_ACTIVATION_REVIEWED_HEAD = "54a41e0762c357ae5bc9d8a0e558757f8dbeeecf"
+SUPERSEDED_ACTIVATION_REVIEWED_TREE = "a97249f7bf2462670008e825804d61a13742b8e3"
+SUPERSEDED_ACTIVATION_REVIEW_ID = 5403467252
+SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256 = "02d55025b146e50b271ac89bb1cfcaabd1e024477e644cc3b5268dfe9915ecd7"
+SUPERSEDED_ACTIVATION_AUTHORITY_ID = 5974684198
+SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256 = "c5f26d1b3235f7a835e5637ac1eb665115ab2b2d4e85fbdbb41bf979a8365dd8"
+SUPERSEDED_ACTIVATION_MERGE_SHA = "81e542ce39f1728eebaa65ae4252499a61c44e53"
+SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID = 5974703297
+SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256 = "aa50f2467a7b0a4d5202a502f2f3511e59be37cd58b2b0e4bb4b0ea0c0befbe5"
+SUPERSEDED_CLAIM_OBJECT = (
+    "plan-evidence/product/recovery-claim-5833629251-" + SUPERSEDED_CONTROL_SHA + ".json"
+)
+SUPERSEDED_RESULT_OBJECT = (
+    "plan-evidence/product/recovery-result-5833629251-" + SUPERSEDED_CONTROL_SHA + ".json"
+)
 PREDECESSOR_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
 PREDECESSOR_ACTIVATION_SHA = "bea4af9ba159ff143bab3e695c0d43e1038691b2"
 PREDECESSOR_RECOVERY_RUN = 37107984572
@@ -1585,7 +1602,77 @@ def validate_successor_predecessor_records(comments: list[dict[str, Any]]) -> di
         raise RecoveryError("SUCCESSOR_S1_TERMINAL_CONTRACT_MISMATCH")
     if terminal["created_at"] <= failure["created_at"]:
         raise RecoveryError("SUCCESSOR_S1_TERMINAL_TIMELINE_INVALID")
-    return {"failure": failure, "s1_terminal": terminal}
+
+    architecture = _successor_fixed_comment(
+        comments, SUCCESSOR_ARCHITECTURE_COMMENT_ID, SUCCESSOR_ARCHITECTURE_BODY_SHA256,
+        "SUCCESSOR_C3_ARCHITECTURE",
+    )
+    for token in (
+        "STATUS=C3_ARCHITECTURE_COMPLETE_PENDING_FRESH_REVIEW",
+        f"CURRENT_MAIN={SUPERSEDED_ACTIVATION_MERGE_SHA}",
+        f"IMMUTABLE_CONTROL_C2={SUPERSEDED_CONTROL_SHA}",
+        f"FAILED_C2_ACTIVATION_PR={SUPERSEDED_ACTIVATION_PR}",
+        f"FAILED_C2_ACTIVATION_RECORD={SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID}",
+        f"S1_TERMINAL={S1_TERMINAL_COMMENT_ID}",
+        "LIVE_RECOVERY_WIF=C1_ONLY", "C2_LIVE_WIF=ABSENT",
+        "C2_CLAIM=ABSENT", "C2_RESULT=ABSENT",
+    ):
+        if token not in architecture["body"]:
+            raise RecoveryError("SUCCESSOR_C3_ARCHITECTURE_CONTRACT_MISMATCH")
+
+    architecture_review = _successor_fixed_comment(
+        comments, SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID,
+        SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256, "SUCCESSOR_C3_ARCHITECTURE_REVIEW",
+    )
+    for token in (
+        f"REVIEW_TARGET={SUCCESSOR_ARCHITECTURE_COMMENT_ID}",
+        "DISPOSITION=APPROVED", "MATERIAL_BLOCKERS=NONE",
+        "FAILED_C2_SUPERSESSION=PASS", "CURRENT_SAFETY_STATE=PASS",
+        "C3_INERTNESS=PASS", "AUTHORITY_PROTOCOL_CLOSURE=PASS",
+        "C3_ACTIVATION_REACHABILITY=PASS", "LIVE_WIF_REPIN_REACHABILITY=PASS",
+        "C3_ONE_SHOT_RECOVERY_REACHABILITY=PASS",
+    ):
+        if token not in architecture_review["body"]:
+            raise RecoveryError("SUCCESSOR_C3_ARCHITECTURE_REVIEW_CONTRACT_MISMATCH")
+
+    superseded = _successor_fixed_comment(
+        comments,
+        SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID,
+        SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256,
+        "SUCCESSOR_SUPERSEDED_ACTIVATION_FAILURE",
+    )
+    required_superseded = (
+        "STATUS=POST_MERGE_AUTHORITY_GRAMMAR_DEFECT",
+        f"PR=8ft0-ai/resilio#{SUPERSEDED_ACTIVATION_PR}",
+        f"SUCCESSOR_CONTROL_C2={SUPERSEDED_CONTROL_SHA}",
+        f"EXACT_REVIEWED_HEAD={SUPERSEDED_ACTIVATION_REVIEWED_HEAD}",
+        f"EXACT_REVIEWED_TREE={SUPERSEDED_ACTIVATION_REVIEWED_TREE}",
+        f"FRESH_REVIEW={SUPERSEDED_ACTIVATION_REVIEW_ID}__APPROVED",
+        f"OWNER_MERGE_AUTHORITY_COMMENT_ID={SUPERSEDED_ACTIVATION_AUTHORITY_ID}",
+        f"OWNER_MERGE_AUTHORITY_BODY_SHA256={SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256}",
+        f"MERGE_SHA={SUPERSEDED_ACTIVATION_MERGE_SHA}",
+        "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
+        "DEFECT=C2_RUNTIME_REQUIRES_EXACT_MACHINE_GRAMMAR_FOR_SUCCESSOR_MERGE_AUTHORITY",
+        "C2_ACTIVATION_RECORD=NOT_CREATABLE_AS_VALID_RUNTIME_EVIDENCE",
+        "LIVE_RECOVERY_WIF=C1_ONLY",
+        "LIVE_RECOVERY_WIF_C2=ABSENT",
+        "C2_RECOVERY_CLAIM=ABSENT",
+        "C2_RECOVERY_RESULT=ABSENT",
+        "SUCCESSOR_DISPATCH=NOT_PERFORMED",
+        "SAFETY_DISPOSITION=FAIL_CLOSED",
+        "NEXT_PHASE=SUCCESSOR_CONTROL_RECONSTRUCTION_C3",
+    )
+    if any(token not in superseded["body"] for token in required_superseded):
+        raise RecoveryError("SUCCESSOR_SUPERSEDED_ACTIVATION_FAILURE_CONTRACT_MISMATCH")
+    if superseded["created_at"] <= terminal["created_at"]:
+        raise RecoveryError("SUCCESSOR_SUPERSEDED_ACTIVATION_TIMELINE_INVALID")
+    if not (superseded["created_at"] < architecture["created_at"] < architecture_review["created_at"]):
+        raise RecoveryError("SUCCESSOR_C3_ARCHITECTURE_TIMELINE_INVALID")
+    return {
+        "failure": failure, "s1_terminal": terminal,
+        "superseded_activation": superseded, "architecture": architecture,
+        "architecture_review": architecture_review,
+    }
 
 
 def _successor_review_fields(body: str) -> dict[str, str]:
@@ -1707,8 +1794,8 @@ def validate_successor_activation_record(
 
 
 def validate_successor_activation_transaction(
-    pr: Any, review: Any, authority_comment: Any, record: dict[str, Any],
-    control_sha: str, activation_sha: str,
+    pr: Any, review: Any, authority_comment: Any, reviewed_commit: Any,
+    merge_commit: Any, record: dict[str, Any], control_sha: str, activation_sha: str,
 ) -> None:
     if not isinstance(pr,dict) or pr.get("number") != record["pr_number"] or pr.get("state") != "closed" or pr.get("merged_at") is None:
         raise RecoveryError("SUCCESSOR_PR_INVALID")
@@ -1719,6 +1806,16 @@ def validate_successor_activation_transaction(
     hr=pr.get("head",{}).get("repo") or {}
     if hr.get("id") != REPOSITORY_ID or hr.get("full_name") != REPOSITORY:
         raise RecoveryError("SUCCESSOR_PR_REPOSITORY_MISMATCH")
+    if not isinstance(reviewed_commit, dict) or reviewed_commit.get("sha") != record["reviewed_head"]:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_REVIEWED_COMMIT_INVALID")
+    reviewed_tree = (reviewed_commit.get("commit") or {}).get("tree", {}).get("sha")
+    if not FULL_SHA.fullmatch(str(reviewed_tree or "")):
+        raise RecoveryError("SUCCESSOR_ACTIVATION_REVIEWED_TREE_INVALID")
+    if not isinstance(merge_commit, dict) or merge_commit.get("sha") != activation_sha:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_MERGE_COMMIT_INVALID")
+    merged_tree = (merge_commit.get("commit") or {}).get("tree", {}).get("sha")
+    if merged_tree != reviewed_tree:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_MERGED_TREE_MISMATCH")
     if not isinstance(review,dict) or review.get("id") != record["review_id"] or review.get("state") != "COMMENTED" or review.get("commit_id") != record["reviewed_head"]:
         raise RecoveryError("SUCCESSOR_REVIEW_IDENTITY_MISMATCH")
     user=review.get("user") or {}
@@ -1747,6 +1844,124 @@ def validate_successor_activation_transaction(
         raise RecoveryError("SUCCESSOR_ACTIVATION_TIMELINE_INVALID")
 
 
+def validate_superseded_activation_history(
+    pr: Any, review: Any, authority_comment: Any, reviewed_commit: Any,
+    merge_commit: Any, failure_record: dict[str, Any]
+) -> None:
+    if not isinstance(pr, dict) or pr.get("number") != SUPERSEDED_ACTIVATION_PR:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_PR_INVALID")
+    if pr.get("state") != "closed" or pr.get("merged_at") is None:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_PR_NOT_MERGED")
+    if pr.get("merge_commit_sha") != SUPERSEDED_ACTIVATION_MERGE_SHA:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_MERGE_MISMATCH")
+    if pr.get("head", {}).get("sha") != SUPERSEDED_ACTIVATION_REVIEWED_HEAD:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_HEAD_MISMATCH")
+    if pr.get("base", {}).get("sha") != SUPERSEDED_CONTROL_SHA or pr.get("base", {}).get("ref") != DEFAULT_BRANCH:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_BASE_MISMATCH")
+    if not isinstance(reviewed_commit, dict) or reviewed_commit.get("sha") != SUPERSEDED_ACTIVATION_REVIEWED_HEAD:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEWED_COMMIT_INVALID")
+    if (reviewed_commit.get("commit") or {}).get("tree", {}).get("sha") != SUPERSEDED_ACTIVATION_REVIEWED_TREE:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEWED_TREE_MISMATCH")
+    if not isinstance(merge_commit, dict) or merge_commit.get("sha") != SUPERSEDED_ACTIVATION_MERGE_SHA:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_MERGE_COMMIT_INVALID")
+    if (merge_commit.get("commit") or {}).get("tree", {}).get("sha") != SUPERSEDED_ACTIVATION_REVIEWED_TREE:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_MERGED_TREE_MISMATCH")
+    head_repo = pr.get("head", {}).get("repo") or {}
+    if head_repo.get("id") != REPOSITORY_ID or head_repo.get("full_name") != REPOSITORY:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REPOSITORY_MISMATCH")
+    if not isinstance(review, dict) or review.get("id") != SUPERSEDED_ACTIVATION_REVIEW_ID:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEW_INVALID")
+    review_user = review.get("user") or {}
+    if review_user.get("login") != OWNER_LOGIN or review_user.get("id") != OWNER_ID:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEW_OWNER_MISMATCH")
+    if review.get("state") != "COMMENTED" or review.get("commit_id") != SUPERSEDED_ACTIVATION_REVIEWED_HEAD:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEW_IDENTITY_MISMATCH")
+    if sha256(str(review.get("body") or "").encode()) != SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_REVIEW_HASH_MISMATCH")
+    if not isinstance(authority_comment, dict) or authority_comment.get("id") != SUPERSEDED_ACTIVATION_AUTHORITY_ID:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_AUTHORITY_INVALID")
+    authority_created, authority_sha = _require_unedited_owner_comment(
+        authority_comment, SUPERSEDED_ACTIVATION_PR, "SUPERSEDED_ACTIVATION_AUTHORITY"
+    )
+    if authority_sha != SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256:
+        raise RecoveryError("SUPERSEDED_ACTIVATION_AUTHORITY_HASH_MISMATCH")
+    review_time = _timestamp(review.get("submitted_at"), "SUPERSEDED_ACTIVATION_REVIEW_SUBMITTED")
+    merge_time = _timestamp(pr.get("merged_at"), "SUPERSEDED_ACTIVATION_MERGED")
+    if not (review_time <= authority_created < merge_time <= failure_record["created_at"]):
+        raise RecoveryError("SUPERSEDED_ACTIVATION_TIMELINE_INVALID")
+
+
+def verify_successor_activation_premerge(
+    control_sha: str, pr_number: int, reviewed_head: str, review_id: int,
+    review_body_sha256: str, authority_id: int,
+) -> dict[str, Any]:
+    if not FULL_SHA.fullmatch(control_sha) or control_sha in (PREDECESSOR_CONTROL_SHA, SUPERSEDED_CONTROL_SHA):
+        raise RecoveryError("SUCCESSOR_PREMERGE_CONTROL_INVALID")
+    if not FULL_SHA.fullmatch(reviewed_head) or min(pr_number, review_id, authority_id) <= 0:
+        raise RecoveryError("SUCCESSOR_PREMERGE_IDENTITY_INVALID")
+    if not HEX64.fullmatch(review_body_sha256):
+        raise RecoveryError("SUCCESSOR_PREMERGE_REVIEW_HASH_INVALID")
+    branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if not isinstance(branch, dict) or branch.get("commit", {}).get("sha") != control_sha:
+        raise RecoveryError("SUCCESSOR_PREMERGE_MAIN_MISMATCH")
+    pr = github(f"/repos/{REPOSITORY}/pulls/{pr_number}")
+    if not isinstance(pr, dict) or pr.get("number") != pr_number or pr.get("state") != "open" or pr.get("merged_at") is not None or pr.get("draft") is True:
+        raise RecoveryError("SUCCESSOR_PREMERGE_PR_INVALID")
+    if pr.get("head", {}).get("sha") != reviewed_head:
+        raise RecoveryError("SUCCESSOR_PREMERGE_HEAD_MISMATCH")
+    if pr.get("base", {}).get("ref") != DEFAULT_BRANCH or pr.get("base", {}).get("sha") != control_sha:
+        raise RecoveryError("SUCCESSOR_PREMERGE_BASE_MISMATCH")
+    head_repo = pr.get("head", {}).get("repo") or {}
+    if head_repo.get("id") != REPOSITORY_ID or head_repo.get("full_name") != REPOSITORY:
+        raise RecoveryError("SUCCESSOR_PREMERGE_REPOSITORY_MISMATCH")
+    review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
+    if not isinstance(review, dict) or review.get("id") != review_id or review.get("state") != "COMMENTED" or review.get("commit_id") != reviewed_head:
+        raise RecoveryError("SUCCESSOR_PREMERGE_REVIEW_IDENTITY_MISMATCH")
+    review_user = review.get("user") or {}
+    if review_user.get("login") != OWNER_LOGIN or review_user.get("id") != OWNER_ID:
+        raise RecoveryError("SUCCESSOR_PREMERGE_REVIEW_OWNER_MISMATCH")
+    fields = _successor_review_fields(str(review.get("body") or ""))
+    expected = {
+        "DISPOSITION": "APPROVED",
+        "PR": f"8ft0-ai/resilio#{pr_number}",
+        "EXACT_HEAD": reviewed_head,
+        "EXACT_BASE": control_sha,
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "SUCCESSOR_ARCHITECTURE": str(SUCCESSOR_ARCHITECTURE_COMMENT_ID),
+        "S1_TERMINAL": str(S1_TERMINAL_COMMENT_ID),
+        "MATERIAL_BLOCKERS": "NONE",
+    }
+    if fields != expected:
+        raise RecoveryError("SUCCESSOR_PREMERGE_REVIEW_CONTRACT_MISMATCH")
+    actual_review_sha = sha256(str(review.get("body") or "").encode())
+    if actual_review_sha != review_body_sha256:
+        raise RecoveryError("SUCCESSOR_PREMERGE_REVIEW_HASH_MISMATCH")
+    authority = github(f"/repos/{REPOSITORY}/issues/comments/{authority_id}")
+    authority_created, authority_sha = _require_unedited_owner_comment(
+        authority, pr_number, "SUCCESSOR_PREMERGE_AUTHORITY"
+    )
+    expected_authority = successor_activation_merge_authority_body(
+        control_sha, pr_number, reviewed_head, review_id, review_body_sha256
+    )
+    if str(authority.get("body") or "").strip() != expected_authority:
+        raise RecoveryError("SUCCESSOR_PREMERGE_AUTHORITY_BODY_MISMATCH")
+    review_time = _timestamp(review.get("submitted_at"), "SUCCESSOR_PREMERGE_REVIEW_SUBMITTED")
+    if review_time > authority_created:
+        raise RecoveryError("SUCCESSOR_PREMERGE_TIMELINE_INVALID")
+    return {
+        "contract": "resilio-phase5-slice-c-successor-premerge-authority/v1",
+        "control_sha": control_sha,
+        "pr_number": pr_number,
+        "reviewed_head": reviewed_head,
+        "review_id": review_id,
+        "review_body_sha256": review_body_sha256,
+        "authority_id": authority_id,
+        "authority_body_sha256": authority_sha,
+        "current_main": control_sha,
+        "verified": True,
+    }
+
+
 def successor_wif_repin_review_body(
     control_sha: str, activation_sha: str, plan_sha: str, manifest_sha: str,
     state_lineage: str, state_serial: int,
@@ -1760,7 +1975,7 @@ def successor_wif_repin_review_body(
         f"SAVED_PLAN_SHA256={plan_sha}",f"STRUCTURAL_MANIFEST_SHA256={manifest_sha}",
         f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",f"BOOTSTRAP_STATE_SERIAL={state_serial}",
         "TERRAFORM_VERSION=1.15.8","PLAN_FORMAT_VERSION=1.2",
-        "PLAN_EFFECTS=EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_C1_TO_C2",
+        "PLAN_EFFECTS=EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_C1_TO_C3",
         "REVIEW_DISPOSITION=APPROVED","MATERIAL_BLOCKERS=NONE","APPLY_AUTHORITY=NOT_GRANTED",
     ))
 
@@ -1793,7 +2008,7 @@ def successor_wif_repin_terminal_body(
         f"BOOTSTRAP_STATE_SERIAL_BEFORE={serial_before}",f"BOOTSTRAP_STATE_SERIAL_AFTER={serial_after}",
         f"FRESH_REVIEW_COMMENT_ID={review_id}",f"FRESH_REVIEW_BODY_SHA256={review_sha}",
         f"OWNER_APPLY_AUTHORITY_COMMENT_ID={authority_id}",f"OWNER_APPLY_AUTHORITY_BODY_SHA256={authority_sha}",
-        "WIF_REPIN=EXACT_C1_TO_C2_LIVE","OLD_C1_RECOVERY_WIF=ABSENT","NEW_C2_RECOVERY_WIF=EXACT_ONE",
+        "WIF_REPIN=EXACT_C1_TO_C3_LIVE","OLD_C1_RECOVERY_WIF=ABSENT","SUPERSEDED_C2_RECOVERY_WIF=ABSENT","NEW_C3_RECOVERY_WIF=EXACT_ONE",
         "GETMETADATA=UNCHANGED_LIVE","NORMAL_PHASE5_IDENTITIES=UNCHANGED",
         "BOOTSTRAP_RECONCILIATION=EXACT_NO_CHANGE","FINAL_BOOTSTRAP_LOCK=ABSENT","TERMINAL_DISPOSITION=RECONCILED",
     ))
@@ -1808,8 +2023,8 @@ def validate_successor_wif_repin_terminal(
     if len(matches)!=1: raise RecoveryError("SUCCESSOR_WIF_REPIN_TERMINAL_NOT_UNIQUE")
     c=matches[0]; created,body_sha=_require_unedited_owner_comment(c,GOVERNING_ISSUE,"SUCCESSOR_WIF_REPIN_TERMINAL")
     f=_record_fields(str(c.get("body") or ""),header,(
-        "GOVERNING_ISSUE","SUCCESSOR_CONTROL_SHA","SUCCESSOR_ACTIVATION_MAIN","SAVED_PLAN_SHA256","STRUCTURAL_MANIFEST_SHA256","BOOTSTRAP_STATE_LINEAGE","BOOTSTRAP_STATE_SERIAL_BEFORE","BOOTSTRAP_STATE_SERIAL_AFTER","FRESH_REVIEW_COMMENT_ID","FRESH_REVIEW_BODY_SHA256","OWNER_APPLY_AUTHORITY_COMMENT_ID","OWNER_APPLY_AUTHORITY_BODY_SHA256","WIF_REPIN","OLD_C1_RECOVERY_WIF","NEW_C2_RECOVERY_WIF","GETMETADATA","NORMAL_PHASE5_IDENTITIES","BOOTSTRAP_RECONCILIATION","FINAL_BOOTSTRAP_LOCK","TERMINAL_DISPOSITION"))
-    expected={"GOVERNING_ISSUE":"8ft0-ai/resilio#109","SUCCESSOR_CONTROL_SHA":control_sha,"SUCCESSOR_ACTIVATION_MAIN":activation_sha,"WIF_REPIN":"EXACT_C1_TO_C2_LIVE","OLD_C1_RECOVERY_WIF":"ABSENT","NEW_C2_RECOVERY_WIF":"EXACT_ONE","GETMETADATA":"UNCHANGED_LIVE","NORMAL_PHASE5_IDENTITIES":"UNCHANGED","BOOTSTRAP_RECONCILIATION":"EXACT_NO_CHANGE","FINAL_BOOTSTRAP_LOCK":"ABSENT","TERMINAL_DISPOSITION":"RECONCILED"}
+        "GOVERNING_ISSUE","SUCCESSOR_CONTROL_SHA","SUCCESSOR_ACTIVATION_MAIN","SAVED_PLAN_SHA256","STRUCTURAL_MANIFEST_SHA256","BOOTSTRAP_STATE_LINEAGE","BOOTSTRAP_STATE_SERIAL_BEFORE","BOOTSTRAP_STATE_SERIAL_AFTER","FRESH_REVIEW_COMMENT_ID","FRESH_REVIEW_BODY_SHA256","OWNER_APPLY_AUTHORITY_COMMENT_ID","OWNER_APPLY_AUTHORITY_BODY_SHA256","WIF_REPIN","OLD_C1_RECOVERY_WIF","SUPERSEDED_C2_RECOVERY_WIF","NEW_C3_RECOVERY_WIF","GETMETADATA","NORMAL_PHASE5_IDENTITIES","BOOTSTRAP_RECONCILIATION","FINAL_BOOTSTRAP_LOCK","TERMINAL_DISPOSITION"))
+    expected={"GOVERNING_ISSUE":"8ft0-ai/resilio#109","SUCCESSOR_CONTROL_SHA":control_sha,"SUCCESSOR_ACTIVATION_MAIN":activation_sha,"WIF_REPIN":"EXACT_C1_TO_C3_LIVE","OLD_C1_RECOVERY_WIF":"ABSENT","SUPERSEDED_C2_RECOVERY_WIF":"ABSENT","NEW_C3_RECOVERY_WIF":"EXACT_ONE","GETMETADATA":"UNCHANGED_LIVE","NORMAL_PHASE5_IDENTITIES":"UNCHANGED","BOOTSTRAP_RECONCILIATION":"EXACT_NO_CHANGE","FINAL_BOOTSTRAP_LOCK":"ABSENT","TERMINAL_DISPOSITION":"RECONCILED"}
     for k,v in expected.items():
         if f[k]!=v: raise RecoveryError(f"SUCCESSOR_WIF_REPIN_FIELD_MISMATCH:{k}")
     for k in ("SAVED_PLAN_SHA256","STRUCTURAL_MANIFEST_SHA256","FRESH_REVIEW_BODY_SHA256","OWNER_APPLY_AUTHORITY_BODY_SHA256"):
@@ -1888,9 +2103,24 @@ def verify_successor_github_boundary(
     predecessor_job=github(f"/repos/{REPOSITORY}/actions/jobs/{PREDECESSOR_RECOVERY_JOB}")
     validate_predecessor_recovery_run(predecessor_run,predecessor_job)
     comments=github_issue_comments(GOVERNING_ISSUE); predecessor=validate_successor_predecessor_records(comments)
+    superseded_pr=github(f"/repos/{REPOSITORY}/pulls/{SUPERSEDED_ACTIVATION_PR}")
+    superseded_review=github(f"/repos/{REPOSITORY}/pulls/{SUPERSEDED_ACTIVATION_PR}/reviews/{SUPERSEDED_ACTIVATION_REVIEW_ID}")
+    superseded_authority=github(f"/repos/{REPOSITORY}/issues/comments/{SUPERSEDED_ACTIVATION_AUTHORITY_ID}")
+    superseded_reviewed_commit=github(f"/repos/{REPOSITORY}/commits/{SUPERSEDED_ACTIVATION_REVIEWED_HEAD}")
+    superseded_merge_commit=github(f"/repos/{REPOSITORY}/commits/{SUPERSEDED_ACTIVATION_MERGE_SHA}")
+    validate_superseded_activation_history(
+        superseded_pr, superseded_review, superseded_authority,
+        superseded_reviewed_commit, superseded_merge_commit,
+        predecessor["superseded_activation"],
+    )
     activation=validate_successor_activation_record(comments,control_sha,activation_sha)
     apr=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}"); areview=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}/reviews/{activation['review_id']}"); aauth=github(f"/repos/{REPOSITORY}/issues/comments/{activation['authority_id']}")
-    validate_successor_activation_transaction(apr,areview,aauth,activation,control_sha,activation_sha)
+    activation_reviewed_commit=github(f"/repos/{REPOSITORY}/commits/{activation['reviewed_head']}")
+    activation_merge_commit=github(f"/repos/{REPOSITORY}/commits/{activation_sha}")
+    validate_successor_activation_transaction(
+        apr, areview, aauth, activation_reviewed_commit, activation_merge_commit,
+        activation, control_sha, activation_sha,
+    )
     repin=validate_successor_wif_repin_terminal(comments,control_sha,activation_sha,activation["created_at"])
     dispatch=validate_successor_dispatch_authority(comments,control_sha,activation_sha,activation,repin)
     reviewed=fetch_candidate(REVIEWED_HEAD); merged=fetch_candidate(SLICE_C_MERGE); active=fetch_candidate(activation_sha)
@@ -1905,6 +2135,8 @@ def verify_successor_github_boundary(
       "predecessor_failure_record_id":predecessor["failure"]["comment_id"],"predecessor_failure_record_body_sha256":predecessor["failure"]["body_sha256"],
       "predecessor_claim_object":PREDECESSOR_CLAIM_OBJECT,"predecessor_claim_generation":PREDECESSOR_CLAIM_GENERATION,"predecessor_claim_body_sha256":PREDECESSOR_CLAIM_BODY_SHA256,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"predecessor_governance_chain_sha256":PREDECESSOR_GOVERNANCE_CHAIN_SHA256,"predecessor_result_object":PREDECESSOR_RESULT_OBJECT,
       "s1_terminal_comment_id":predecessor["s1_terminal"]["comment_id"],"s1_terminal_body_sha256":predecessor["s1_terminal"]["body_sha256"],
+      "successor_architecture_comment_id":predecessor["architecture"]["comment_id"],"successor_architecture_body_sha256":predecessor["architecture"]["body_sha256"],"successor_architecture_review_comment_id":predecessor["architecture_review"]["comment_id"],"successor_architecture_review_body_sha256":predecessor["architecture_review"]["body_sha256"],
+      "superseded_control_sha":SUPERSEDED_CONTROL_SHA,"superseded_activation_pr":SUPERSEDED_ACTIVATION_PR,"superseded_activation_reviewed_head":SUPERSEDED_ACTIVATION_REVIEWED_HEAD,"superseded_activation_reviewed_tree":SUPERSEDED_ACTIVATION_REVIEWED_TREE,"superseded_activation_review_id":SUPERSEDED_ACTIVATION_REVIEW_ID,"superseded_activation_review_body_sha256":SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256,"superseded_activation_authority_id":SUPERSEDED_ACTIVATION_AUTHORITY_ID,"superseded_activation_authority_body_sha256":SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256,"superseded_activation_merge_sha":SUPERSEDED_ACTIVATION_MERGE_SHA,"superseded_activation_failure_record_id":predecessor["superseded_activation"]["comment_id"],"superseded_activation_failure_record_body_sha256":predecessor["superseded_activation"]["body_sha256"],"superseded_claim_object":SUPERSEDED_CLAIM_OBJECT,"superseded_result_object":SUPERSEDED_RESULT_OBJECT,
       "control_sha":control_sha,"activation_sha":activation_sha,"successor_pr":activation["pr_number"],"successor_reviewed_head":activation["reviewed_head"],"successor_fresh_review_id":activation["review_id"],"successor_fresh_review_body_sha256":activation["review_body_sha256"],"successor_merge_authority_comment_id":activation["authority_id"],"successor_merge_authority_body_sha256":activation["authority_body_sha256"],"successor_activation_record_comment_id":activation["comment_id"],"successor_activation_record_body_sha256":activation["body_sha256"],
       "wif_repin_saved_plan_sha256":repin["saved_plan_sha256"],"wif_repin_structural_manifest_sha256":repin["manifest_sha256"],"wif_repin_review_comment_id":repin["review_id"],"wif_repin_review_body_sha256":repin["review_sha256"],"wif_repin_apply_authority_comment_id":repin["authority_id"],"wif_repin_apply_authority_body_sha256":repin["authority_sha256"],"wif_repin_terminal_comment_id":repin["comment_id"],"wif_repin_terminal_body_sha256":repin["body_sha256"],
       "dispatch_authority_comment_id":dispatch["comment_id"],"dispatch_authority_body_sha256":dispatch["body_sha256"],
@@ -1914,18 +2146,18 @@ def verify_successor_github_boundary(
 
 
 def verify_successor_github_boundary_document(value: Any, control_sha: str, activation_sha: str) -> dict[str,Any]:
-    expected_keys={"contract","governing_issue","source_boundary_comment_id","source_boundary_body_sha256","failed_apply_run","failed_apply_job","predecessor_control_sha","predecessor_activation_sha","predecessor_recovery_run","predecessor_recovery_job","predecessor_failure_record_id","predecessor_failure_record_body_sha256","predecessor_claim_object","predecessor_claim_generation","predecessor_claim_body_sha256","predecessor_claim_sha256","predecessor_governance_chain_sha256","predecessor_result_object","s1_terminal_comment_id","s1_terminal_body_sha256","control_sha","activation_sha","successor_pr","successor_reviewed_head","successor_fresh_review_id","successor_fresh_review_body_sha256","successor_merge_authority_comment_id","successor_merge_authority_body_sha256","successor_activation_record_comment_id","successor_activation_record_body_sha256","wif_repin_saved_plan_sha256","wif_repin_structural_manifest_sha256","wif_repin_review_comment_id","wif_repin_review_body_sha256","wif_repin_apply_authority_comment_id","wif_repin_apply_authority_body_sha256","wif_repin_terminal_comment_id","wif_repin_terminal_body_sha256","dispatch_authority_comment_id","dispatch_authority_body_sha256","product_state_generation","product_state_lineage","product_state_serial","product_state_canonical_sha256","governance_chain_sha256"}
+    expected_keys={"contract","governing_issue","source_boundary_comment_id","source_boundary_body_sha256","failed_apply_run","failed_apply_job","predecessor_control_sha","predecessor_activation_sha","predecessor_recovery_run","predecessor_recovery_job","predecessor_failure_record_id","predecessor_failure_record_body_sha256","predecessor_claim_object","predecessor_claim_generation","predecessor_claim_body_sha256","predecessor_claim_sha256","predecessor_governance_chain_sha256","predecessor_result_object","s1_terminal_comment_id","s1_terminal_body_sha256","successor_architecture_comment_id","successor_architecture_body_sha256","successor_architecture_review_comment_id","successor_architecture_review_body_sha256","superseded_control_sha","superseded_activation_pr","superseded_activation_reviewed_head","superseded_activation_reviewed_tree","superseded_activation_review_id","superseded_activation_review_body_sha256","superseded_activation_authority_id","superseded_activation_authority_body_sha256","superseded_activation_merge_sha","superseded_activation_failure_record_id","superseded_activation_failure_record_body_sha256","superseded_claim_object","superseded_result_object","control_sha","activation_sha","successor_pr","successor_reviewed_head","successor_fresh_review_id","successor_fresh_review_body_sha256","successor_merge_authority_comment_id","successor_merge_authority_body_sha256","successor_activation_record_comment_id","successor_activation_record_body_sha256","wif_repin_saved_plan_sha256","wif_repin_structural_manifest_sha256","wif_repin_review_comment_id","wif_repin_review_body_sha256","wif_repin_apply_authority_comment_id","wif_repin_apply_authority_body_sha256","wif_repin_terminal_comment_id","wif_repin_terminal_body_sha256","dispatch_authority_comment_id","dispatch_authority_body_sha256","product_state_generation","product_state_lineage","product_state_serial","product_state_canonical_sha256","governance_chain_sha256"}
     if not isinstance(value,dict) or set(value)!=expected_keys or value.get("contract")!="resilio-phase5-slice-c-successor-github-boundary/v1": raise RecoveryError("SUCCESSOR_BOUNDARY_DOCUMENT_INVALID")
     if value.get("control_sha")!=control_sha or value.get("activation_sha")!=activation_sha: raise RecoveryError("SUCCESSOR_BOUNDARY_CONTROL_INVALID")
     if value.get("product_state_generation")!=SUCCESSOR_EXPECTED_GENERATION or value.get("product_state_lineage")!=SUCCESSOR_EXPECTED_LINEAGE or value.get("product_state_serial")!=SUCCESSOR_EXPECTED_SERIAL or value.get("product_state_canonical_sha256")!=SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256: raise RecoveryError("SUCCESSOR_BOUNDARY_STATE_INVALID")
-    required_hashes=("source_boundary_body_sha256","predecessor_failure_record_body_sha256","predecessor_claim_body_sha256","predecessor_claim_sha256","predecessor_governance_chain_sha256","s1_terminal_body_sha256","successor_fresh_review_body_sha256","successor_merge_authority_body_sha256","successor_activation_record_body_sha256","wif_repin_saved_plan_sha256","wif_repin_structural_manifest_sha256","wif_repin_review_body_sha256","wif_repin_apply_authority_body_sha256","wif_repin_terminal_body_sha256","dispatch_authority_body_sha256","product_state_canonical_sha256","governance_chain_sha256")
+    required_hashes=("source_boundary_body_sha256","predecessor_failure_record_body_sha256","predecessor_claim_body_sha256","predecessor_claim_sha256","predecessor_governance_chain_sha256","s1_terminal_body_sha256","successor_architecture_body_sha256","successor_architecture_review_body_sha256","superseded_activation_review_body_sha256","superseded_activation_authority_body_sha256","superseded_activation_failure_record_body_sha256","successor_fresh_review_body_sha256","successor_merge_authority_body_sha256","successor_activation_record_body_sha256","wif_repin_saved_plan_sha256","wif_repin_structural_manifest_sha256","wif_repin_review_body_sha256","wif_repin_apply_authority_body_sha256","wif_repin_terminal_body_sha256","dispatch_authority_body_sha256","product_state_canonical_sha256","governance_chain_sha256")
     for key in required_hashes:
         if not HEX64.fullmatch(str(value.get(key) or "")): raise RecoveryError(f"SUCCESSOR_BOUNDARY_HASH_INVALID:{key}")
     chain=value["governance_chain_sha256"]; copy=dict(value); del copy["governance_chain_sha256"]
     if sha256(canonical(copy))!=chain: raise RecoveryError("SUCCESSOR_BOUNDARY_HASH_MISMATCH")
-    if value.get("governing_issue")!=GOVERNING_ISSUE or value.get("source_boundary_comment_id")!=SOURCE_BOUNDARY_COMMENT_ID or value.get("failed_apply_run")!=FAILED_APPLY_RUN or value.get("failed_apply_job")!=FAILED_APPLY_JOB or value.get("predecessor_control_sha")!=PREDECESSOR_CONTROL_SHA or value.get("predecessor_activation_sha")!=PREDECESSOR_ACTIVATION_SHA or value.get("predecessor_recovery_run")!=PREDECESSOR_RECOVERY_RUN or value.get("predecessor_recovery_job")!=PREDECESSOR_RECOVERY_JOB or value.get("predecessor_failure_record_id")!=PREDECESSOR_FAILURE_RECORD_ID or value.get("predecessor_failure_record_body_sha256")!=PREDECESSOR_FAILURE_RECORD_BODY_SHA256 or value.get("predecessor_claim_object")!=PREDECESSOR_CLAIM_OBJECT or value.get("predecessor_claim_generation")!=PREDECESSOR_CLAIM_GENERATION or value.get("predecessor_claim_body_sha256")!=PREDECESSOR_CLAIM_BODY_SHA256 or value.get("predecessor_claim_sha256")!=PREDECESSOR_CLAIM_SHA256 or value.get("predecessor_governance_chain_sha256")!=PREDECESSOR_GOVERNANCE_CHAIN_SHA256 or value.get("predecessor_result_object")!=PREDECESSOR_RESULT_OBJECT or value.get("s1_terminal_comment_id")!=S1_TERMINAL_COMMENT_ID or value.get("s1_terminal_body_sha256")!=S1_TERMINAL_BODY_SHA256: raise RecoveryError("SUCCESSOR_BOUNDARY_PREDECESSOR_INVALID")
+    if value.get("governing_issue")!=GOVERNING_ISSUE or value.get("source_boundary_comment_id")!=SOURCE_BOUNDARY_COMMENT_ID or value.get("failed_apply_run")!=FAILED_APPLY_RUN or value.get("failed_apply_job")!=FAILED_APPLY_JOB or value.get("predecessor_control_sha")!=PREDECESSOR_CONTROL_SHA or value.get("predecessor_activation_sha")!=PREDECESSOR_ACTIVATION_SHA or value.get("predecessor_recovery_run")!=PREDECESSOR_RECOVERY_RUN or value.get("predecessor_recovery_job")!=PREDECESSOR_RECOVERY_JOB or value.get("predecessor_failure_record_id")!=PREDECESSOR_FAILURE_RECORD_ID or value.get("predecessor_failure_record_body_sha256")!=PREDECESSOR_FAILURE_RECORD_BODY_SHA256 or value.get("predecessor_claim_object")!=PREDECESSOR_CLAIM_OBJECT or value.get("predecessor_claim_generation")!=PREDECESSOR_CLAIM_GENERATION or value.get("predecessor_claim_body_sha256")!=PREDECESSOR_CLAIM_BODY_SHA256 or value.get("predecessor_claim_sha256")!=PREDECESSOR_CLAIM_SHA256 or value.get("predecessor_governance_chain_sha256")!=PREDECESSOR_GOVERNANCE_CHAIN_SHA256 or value.get("predecessor_result_object")!=PREDECESSOR_RESULT_OBJECT or value.get("s1_terminal_comment_id")!=S1_TERMINAL_COMMENT_ID or value.get("s1_terminal_body_sha256")!=S1_TERMINAL_BODY_SHA256 or value.get("successor_architecture_comment_id")!=SUCCESSOR_ARCHITECTURE_COMMENT_ID or value.get("successor_architecture_body_sha256")!=SUCCESSOR_ARCHITECTURE_BODY_SHA256 or value.get("successor_architecture_review_comment_id")!=SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID or value.get("successor_architecture_review_body_sha256")!=SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256 or value.get("superseded_control_sha")!=SUPERSEDED_CONTROL_SHA or value.get("superseded_activation_pr")!=SUPERSEDED_ACTIVATION_PR or value.get("superseded_activation_reviewed_head")!=SUPERSEDED_ACTIVATION_REVIEWED_HEAD or value.get("superseded_activation_reviewed_tree")!=SUPERSEDED_ACTIVATION_REVIEWED_TREE or value.get("superseded_activation_review_id")!=SUPERSEDED_ACTIVATION_REVIEW_ID or value.get("superseded_activation_review_body_sha256")!=SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256 or value.get("superseded_activation_authority_id")!=SUPERSEDED_ACTIVATION_AUTHORITY_ID or value.get("superseded_activation_authority_body_sha256")!=SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256 or value.get("superseded_activation_merge_sha")!=SUPERSEDED_ACTIVATION_MERGE_SHA or value.get("superseded_activation_failure_record_id")!=SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID or value.get("superseded_activation_failure_record_body_sha256")!=SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256 or value.get("superseded_claim_object")!=SUPERSEDED_CLAIM_OBJECT or value.get("superseded_result_object")!=SUPERSEDED_RESULT_OBJECT: raise RecoveryError("SUCCESSOR_BOUNDARY_PREDECESSOR_INVALID")
     if not FULL_SHA.fullmatch(str(value.get("successor_reviewed_head") or "")): raise RecoveryError("SUCCESSOR_BOUNDARY_REVIEWED_HEAD_INVALID")
-    for key in ("predecessor_failure_record_id","s1_terminal_comment_id","successor_pr","successor_fresh_review_id","successor_merge_authority_comment_id","successor_activation_record_comment_id","wif_repin_review_comment_id","wif_repin_apply_authority_comment_id","wif_repin_terminal_comment_id","dispatch_authority_comment_id"):
+    for key in ("predecessor_failure_record_id","s1_terminal_comment_id","successor_architecture_comment_id","successor_architecture_review_comment_id","superseded_activation_pr","superseded_activation_review_id","superseded_activation_authority_id","superseded_activation_failure_record_id","successor_pr","successor_fresh_review_id","successor_merge_authority_comment_id","successor_activation_record_comment_id","wif_repin_review_comment_id","wif_repin_apply_authority_comment_id","wif_repin_terminal_comment_id","dispatch_authority_comment_id"):
         if not isinstance(value.get(key),int) or isinstance(value.get(key),bool) or value[key]<=0: raise RecoveryError(f"SUCCESSOR_BOUNDARY_ID_INVALID:{key}")
     return value
 
@@ -2010,24 +2242,26 @@ def _successor_gcs_json(object_name: str) -> Any:
 
 
 def verify_successor_cloud_boundary(control_sha: str) -> dict[str,Any]:
-    if not FULL_SHA.fullmatch(control_sha) or control_sha==PREDECESSOR_CONTROL_SHA: raise RecoveryError("SUCCESSOR_CONTROL_IDENTITY_INVALID")
+    if not FULL_SHA.fullmatch(control_sha) or control_sha in (PREDECESSOR_CONTROL_SHA, SUPERSEDED_CONTROL_SHA): raise RecoveryError("SUCCESSOR_CONTROL_IDENTITY_INVALID")
     pm=_successor_gcs_metadata(PREDECESSOR_CLAIM_OBJECT)
     if str(pm.get("generation"))!=PREDECESSOR_CLAIM_GENERATION: raise RecoveryError("SUCCESSOR_PREDECESSOR_CLAIM_GENERATION_MISMATCH")
     claim=_successor_gcs_json(PREDECESSOR_CLAIM_OBJECT)
     if sha256(canonical(claim)+b"\n")!=PREDECESSOR_CLAIM_BODY_SHA256 or claim.get("claim_sha256")!=PREDECESSOR_CLAIM_SHA256 or claim.get("governance_chain_sha256")!=PREDECESSOR_GOVERNANCE_CHAIN_SHA256 or claim.get("workflow_run_id")!=str(PREDECESSOR_RECOVERY_RUN) or claim.get("control_sha")!=PREDECESSOR_CONTROL_SHA or claim.get("activation_sha")!=PREDECESSOR_ACTIVATION_SHA: raise RecoveryError("SUCCESSOR_PREDECESSOR_CLAIM_BODY_MISMATCH")
     if _successor_gcs_metadata(PREDECESSOR_RESULT_OBJECT,True) is not None: raise RecoveryError("SUCCESSOR_PREDECESSOR_RESULT_UNEXPECTED")
+    if _successor_gcs_metadata(SUPERSEDED_CLAIM_OBJECT, True) is not None or _successor_gcs_metadata(SUPERSEDED_RESULT_OBJECT, True) is not None:
+        raise RecoveryError("SUCCESSOR_SUPERSEDED_EVIDENCE_UNEXPECTED")
     if _successor_gcs_metadata(evidence_object("claim",control_sha),True) is not None or _successor_gcs_metadata(evidence_object("result",control_sha),True) is not None: raise RecoveryError("SUCCESSOR_EVIDENCE_ALREADY_EXISTS")
     sm=_successor_gcs_metadata(STATE_OBJECT)
     if str(sm.get("generation"))!=SUCCESSOR_EXPECTED_GENERATION: raise RecoveryError("SUCCESSOR_CLOUD_STATE_GENERATION_MISMATCH")
     state=_successor_gcs_json(STATE_OBJECT); state_id=successor_state_identity_from_state(state,SUCCESSOR_EXPECTED_GENERATION)
     if _successor_gcs_metadata(LOCK_OBJECT,True) is not None: raise RecoveryError("SUCCESSOR_PRODUCT_LOCK_PRESENT")
-    return {"predecessor_claim_generation":PREDECESSOR_CLAIM_GENERATION,"predecessor_claim_body_sha256":PREDECESSOR_CLAIM_BODY_SHA256,"state_identity":state_id,"successor_claim_absent":True,"successor_result_absent":True,"product_lock_absent":True}
+    return {"predecessor_claim_generation":PREDECESSOR_CLAIM_GENERATION,"predecessor_claim_body_sha256":PREDECESSOR_CLAIM_BODY_SHA256,"superseded_claim_absent":True,"superseded_result_absent":True,"state_identity":state_id,"successor_claim_absent":True,"successor_result_absent":True,"product_lock_absent":True}
 
 
 def successor_claim_document(control_sha: str, activation_sha: str, run_id: str, github_boundary: Any) -> dict[str,Any]:
     boundary=verify_successor_github_boundary_document(github_boundary,control_sha,activation_sha)
     if not RUN_ID.fullmatch(run_id): raise RecoveryError("SUCCESSOR_CLAIM_RUN_ID_INVALID")
-    value={"contract":"resilio-phase5-slice-c-successor-claim/v1","governing_issue":GOVERNING_ISSUE,"source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"s1_terminal_comment_id":S1_TERMINAL_COMMENT_ID,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"github_boundary":boundary}
+    value={"contract":"resilio-phase5-slice-c-successor-claim/v1","governing_issue":GOVERNING_ISSUE,"source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"s1_terminal_comment_id":S1_TERMINAL_COMMENT_ID,"superseded_control_sha":SUPERSEDED_CONTROL_SHA,"superseded_activation_failure_record_id":SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"github_boundary":boundary}
     value["claim_sha256"]=sha256(canonical(value)); return value
 
 
@@ -2040,9 +2274,9 @@ def successor_build_result(before: Any, after: Any, plan: Any, control_sha: str,
     if b!=a: raise RecoveryError("SUCCESSOR_STATE_IDENTITY_CHANGED")
     plan_result=verify_successor_no_change_plan(plan); boundary=verify_successor_github_boundary_document(github_boundary,control_sha,activation_sha)
     claim=successor_claim_document(control_sha,activation_sha,run_id,boundary); plan_sha=sha256(canonical(plan))
-    private={"contract":"resilio-phase5-slice-c-successor-result/v1","governing_issue":GOVERNING_ISSUE,"source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"s1_terminal_comment_id":S1_TERMINAL_COMMENT_ID,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"github_boundary":boundary,"claim_sha256":claim["claim_sha256"],"claim_object":evidence_object("claim",control_sha),"result_object":evidence_object("result",control_sha),"state_before":b,"state_after":a,"plan_sha256":plan_sha,"residual_firestore_drift_fields":plan_result["residual_firestore_drift_fields"],"terraform_reconciliation":"EXACT_NO_MATERIAL_CHANGE"}
+    private={"contract":"resilio-phase5-slice-c-successor-result/v1","governing_issue":GOVERNING_ISSUE,"source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"s1_terminal_comment_id":S1_TERMINAL_COMMENT_ID,"superseded_control_sha":SUPERSEDED_CONTROL_SHA,"superseded_activation_failure_record_id":SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"github_boundary":boundary,"claim_sha256":claim["claim_sha256"],"claim_object":evidence_object("claim",control_sha),"result_object":evidence_object("result",control_sha),"state_before":b,"state_after":a,"plan_sha256":plan_sha,"residual_firestore_drift_fields":plan_result["residual_firestore_drift_fields"],"terraform_reconciliation":"EXACT_NO_MATERIAL_CHANGE"}
     private["result_sha256"]=sha256(canonical(private))
-    public={"contract":"resilio-phase5-slice-c-successor-manifest/v1","source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"claim_sha256":claim["claim_sha256"],"state_generation":b["generation"],"state_lineage":b["lineage"],"state_serial":b["serial"],"managed_addresses":b["managed_addresses"],"instance_statuses":b["instance_statuses"],"state_canonical_sha256":b["state_canonical_sha256"],"plan_sha256":plan_sha,"residual_firestore_drift_fields":plan_result["residual_firestore_drift_fields"],"terraform_reconciliation":"EXACT_NO_MATERIAL_CHANGE","claim_object":private["claim_object"],"result_object":private["result_object"],"result_sha256":private["result_sha256"]}
+    public={"contract":"resilio-phase5-slice-c-successor-manifest/v1","source_boundary_comment_id":SOURCE_BOUNDARY_COMMENT_ID,"failed_apply_run":FAILED_APPLY_RUN,"predecessor_recovery_run":PREDECESSOR_RECOVERY_RUN,"superseded_control_sha":SUPERSEDED_CONTROL_SHA,"superseded_activation_failure_record_id":SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID,"control_sha":control_sha,"activation_sha":activation_sha,"workflow_run_id":run_id,"governance_chain_sha256":boundary["governance_chain_sha256"],"claim_sha256":claim["claim_sha256"],"state_generation":b["generation"],"state_lineage":b["lineage"],"state_serial":b["serial"],"managed_addresses":b["managed_addresses"],"instance_statuses":b["instance_statuses"],"state_canonical_sha256":b["state_canonical_sha256"],"plan_sha256":plan_sha,"residual_firestore_drift_fields":plan_result["residual_firestore_drift_fields"],"terraform_reconciliation":"EXACT_NO_MATERIAL_CHANGE","claim_object":private["claim_object"],"result_object":private["result_object"],"result_sha256":private["result_sha256"]}
     return private,public
 
 
@@ -2068,6 +2302,31 @@ def main() -> int:
     p.add_argument("--control-sha", required=True)
     p.add_argument("--run-id", required=True)
     p.add_argument("--github-boundary", required=True)
+
+    p = commands.add_parser("emit-successor-activation-merge-authority")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+
+    p = commands.add_parser("verify-successor-activation-premerge")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+    p.add_argument("--authority-id", required=True, type=int)
+
+    p = commands.add_parser("emit-successor-activation-record")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--activation-sha", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+    p.add_argument("--authority-id", required=True, type=int)
+    p.add_argument("--authority-body-sha256", required=True)
 
     p = commands.add_parser("verify-successor-github-boundary")
     p.add_argument("--activation-sha", required=True)
@@ -2158,6 +2417,23 @@ def main() -> int:
                     separators=(",", ":"),
                 )
             )
+        elif args.command == "emit-successor-activation-merge-authority":
+            print(successor_activation_merge_authority_body(
+                args.control_sha, args.pr_number, args.reviewed_head,
+                args.review_id, args.review_body_sha256,
+            ))
+        elif args.command == "verify-successor-activation-premerge":
+            result = verify_successor_activation_premerge(
+                args.control_sha, args.pr_number, args.reviewed_head,
+                args.review_id, args.review_body_sha256, args.authority_id,
+            )
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif args.command == "emit-successor-activation-record":
+            print(successor_activation_record_body(
+                args.control_sha, args.activation_sha, args.pr_number,
+                args.reviewed_head, args.review_id, args.review_body_sha256,
+                args.authority_id, args.authority_body_sha256,
+            ))
         elif args.command == "verify-successor-github-boundary":
             result = verify_successor_github_boundary(args.activation_sha, args.control_sha, args.candidate_output)
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))

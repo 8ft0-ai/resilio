@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free validation for the Slice C successor recovery activation candidate."""
+"""Credential-free validation for the inert Slice C C3 successor recovery control."""
 from __future__ import annotations
 
 import re
@@ -234,6 +234,20 @@ def main() -> int:
             'PREDECESSOR_RECOVERY_RUN = 37107984572',
             'PREDECESSOR_FAILURE_RECORD_ID = 5967010836',
             'S1_TERMINAL_COMMENT_ID = 5968501614',
+            'SUCCESSOR_ARCHITECTURE_COMMENT_ID = 5974709262',
+            'SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID = 5974712806',
+            'SUPERSEDED_CONTROL_SHA = "af197af2b0c2d2b5a5b949aeb330e9ddf5d07884"',
+            'SUPERSEDED_ACTIVATION_PR = 124',
+            'SUPERSEDED_ACTIVATION_REVIEW_ID = 5403467252',
+            'SUPERSEDED_ACTIVATION_AUTHORITY_ID = 5974684198',
+            'SUPERSEDED_ACTIVATION_MERGE_SHA = "81e542ce39f1728eebaa65ae4252499a61c44e53"',
+            'SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID = 5974703297',
+            'SUPERSEDED_CLAIM_OBJECT',
+            'SUPERSEDED_RESULT_OBJECT',
+            'SUCCESSOR_C3_ARCHITECTURE_CONTRACT_MISMATCH',
+            'SUCCESSOR_C3_ARCHITECTURE_REVIEW_CONTRACT_MISMATCH',
+            'SUCCESSOR_C3_ARCHITECTURE_TIMELINE_INVALID',
+            'SUCCESSOR_ACTIVATION_MERGED_TREE_MISMATCH',
             'SUCCESSOR_VOLATILE_FIRESTORE_FIELDS',
             "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_MERGE_AUTHORITY_V1",
             "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_V1",
@@ -247,6 +261,16 @@ def main() -> int:
             "resilio-phase5-slice-c-successor-result/v1",
             "resilio-phase5-slice-c-successor-manifest/v1",
             "verify_successor_cloud_boundary",
+            "validate_superseded_activation_history",
+            "verify_successor_activation_premerge",
+            "emit-successor-activation-merge-authority",
+            "verify-successor-activation-premerge",
+            "emit-successor-activation-record",
+            "resilio-phase5-slice-c-successor-premerge-authority/v1",
+            "EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_C1_TO_C3",
+            "EXACT_C1_TO_C3_LIVE",
+            "SUPERSEDED_C2_RECOVERY_WIF=ABSENT",
+            "NEW_C3_RECOVERY_WIF=EXACT_ONE",
             "successor_state_identity_from_state",
             "verify_successor_no_change_plan",
             "PHASE5_SLICE_C_RECOVERY_R2_MERGE_AUTHORITY_V2",
@@ -342,7 +366,7 @@ def main() -> int:
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Phase 5 Slice C successor recovery activation validation passed")
+    print("Phase 5 Slice C inert C3 successor recovery control validation passed")
     return 0
 
 
