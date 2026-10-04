@@ -1603,6 +1603,38 @@ def validate_successor_predecessor_records(comments: list[dict[str, Any]]) -> di
     if terminal["created_at"] <= failure["created_at"]:
         raise RecoveryError("SUCCESSOR_S1_TERMINAL_TIMELINE_INVALID")
 
+    architecture = _successor_fixed_comment(
+        comments, SUCCESSOR_ARCHITECTURE_COMMENT_ID, SUCCESSOR_ARCHITECTURE_BODY_SHA256,
+        "SUCCESSOR_C3_ARCHITECTURE",
+    )
+    for token in (
+        "STATUS=C3_ARCHITECTURE_COMPLETE_PENDING_FRESH_REVIEW",
+        f"CURRENT_MAIN={SUPERSEDED_ACTIVATION_MERGE_SHA}",
+        f"IMMUTABLE_CONTROL_C2={SUPERSEDED_CONTROL_SHA}",
+        f"FAILED_C2_ACTIVATION_PR={SUPERSEDED_ACTIVATION_PR}",
+        f"FAILED_C2_ACTIVATION_RECORD={SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID}",
+        f"S1_TERMINAL={S1_TERMINAL_COMMENT_ID}",
+        "LIVE_RECOVERY_WIF=C1_ONLY", "C2_LIVE_WIF=ABSENT",
+        "C2_CLAIM=ABSENT", "C2_RESULT=ABSENT",
+    ):
+        if token not in architecture["body"]:
+            raise RecoveryError("SUCCESSOR_C3_ARCHITECTURE_CONTRACT_MISMATCH")
+
+    architecture_review = _successor_fixed_comment(
+        comments, SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID,
+        SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256, "SUCCESSOR_C3_ARCHITECTURE_REVIEW",
+    )
+    for token in (
+        f"REVIEW_TARGET={SUCCESSOR_ARCHITECTURE_COMMENT_ID}",
+        "DISPOSITION=APPROVED", "MATERIAL_BLOCKERS=NONE",
+        "FAILED_C2_SUPERSESSION=PASS", "CURRENT_SAFETY_STATE=PASS",
+        "C3_INERTNESS=PASS", "AUTHORITY_PROTOCOL_CLOSURE=PASS",
+        "C3_ACTIVATION_REACHABILITY=PASS", "LIVE_WIF_REPIN_REACHABILITY=PASS",
+        "C3_ONE_SHOT_RECOVERY_REACHABILITY=PASS",
+    ):
+        if token not in architecture_review["body"]:
+            raise RecoveryError("SUCCESSOR_C3_ARCHITECTURE_REVIEW_CONTRACT_MISMATCH")
+
     superseded = _successor_fixed_comment(
         comments,
         SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID,
@@ -1634,7 +1666,13 @@ def validate_successor_predecessor_records(comments: list[dict[str, Any]]) -> di
         raise RecoveryError("SUCCESSOR_SUPERSEDED_ACTIVATION_FAILURE_CONTRACT_MISMATCH")
     if superseded["created_at"] <= terminal["created_at"]:
         raise RecoveryError("SUCCESSOR_SUPERSEDED_ACTIVATION_TIMELINE_INVALID")
-    return {"failure": failure, "s1_terminal": terminal, "superseded_activation": superseded}
+    if not (superseded["created_at"] < architecture["created_at"] < architecture_review["created_at"]):
+        raise RecoveryError("SUCCESSOR_C3_ARCHITECTURE_TIMELINE_INVALID")
+    return {
+        "failure": failure, "s1_terminal": terminal,
+        "superseded_activation": superseded, "architecture": architecture,
+        "architecture_review": architecture_review,
+    }
 
 
 def _successor_review_fields(body: str) -> dict[str, str]:
@@ -2082,7 +2120,7 @@ def verify_successor_github_boundary(
       "predecessor_failure_record_id":predecessor["failure"]["comment_id"],"predecessor_failure_record_body_sha256":predecessor["failure"]["body_sha256"],
       "predecessor_claim_object":PREDECESSOR_CLAIM_OBJECT,"predecessor_claim_generation":PREDECESSOR_CLAIM_GENERATION,"predecessor_claim_body_sha256":PREDECESSOR_CLAIM_BODY_SHA256,"predecessor_claim_sha256":PREDECESSOR_CLAIM_SHA256,"predecessor_governance_chain_sha256":PREDECESSOR_GOVERNANCE_CHAIN_SHA256,"predecessor_result_object":PREDECESSOR_RESULT_OBJECT,
       "s1_terminal_comment_id":predecessor["s1_terminal"]["comment_id"],"s1_terminal_body_sha256":predecessor["s1_terminal"]["body_sha256"],
-      "successor_architecture_comment_id":SUCCESSOR_ARCHITECTURE_COMMENT_ID,"successor_architecture_body_sha256":SUCCESSOR_ARCHITECTURE_BODY_SHA256,"successor_architecture_review_comment_id":SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID,"successor_architecture_review_body_sha256":SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256,
+      "successor_architecture_comment_id":predecessor["architecture"]["comment_id"],"successor_architecture_body_sha256":predecessor["architecture"]["body_sha256"],"successor_architecture_review_comment_id":predecessor["architecture_review"]["comment_id"],"successor_architecture_review_body_sha256":predecessor["architecture_review"]["body_sha256"],
       "superseded_control_sha":SUPERSEDED_CONTROL_SHA,"superseded_activation_pr":SUPERSEDED_ACTIVATION_PR,"superseded_activation_reviewed_head":SUPERSEDED_ACTIVATION_REVIEWED_HEAD,"superseded_activation_reviewed_tree":SUPERSEDED_ACTIVATION_REVIEWED_TREE,"superseded_activation_review_id":SUPERSEDED_ACTIVATION_REVIEW_ID,"superseded_activation_review_body_sha256":SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256,"superseded_activation_authority_id":SUPERSEDED_ACTIVATION_AUTHORITY_ID,"superseded_activation_authority_body_sha256":SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256,"superseded_activation_merge_sha":SUPERSEDED_ACTIVATION_MERGE_SHA,"superseded_activation_failure_record_id":predecessor["superseded_activation"]["comment_id"],"superseded_activation_failure_record_body_sha256":predecessor["superseded_activation"]["body_sha256"],"superseded_claim_object":SUPERSEDED_CLAIM_OBJECT,"superseded_result_object":SUPERSEDED_RESULT_OBJECT,
       "control_sha":control_sha,"activation_sha":activation_sha,"successor_pr":activation["pr_number"],"successor_reviewed_head":activation["reviewed_head"],"successor_fresh_review_id":activation["review_id"],"successor_fresh_review_body_sha256":activation["review_body_sha256"],"successor_merge_authority_comment_id":activation["authority_id"],"successor_merge_authority_body_sha256":activation["authority_body_sha256"],"successor_activation_record_comment_id":activation["comment_id"],"successor_activation_record_body_sha256":activation["body_sha256"],
       "wif_repin_saved_plan_sha256":repin["saved_plan_sha256"],"wif_repin_structural_manifest_sha256":repin["manifest_sha256"],"wif_repin_review_comment_id":repin["review_id"],"wif_repin_review_body_sha256":repin["review_sha256"],"wif_repin_apply_authority_comment_id":repin["authority_id"],"wif_repin_apply_authority_body_sha256":repin["authority_sha256"],"wif_repin_terminal_comment_id":repin["comment_id"],"wif_repin_terminal_body_sha256":repin["body_sha256"],

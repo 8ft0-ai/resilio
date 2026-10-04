@@ -487,7 +487,27 @@ def successor_boundary_fixture():
     superseded_authority_sha=recovery.sha256(superseded_authority_body.encode())
     superseded_failure_body=superseded_failure_body.replace("fixture-authority-sha",superseded_authority_sha)
     superseded_failure_sha=recovery.sha256(superseded_failure_body.encode())
-    with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",failure_sha), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",s1_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",superseded_failure_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",superseded_review_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",superseded_authority_sha):
+    architecture_body="\n".join((
+        "SLICE_C_SUCCESSOR_RECOVERY_C3_ARCHITECTURE_CLOSURE_V1",
+        "STATUS=C3_ARCHITECTURE_COMPLETE_PENDING_FRESH_REVIEW",
+        f"CURRENT_MAIN={recovery.SUPERSEDED_ACTIVATION_MERGE_SHA}",
+        f"IMMUTABLE_CONTROL_C2={recovery.SUPERSEDED_CONTROL_SHA}",
+        f"FAILED_C2_ACTIVATION_PR={recovery.SUPERSEDED_ACTIVATION_PR}",
+        f"FAILED_C2_ACTIVATION_RECORD={recovery.SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID}",
+        f"S1_TERMINAL={recovery.S1_TERMINAL_COMMENT_ID}",
+        "LIVE_RECOVERY_WIF=C1_ONLY","C2_LIVE_WIF=ABSENT","C2_CLAIM=ABSENT","C2_RESULT=ABSENT",
+    ))
+    architecture_sha=recovery.sha256(architecture_body.encode())
+    architecture_review_body="\n".join((
+        "COMPLETELY_FRESH_SUBSTANTIVE_C3_ARCHITECTURE_SECURITY_AUTHORITY_REVIEW",
+        f"REVIEW_TARGET={recovery.SUCCESSOR_ARCHITECTURE_COMMENT_ID}",
+        "DISPOSITION=APPROVED","MATERIAL_BLOCKERS=NONE","FAILED_C2_SUPERSESSION=PASS",
+        "CURRENT_SAFETY_STATE=PASS","C3_INERTNESS=PASS","AUTHORITY_PROTOCOL_CLOSURE=PASS",
+        "C3_ACTIVATION_REACHABILITY=PASS","LIVE_WIF_REPIN_REACHABILITY=PASS",
+        "C3_ONE_SHOT_RECOVERY_REACHABILITY=PASS",
+    ))
+    architecture_review_sha=recovery.sha256(architecture_review_body.encode())
+    with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",failure_sha), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",s1_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",superseded_failure_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",superseded_review_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",superseded_authority_sha), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_BODY_SHA256",architecture_sha), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256",architecture_review_sha):
         review_body=successor_review_body(pr_number,reviewed,control); review_sha=recovery.sha256(review_body.encode())
         authority_body=recovery.successor_activation_merge_authority_body(control,pr_number,reviewed,review_id,review_sha); authority_sha=recovery.sha256(authority_body.encode())
         activation_body=recovery.successor_activation_record_body(control,activation,pr_number,reviewed,review_id,review_sha,authority_id,authority_sha); activation_sha=recovery.sha256(activation_body.encode())
@@ -502,6 +522,8 @@ def successor_boundary_fixture():
       owner_comment(recovery.PREDECESSOR_FAILURE_RECORD_ID,failure_body,"2026-10-03T01:00:00Z"),
       owner_comment(recovery.S1_TERMINAL_COMMENT_ID,s1_body,"2026-10-03T02:00:00Z"),
       owner_comment(recovery.SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID,superseded_failure_body,"2026-10-03T02:13:00Z"),
+      owner_comment(recovery.SUCCESSOR_ARCHITECTURE_COMMENT_ID,architecture_body,"2026-10-03T02:14:00Z"),
+      owner_comment(recovery.SUCCESSOR_ARCHITECTURE_REVIEW_COMMENT_ID,architecture_review_body,"2026-10-03T02:15:00Z"),
       owner_comment(activation_id,activation_body,"2026-10-03T03:03:00Z"),
       owner_comment(repin_review_id,repin_review_body,"2026-10-03T03:04:00Z"),
       owner_comment(repin_authority_id,repin_authority_body,"2026-10-03T03:05:00Z"),
@@ -531,7 +553,7 @@ def successor_boundary_fixture():
       f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/reviews/{review_id}":{"id":review_id,"state":"COMMENTED","commit_id":reviewed,"body":review_body,"submitted_at":"2026-10-03T03:00:00Z","user":{"login":"8ft0-ai","id":130460431}},
       f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}":owner_comment(authority_id,authority_body,"2026-10-03T03:01:00Z",pr_number),
     }
-    return {"control":control,"activation":activation,"failure_sha":failure_sha,"s1_sha":s1_sha,"superseded_failure_sha":superseded_failure_sha,"superseded_review_sha":superseded_review_sha,"superseded_authority_sha":superseded_authority_sha,"boundary_sha":boundary_sha,"candidate_raw":candidate_raw,"wrapped":wrapped,"fixtures":fixtures}
+    return {"control":control,"activation":activation,"failure_sha":failure_sha,"s1_sha":s1_sha,"superseded_failure_sha":superseded_failure_sha,"superseded_review_sha":superseded_review_sha,"superseded_authority_sha":superseded_authority_sha,"architecture_sha":architecture_sha,"architecture_review_sha":architecture_review_sha,"boundary_sha":boundary_sha,"candidate_raw":candidate_raw,"wrapped":wrapped,"fixtures":fixtures}
 
 
 def run_successor_boundary(fixture):
@@ -540,7 +562,7 @@ def run_successor_boundary(fixture):
             return {"type":"file","path":recovery.CANDIDATE_PATH,"encoding":"base64","content":fixture["wrapped"]}
         if path not in fixture["fixtures"]: raise AssertionError(f"unexpected GitHub path: {path}")
         return copy.deepcopy(fixture["fixtures"][path])
-    with tempfile.TemporaryDirectory() as tmp, patch.object(recovery,"github",side_effect=fake_github), patch.object(recovery,"SOURCE_BOUNDARY_BODY_SHA256",fixture["boundary_sha"]), patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]):
+    with tempfile.TemporaryDirectory() as tmp, patch.object(recovery,"github",side_effect=fake_github), patch.object(recovery,"SOURCE_BOUNDARY_BODY_SHA256",fixture["boundary_sha"]), patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_BODY_SHA256",fixture["architecture_sha"]), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256",fixture["architecture_review_sha"]):
         output=Path(tmp)/"candidate.json"; result=recovery.verify_successor_github_boundary(fixture["activation"],fixture["control"],output); return result,output.read_bytes()
 
 
@@ -1065,8 +1087,16 @@ jobs:
         self.assertEqual(result["control_sha"],fixture["control"])
         self.assertEqual(result["activation_sha"],fixture["activation"])
         self.assertRegex(result["governance_chain_sha256"],r"^[0-9a-f]{64}$")
-        with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]):
+        with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_BODY_SHA256",fixture["architecture_sha"]), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256",fixture["architecture_review_sha"]):
             self.assertEqual(recovery.verify_successor_github_boundary_document(result,fixture["control"],fixture["activation"]),result)
+
+    def test_successor_rejects_edited_c3_architecture_evidence(self):
+        fixture=successor_boundary_fixture()
+        path=f"/repos/{recovery.REPOSITORY}/issues/{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1"
+        row=next(x for x in fixture["fixtures"][path] if x["id"]==recovery.SUCCESSOR_ARCHITECTURE_COMMENT_ID)
+        row["updated_at"]="2026-10-03T02:14:30Z"
+        with self.assertRaises(RecoveryError):
+            run_successor_boundary(fixture)
 
     def test_successor_rejects_superseded_activation_tree_mismatch(self):
         fixture=successor_boundary_fixture()
