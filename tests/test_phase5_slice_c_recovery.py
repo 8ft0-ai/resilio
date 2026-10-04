@@ -552,6 +552,8 @@ def successor_boundary_fixture():
       f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}":{"number":pr_number,"state":"closed","merged_at":"2026-10-03T03:02:00Z","merge_commit_sha":activation,"head":{"sha":reviewed,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":control}},
       f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/reviews/{review_id}":{"id":review_id,"state":"COMMENTED","commit_id":reviewed,"body":review_body,"submitted_at":"2026-10-03T03:00:00Z","user":{"login":"8ft0-ai","id":130460431}},
       f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}":owner_comment(authority_id,authority_body,"2026-10-03T03:01:00Z",pr_number),
+      f"/repos/{recovery.REPOSITORY}/commits/{reviewed}":{"sha":reviewed,"commit":{"tree":{"sha":"a"*40}}},
+      f"/repos/{recovery.REPOSITORY}/commits/{activation}":{"sha":activation,"commit":{"tree":{"sha":"a"*40}}},
     }
     return {"control":control,"activation":activation,"failure_sha":failure_sha,"s1_sha":s1_sha,"superseded_failure_sha":superseded_failure_sha,"superseded_review_sha":superseded_review_sha,"superseded_authority_sha":superseded_authority_sha,"architecture_sha":architecture_sha,"architecture_review_sha":architecture_review_sha,"boundary_sha":boundary_sha,"candidate_raw":candidate_raw,"wrapped":wrapped,"fixtures":fixtures}
 
@@ -1089,6 +1091,13 @@ jobs:
         self.assertRegex(result["governance_chain_sha256"],r"^[0-9a-f]{64}$")
         with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_BODY_SHA256",fixture["architecture_sha"]), patch.object(recovery,"SUCCESSOR_ARCHITECTURE_REVIEW_BODY_SHA256",fixture["architecture_review_sha"]):
             self.assertEqual(recovery.verify_successor_github_boundary_document(result,fixture["control"],fixture["activation"]),result)
+
+    def test_successor_rejects_activation_merge_tree_mismatch(self):
+        fixture=successor_boundary_fixture()
+        path=f"/repos/{recovery.REPOSITORY}/commits/{fixture['activation']}"
+        fixture["fixtures"][path]["commit"]["tree"]["sha"]="b"*40
+        with self.assertRaises(RecoveryError):
+            run_successor_boundary(fixture)
 
     def test_successor_rejects_edited_c3_architecture_evidence(self):
         fixture=successor_boundary_fixture()

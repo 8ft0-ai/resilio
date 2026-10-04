@@ -1794,8 +1794,8 @@ def validate_successor_activation_record(
 
 
 def validate_successor_activation_transaction(
-    pr: Any, review: Any, authority_comment: Any, record: dict[str, Any],
-    control_sha: str, activation_sha: str,
+    pr: Any, review: Any, authority_comment: Any, reviewed_commit: Any,
+    merge_commit: Any, record: dict[str, Any], control_sha: str, activation_sha: str,
 ) -> None:
     if not isinstance(pr,dict) or pr.get("number") != record["pr_number"] or pr.get("state") != "closed" or pr.get("merged_at") is None:
         raise RecoveryError("SUCCESSOR_PR_INVALID")
@@ -1806,6 +1806,16 @@ def validate_successor_activation_transaction(
     hr=pr.get("head",{}).get("repo") or {}
     if hr.get("id") != REPOSITORY_ID or hr.get("full_name") != REPOSITORY:
         raise RecoveryError("SUCCESSOR_PR_REPOSITORY_MISMATCH")
+    if not isinstance(reviewed_commit, dict) or reviewed_commit.get("sha") != record["reviewed_head"]:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_REVIEWED_COMMIT_INVALID")
+    reviewed_tree = (reviewed_commit.get("commit") or {}).get("tree", {}).get("sha")
+    if not FULL_SHA.fullmatch(str(reviewed_tree or "")):
+        raise RecoveryError("SUCCESSOR_ACTIVATION_REVIEWED_TREE_INVALID")
+    if not isinstance(merge_commit, dict) or merge_commit.get("sha") != activation_sha:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_MERGE_COMMIT_INVALID")
+    merged_tree = (merge_commit.get("commit") or {}).get("tree", {}).get("sha")
+    if merged_tree != reviewed_tree:
+        raise RecoveryError("SUCCESSOR_ACTIVATION_MERGED_TREE_MISMATCH")
     if not isinstance(review,dict) or review.get("id") != record["review_id"] or review.get("state") != "COMMENTED" or review.get("commit_id") != record["reviewed_head"]:
         raise RecoveryError("SUCCESSOR_REVIEW_IDENTITY_MISMATCH")
     user=review.get("user") or {}
@@ -2105,7 +2115,12 @@ def verify_successor_github_boundary(
     )
     activation=validate_successor_activation_record(comments,control_sha,activation_sha)
     apr=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}"); areview=github(f"/repos/{REPOSITORY}/pulls/{activation['pr_number']}/reviews/{activation['review_id']}"); aauth=github(f"/repos/{REPOSITORY}/issues/comments/{activation['authority_id']}")
-    validate_successor_activation_transaction(apr,areview,aauth,activation,control_sha,activation_sha)
+    activation_reviewed_commit=github(f"/repos/{REPOSITORY}/commits/{activation['reviewed_head']}")
+    activation_merge_commit=github(f"/repos/{REPOSITORY}/commits/{activation_sha}")
+    validate_successor_activation_transaction(
+        apr, areview, aauth, activation_reviewed_commit, activation_merge_commit,
+        activation, control_sha, activation_sha,
+    )
     repin=validate_successor_wif_repin_terminal(comments,control_sha,activation_sha,activation["created_at"])
     dispatch=validate_successor_dispatch_authority(comments,control_sha,activation_sha,activation,repin)
     reviewed=fetch_candidate(REVIEWED_HEAD); merged=fetch_candidate(SLICE_C_MERGE); active=fetch_candidate(activation_sha)
