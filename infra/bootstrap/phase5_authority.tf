@@ -8,7 +8,7 @@ locals {
   phase5_acceptance_workflow_ref       = "8ft0-ai/resilio/.github/workflows/phase5-acceptance-reusable.yml@${local.phase5_control_sha}"
   phase5_product_plan_workflow_ref     = "8ft0-ai/resilio/.github/workflows/phase5-terraform-plan-reusable.yml@${local.phase5_control_sha}"
   phase5_product_apply_workflow_ref    = "8ft0-ai/resilio/.github/workflows/phase5-terraform-apply-reusable.yml@${local.phase5_control_sha}"
-  phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@af197af2b0c2d2b5a5b949aeb330e9ddf5d07884"
+  phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@4c9a4fd6f2b5c4cf3cd1d71f6c28053ab5ac5516"
 
   phase5_region                    = "us-central1"
   phase5_product_repository        = "resilio-product"

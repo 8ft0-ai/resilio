@@ -12,7 +12,7 @@ from phase5_terraform_control import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
-RECOVERY_CONTROL_SHA = "af197af2b0c2d2b5a5b949aeb330e9ddf5d07884"
+RECOVERY_CONTROL_SHA = "4c9a4fd6f2b5c4cf3cd1d71f6c28053ab5ac5516"
 AUTHORITY = ROOT / "infra/bootstrap/phase5_authority.tf"
 PHASE4 = ROOT / "infra/bootstrap/phase4_authority.tf"
 CANDIDATE = ROOT / "infra/product/candidate.json"
