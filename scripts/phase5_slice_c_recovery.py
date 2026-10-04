@@ -1850,8 +1850,8 @@ def validate_successor_activation_record(
 ) -> dict[str, Any]:
     header = "PHASE5_SLICE_C_SUCCESSOR_ACTIVATION_V1"
     matches = [c for c in comments if _owner_issue_comment(c, GOVERNING_ISSUE)
-               and str(c.get("body") or "").strip().startswith(header + "\n")
-               and f"SUCCESSOR_CONTROL_SHA={control_sha}" in str(c.get("body") or "")]
+               and canonical_comment_text(c.get("body")).startswith(header + "\n")
+               and f"SUCCESSOR_CONTROL_SHA={control_sha}" in canonical_comment_text(c.get("body"))]
     if len(matches) != 1:
         raise RecoveryError("SUCCESSOR_ACTIVATION_RECORD_NOT_UNIQUE")
     comment = matches[0]
@@ -2178,7 +2178,7 @@ def validate_successor_wif_repin_terminal(
     activation_created_at: datetime,
 ) -> dict[str,Any]:
     header="PHASE5_SLICE_C_SUCCESSOR_WIF_REPIN_TERMINAL_V1"
-    matches=[c for c in comments if _owner_issue_comment(c,GOVERNING_ISSUE) and str(c.get("body") or "").strip().startswith(header+"\n") and f"SUCCESSOR_CONTROL_SHA={control_sha}" in str(c.get("body") or "")]
+    matches=[c for c in comments if _owner_issue_comment(c,GOVERNING_ISSUE) and canonical_comment_text(c.get("body")).startswith(header+"\n") and f"SUCCESSOR_CONTROL_SHA={control_sha}" in canonical_comment_text(c.get("body"))]
     if len(matches)!=1: raise RecoveryError("SUCCESSOR_WIF_REPIN_TERMINAL_NOT_UNIQUE")
     c=matches[0]; created,body_sha=_require_unedited_owner_comment(c,GOVERNING_ISSUE,"SUCCESSOR_WIF_REPIN_TERMINAL")
     f=_record_fields(str(c.get("body") or ""),header,(
@@ -2195,10 +2195,10 @@ def validate_successor_wif_repin_terminal(
     if len(review_matches)!=1 or len(authority_matches)!=1: raise RecoveryError("SUCCESSOR_WIF_REPIN_PREREQUISITE_NOT_UNIQUE")
     review=review_matches[0]; review_created,review_sha=_require_unedited_owner_comment(review,GOVERNING_ISSUE,"SUCCESSOR_WIF_REPIN_REVIEW")
     expected_review=successor_wif_repin_review_body(control_sha,activation_sha,f["SAVED_PLAN_SHA256"],f["STRUCTURAL_MANIFEST_SHA256"],f["BOOTSTRAP_STATE_LINEAGE"],sb)
-    if str(review.get("body") or "").strip()!=expected_review or review_sha!=f["FRESH_REVIEW_BODY_SHA256"]: raise RecoveryError("SUCCESSOR_WIF_REPIN_REVIEW_MISMATCH")
+    if canonical_comment_text(review.get("body"))!=expected_review or review_sha!=f["FRESH_REVIEW_BODY_SHA256"]: raise RecoveryError("SUCCESSOR_WIF_REPIN_REVIEW_MISMATCH")
     authority=authority_matches[0]; authority_created,authority_sha=_require_unedited_owner_comment(authority,GOVERNING_ISSUE,"SUCCESSOR_WIF_REPIN_AUTHORITY")
     expected_authority=successor_wif_repin_authority_body(control_sha,activation_sha,f["SAVED_PLAN_SHA256"],f["STRUCTURAL_MANIFEST_SHA256"],f["BOOTSTRAP_STATE_LINEAGE"],sb,review_id,review_sha)
-    if str(authority.get("body") or "").strip()!=expected_authority or authority_sha!=f["OWNER_APPLY_AUTHORITY_BODY_SHA256"]: raise RecoveryError("SUCCESSOR_WIF_REPIN_AUTHORITY_MISMATCH")
+    if canonical_comment_text(authority.get("body"))!=expected_authority or authority_sha!=f["OWNER_APPLY_AUTHORITY_BODY_SHA256"]: raise RecoveryError("SUCCESSOR_WIF_REPIN_AUTHORITY_MISMATCH")
     if not (activation_created_at <= review_created <= authority_created <= created): raise RecoveryError("SUCCESSOR_WIF_REPIN_TIMELINE_INVALID")
     return {"comment_id":int(c["id"]),"created_at":created,"body_sha256":body_sha,"saved_plan_sha256":f["SAVED_PLAN_SHA256"],"manifest_sha256":f["STRUCTURAL_MANIFEST_SHA256"],"review_id":review_id,"review_sha256":review_sha,"authority_id":authority_id,"authority_sha256":authority_sha,"state_lineage":f["BOOTSTRAP_STATE_LINEAGE"],"serial_before":sb,"serial_after":sa}
 
@@ -2223,7 +2223,7 @@ def validate_successor_dispatch_authority(
     activation_record: dict[str,Any], repin_terminal: dict[str,Any],
 ) -> dict[str,Any]:
     expected=successor_dispatch_authority_body(control_sha,activation_sha,activation_record,repin_terminal)
-    matches=[c for c in comments if _owner_issue_comment(c,GOVERNING_ISSUE) and str(c.get("body") or "").strip()==expected]
+    matches=[c for c in comments if _owner_issue_comment(c,GOVERNING_ISSUE) and canonical_comment_text(c.get("body"))==expected]
     if len(matches)!=1: raise RecoveryError("SUCCESSOR_DISPATCH_AUTHORITY_NOT_UNIQUE")
     c=matches[0]; created,body_sha=_require_unedited_owner_comment(c,GOVERNING_ISSUE,"SUCCESSOR_DISPATCH_AUTHORITY")
     if created < activation_record["created_at"] or created < repin_terminal["created_at"]: raise RecoveryError("SUCCESSOR_DISPATCH_AUTHORITY_PRECEDES_PREREQUISITE")

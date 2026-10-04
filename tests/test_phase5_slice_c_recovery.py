@@ -1344,6 +1344,47 @@ jobs:
             recovery.validate_successor_activation_transaction(pr,review,authority_lf_comment,reviewed_commit,merge_commit,record,control,activation)
 
 
+    def test_successor_activation_record_accepts_crlf_and_binds_raw_hash(self):
+        control="7"*40; activation="9"*40; reviewed="8"*40
+        review_sha="a"*64; authority_sha="b"*64
+        body_lf=recovery.successor_activation_record_body(control,activation,131,reviewed,501,review_sha,502,authority_sha)
+        body_crlf=body_lf.replace("\n","\r\n")
+        row=owner_comment(503,body_crlf,"2026-10-03T04:03:00Z")
+        result=recovery.validate_successor_activation_record([row],control,activation)
+        self.assertEqual(result["body_sha256"],recovery.sha256(body_crlf.encode()))
+        self.assertEqual(result["authority_body_sha256"],authority_sha)
+
+    def test_successor_wif_chain_accepts_crlf_but_binds_each_raw_hash(self):
+        control="7"*40; activation="9"*40; plan="b"*64; manifest="c"*64
+        lineage="bootstrap-lineage"; sb=80; sa=81; review_id=601; authority_id=602; terminal_id=603
+        review_lf=recovery.successor_wif_repin_review_body(control,activation,plan,manifest,lineage,sb)
+        review_crlf=review_lf.replace("\n","\r\n"); review_sha=recovery.sha256(review_crlf.encode())
+        authority_lf=recovery.successor_wif_repin_authority_body(control,activation,plan,manifest,lineage,sb,review_id,review_sha)
+        authority_crlf=authority_lf.replace("\n","\r\n"); authority_sha=recovery.sha256(authority_crlf.encode())
+        terminal_lf=recovery.successor_wif_repin_terminal_body(control,activation,plan,manifest,lineage,sb,sa,review_id,review_sha,authority_id,authority_sha)
+        terminal_crlf=terminal_lf.replace("\n","\r\n")
+        comments=[
+            owner_comment(review_id,review_crlf,"2026-10-03T04:04:00Z"),
+            owner_comment(authority_id,authority_crlf,"2026-10-03T04:05:00Z"),
+            owner_comment(terminal_id,terminal_crlf,"2026-10-03T04:06:00Z"),
+        ]
+        result=recovery.validate_successor_wif_repin_terminal(
+            comments,control,activation,recovery._timestamp("2026-10-03T04:03:00Z","activation")
+        )
+        self.assertEqual(result["review_sha256"],review_sha)
+        self.assertEqual(result["authority_sha256"],authority_sha)
+        self.assertEqual(result["body_sha256"],recovery.sha256(terminal_crlf.encode()))
+
+    def test_successor_dispatch_accepts_crlf_and_binds_raw_hash(self):
+        control="7"*40; activation="9"*40
+        activation_record={"comment_id":701,"created_at":recovery._timestamp("2026-10-03T04:03:00Z","a"),"body_sha256":"a"*64}
+        repin_terminal={"comment_id":702,"created_at":recovery._timestamp("2026-10-03T04:06:00Z","w"),"body_sha256":"b"*64}
+        body_lf=recovery.successor_dispatch_authority_body(control,activation,activation_record,repin_terminal)
+        body_crlf=body_lf.replace("\n","\r\n")
+        row=owner_comment(703,body_crlf,"2026-10-03T04:07:00Z")
+        result=recovery.validate_successor_dispatch_authority([row],control,activation,activation_record,repin_terminal)
+        self.assertEqual(result["body_sha256"],recovery.sha256(body_crlf.encode()))
+
     def test_successor_authority_and_activation_bodies_are_deterministic(self):
         control="7"*40; activation="9"*40; reviewed="8"*40
         review_body=successor_review_body(131,reviewed,control); review_sha=recovery.sha256(review_body.encode())
