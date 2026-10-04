@@ -459,7 +459,35 @@ def successor_boundary_fixture():
         f"STATE_BODY_SHA256_AFTER={recovery.SUCCESSOR_EXPECTED_STATE_BODY_SHA256}",f"STATE_SERIAL_AFTER={recovery.SUCCESSOR_EXPECTED_SERIAL}",
         f"STATE_LINEAGE={recovery.SUCCESSOR_EXPECTED_LINEAGE}","ALL_INSTANCE_STATUSES=normal","LIVE_CLOUD_SEMANTICS_CHANGED=NO","TERMINAL_NORMAL_PLAN_EXIT=0","TERMINAL_MATERIAL_RESOURCE_CHANGES=0","TERMINAL_MATERIAL_OUTPUT_CHANGES=0","TERMINAL_DEFERRED_ACTION_CONSEQUENCES=0","TERMINAL_RESIDUAL_DRIFT=google_firestore_database.operational__earliest_version_time+etag_only","FINAL_PRODUCT_LOCK=ABSENT","S1_TERMINAL_DISPOSITION=RECONCILED"))
     s1_sha=recovery.sha256(s1_body.encode())
-    with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",failure_sha), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",s1_sha):
+    superseded_failure_body="\n".join((
+        "S3_SUCCESSOR_ACTIVATION_MERGED_BUT_RUNTIME_UNREACHABLE",
+        "STATUS=POST_MERGE_AUTHORITY_GRAMMAR_DEFECT",
+        f"PR=8ft0-ai/resilio#{recovery.SUPERSEDED_ACTIVATION_PR}",
+        f"SUCCESSOR_CONTROL_C2={recovery.SUPERSEDED_CONTROL_SHA}",
+        f"EXACT_REVIEWED_HEAD={recovery.SUPERSEDED_ACTIVATION_REVIEWED_HEAD}",
+        f"EXACT_REVIEWED_TREE={recovery.SUPERSEDED_ACTIVATION_REVIEWED_TREE}",
+        f"FRESH_REVIEW={recovery.SUPERSEDED_ACTIVATION_REVIEW_ID}__APPROVED",
+        f"OWNER_MERGE_AUTHORITY_COMMENT_ID={recovery.SUPERSEDED_ACTIVATION_AUTHORITY_ID}",
+        "OWNER_MERGE_AUTHORITY_BODY_SHA256=fixture-authority-sha",
+        f"MERGE_SHA={recovery.SUPERSEDED_ACTIVATION_MERGE_SHA}",
+        "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
+        "DEFECT=C2_RUNTIME_REQUIRES_EXACT_MACHINE_GRAMMAR_FOR_SUCCESSOR_MERGE_AUTHORITY",
+        "C2_ACTIVATION_RECORD=NOT_CREATABLE_AS_VALID_RUNTIME_EVIDENCE",
+        "LIVE_RECOVERY_WIF=C1_ONLY",
+        "LIVE_RECOVERY_WIF_C2=ABSENT",
+        "C2_RECOVERY_CLAIM=ABSENT",
+        "C2_RECOVERY_RESULT=ABSENT",
+        "SUCCESSOR_DISPATCH=NOT_PERFORMED",
+        "SAFETY_DISPOSITION=FAIL_CLOSED",
+        "NEXT_PHASE=SUCCESSOR_CONTROL_RECONSTRUCTION_C3",
+    ))
+    superseded_review_body="historical-c2-reviewed-body"
+    superseded_review_sha=recovery.sha256(superseded_review_body.encode())
+    superseded_authority_body="historical-c2-human-readable-authority"
+    superseded_authority_sha=recovery.sha256(superseded_authority_body.encode())
+    superseded_failure_body=superseded_failure_body.replace("fixture-authority-sha",superseded_authority_sha)
+    superseded_failure_sha=recovery.sha256(superseded_failure_body.encode())
+    with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",failure_sha), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",s1_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",superseded_failure_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",superseded_review_sha), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",superseded_authority_sha):
         review_body=successor_review_body(pr_number,reviewed,control); review_sha=recovery.sha256(review_body.encode())
         authority_body=recovery.successor_activation_merge_authority_body(control,pr_number,reviewed,review_id,review_sha); authority_sha=recovery.sha256(authority_body.encode())
         activation_body=recovery.successor_activation_record_body(control,activation,pr_number,reviewed,review_id,review_sha,authority_id,authority_sha); activation_sha=recovery.sha256(activation_body.encode())
@@ -473,6 +501,7 @@ def successor_boundary_fixture():
     comments=[
       owner_comment(recovery.PREDECESSOR_FAILURE_RECORD_ID,failure_body,"2026-10-03T01:00:00Z"),
       owner_comment(recovery.S1_TERMINAL_COMMENT_ID,s1_body,"2026-10-03T02:00:00Z"),
+      owner_comment(recovery.SUPERSEDED_ACTIVATION_FAILURE_RECORD_ID,superseded_failure_body,"2026-10-03T02:13:00Z"),
       owner_comment(activation_id,activation_body,"2026-10-03T03:03:00Z"),
       owner_comment(repin_review_id,repin_review_body,"2026-10-03T03:04:00Z"),
       owner_comment(repin_authority_id,repin_authority_body,"2026-10-03T03:05:00Z"),
@@ -493,11 +522,14 @@ def successor_boundary_fixture():
       f"/repos/{recovery.REPOSITORY}/actions/runs/{recovery.PREDECESSOR_RECOVERY_RUN}":{"id":recovery.PREDECESSOR_RECOVERY_RUN,"run_attempt":1,"status":"completed","conclusion":"failure","head_branch":"main","head_sha":recovery.PREDECESSOR_ACTIVATION_SHA,"event":"workflow_dispatch","path":".github/workflows/phase5-slice-c-recovery.yml","repository":{"full_name":recovery.REPOSITORY},"head_repository":{"full_name":recovery.REPOSITORY},"referenced_workflows":[{"path":f"{recovery.REPOSITORY}/{recovery.RECOVERY_REUSABLE_PATH}@{recovery.PREDECESSOR_CONTROL_SHA}","sha":recovery.PREDECESSOR_CONTROL_SHA}]},
       f"/repos/{recovery.REPOSITORY}/actions/jobs/{recovery.PREDECESSOR_RECOVERY_JOB}":{"id":recovery.PREDECESSOR_RECOVERY_JOB,"run_id":recovery.PREDECESSOR_RECOVERY_RUN,"status":"completed","conclusion":"failure","name":"recover / slice-c-recovery"},
       f"/repos/{recovery.REPOSITORY}/issues/{recovery.GOVERNING_ISSUE}/comments?per_page=100&page=1":comments,
+      f"/repos/{recovery.REPOSITORY}/pulls/{recovery.SUPERSEDED_ACTIVATION_PR}":{"number":recovery.SUPERSEDED_ACTIVATION_PR,"state":"closed","merged_at":"2026-10-03T02:12:00Z","merge_commit_sha":recovery.SUPERSEDED_ACTIVATION_MERGE_SHA,"head":{"sha":recovery.SUPERSEDED_ACTIVATION_REVIEWED_HEAD,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":recovery.SUPERSEDED_CONTROL_SHA}},
+      f"/repos/{recovery.REPOSITORY}/pulls/{recovery.SUPERSEDED_ACTIVATION_PR}/reviews/{recovery.SUPERSEDED_ACTIVATION_REVIEW_ID}":{"id":recovery.SUPERSEDED_ACTIVATION_REVIEW_ID,"state":"COMMENTED","commit_id":recovery.SUPERSEDED_ACTIVATION_REVIEWED_HEAD,"body":superseded_review_body,"submitted_at":"2026-10-03T02:10:00Z","user":{"login":"8ft0-ai","id":130460431}},
+      f"/repos/{recovery.REPOSITORY}/issues/comments/{recovery.SUPERSEDED_ACTIVATION_AUTHORITY_ID}":owner_comment(recovery.SUPERSEDED_ACTIVATION_AUTHORITY_ID,superseded_authority_body,"2026-10-03T02:11:00Z",recovery.SUPERSEDED_ACTIVATION_PR),
       f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}":{"number":pr_number,"state":"closed","merged_at":"2026-10-03T03:02:00Z","merge_commit_sha":activation,"head":{"sha":reviewed,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":control}},
       f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/reviews/{review_id}":{"id":review_id,"state":"COMMENTED","commit_id":reviewed,"body":review_body,"submitted_at":"2026-10-03T03:00:00Z","user":{"login":"8ft0-ai","id":130460431}},
       f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}":owner_comment(authority_id,authority_body,"2026-10-03T03:01:00Z",pr_number),
     }
-    return {"control":control,"activation":activation,"failure_sha":failure_sha,"s1_sha":s1_sha,"boundary_sha":boundary_sha,"candidate_raw":candidate_raw,"wrapped":wrapped,"fixtures":fixtures}
+    return {"control":control,"activation":activation,"failure_sha":failure_sha,"s1_sha":s1_sha,"superseded_failure_sha":superseded_failure_sha,"superseded_review_sha":superseded_review_sha,"superseded_authority_sha":superseded_authority_sha,"boundary_sha":boundary_sha,"candidate_raw":candidate_raw,"wrapped":wrapped,"fixtures":fixtures}
 
 
 def run_successor_boundary(fixture):
@@ -506,7 +538,7 @@ def run_successor_boundary(fixture):
             return {"type":"file","path":recovery.CANDIDATE_PATH,"encoding":"base64","content":fixture["wrapped"]}
         if path not in fixture["fixtures"]: raise AssertionError(f"unexpected GitHub path: {path}")
         return copy.deepcopy(fixture["fixtures"][path])
-    with tempfile.TemporaryDirectory() as tmp, patch.object(recovery,"github",side_effect=fake_github), patch.object(recovery,"SOURCE_BOUNDARY_BODY_SHA256",fixture["boundary_sha"]), patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]):
+    with tempfile.TemporaryDirectory() as tmp, patch.object(recovery,"github",side_effect=fake_github), patch.object(recovery,"SOURCE_BOUNDARY_BODY_SHA256",fixture["boundary_sha"]), patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]):
         output=Path(tmp)/"candidate.json"; result=recovery.verify_successor_github_boundary(fixture["activation"],fixture["control"],output); return result,output.read_bytes()
 
 
@@ -1031,13 +1063,47 @@ jobs:
         self.assertEqual(result["control_sha"],fixture["control"])
         self.assertEqual(result["activation_sha"],fixture["activation"])
         self.assertRegex(result["governance_chain_sha256"],r"^[0-9a-f]{64}$")
-        with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]):
+        with patch.object(recovery,"PREDECESSOR_FAILURE_RECORD_BODY_SHA256",fixture["failure_sha"]), patch.object(recovery,"S1_TERMINAL_BODY_SHA256",fixture["s1_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_FAILURE_RECORD_BODY_SHA256",fixture["superseded_failure_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_REVIEW_BODY_SHA256",fixture["superseded_review_sha"]), patch.object(recovery,"SUPERSEDED_ACTIVATION_AUTHORITY_BODY_SHA256",fixture["superseded_authority_sha"]):
             self.assertEqual(recovery.verify_successor_github_boundary_document(result,fixture["control"],fixture["activation"]),result)
 
-    def test_successor_claim_namespace_cannot_reuse_consumed_c1(self):
-        self.assertNotEqual(recovery.evidence_object("claim","4"*40),recovery.PREDECESSOR_CLAIM_OBJECT)
-        self.assertNotEqual(recovery.evidence_object("result","4"*40),recovery.PREDECESSOR_RESULT_OBJECT)
+    def test_successor_claim_namespace_cannot_reuse_c1_or_superseded_c2(self):
+        control="4"*40
+        self.assertNotEqual(recovery.evidence_object("claim",control),recovery.PREDECESSOR_CLAIM_OBJECT)
+        self.assertNotEqual(recovery.evidence_object("result",control),recovery.PREDECESSOR_RESULT_OBJECT)
+        self.assertNotEqual(recovery.evidence_object("claim",control),recovery.SUPERSEDED_CLAIM_OBJECT)
+        self.assertNotEqual(recovery.evidence_object("result",control),recovery.SUPERSEDED_RESULT_OBJECT)
+        with self.assertRaises(RecoveryError): recovery.verify_successor_cloud_boundary(recovery.SUPERSEDED_CONTROL_SHA)
 
+
+    def test_successor_premerge_verifier_requires_exact_machine_emitted_authority(self):
+        control="7"*40; reviewed="8"*40; pr_number=131; review_id=501; authority_id=502
+        review_body=successor_review_body(pr_number,reviewed,control)
+        review_sha=recovery.sha256(review_body.encode())
+        authority_body=recovery.successor_activation_merge_authority_body(control,pr_number,reviewed,review_id,review_sha)
+        fixtures={
+            f"/repos/{recovery.REPOSITORY}/branches/{recovery.DEFAULT_BRANCH}":{"commit":{"sha":control}},
+            f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}":{"number":pr_number,"state":"open","merged_at":None,"draft":False,"head":{"sha":reviewed,"repo":{"id":recovery.REPOSITORY_ID,"full_name":recovery.REPOSITORY}},"base":{"ref":"main","sha":control}},
+            f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/reviews/{review_id}":{"id":review_id,"state":"COMMENTED","commit_id":reviewed,"body":review_body,"submitted_at":"2026-10-03T04:00:00Z","user":{"login":"8ft0-ai","id":130460431}},
+            f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}":owner_comment(authority_id,authority_body,"2026-10-03T04:01:00Z",pr_number),
+        }
+        with patch.object(recovery,"github",side_effect=lambda path: copy.deepcopy(fixtures[path])):
+            result=recovery.verify_successor_activation_premerge(control,pr_number,reviewed,review_id,review_sha,authority_id)
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["authority_body_sha256"],recovery.sha256(authority_body.encode()))
+        fixtures[f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}"]["body"]="Owner authority in prose"
+        with patch.object(recovery,"github",side_effect=lambda path: copy.deepcopy(fixtures[path])):
+            with self.assertRaises(RecoveryError):
+                recovery.verify_successor_activation_premerge(control,pr_number,reviewed,review_id,review_sha,authority_id)
+
+    def test_successor_authority_and_activation_bodies_are_deterministic(self):
+        control="7"*40; activation="9"*40; reviewed="8"*40
+        review_body=successor_review_body(131,reviewed,control); review_sha=recovery.sha256(review_body.encode())
+        authority=recovery.successor_activation_merge_authority_body(control,131,reviewed,501,review_sha)
+        authority_sha=recovery.sha256(authority.encode())
+        self.assertEqual(authority,recovery.successor_activation_merge_authority_body(control,131,reviewed,501,review_sha))
+        record=recovery.successor_activation_record_body(control,activation,131,reviewed,501,review_sha,502,authority_sha)
+        self.assertEqual(record,recovery.successor_activation_record_body(control,activation,131,reviewed,501,review_sha,502,authority_sha))
+        self.assertIn(f"SUCCESSOR_ARCHITECTURE={recovery.SUCCESSOR_ARCHITECTURE_COMMENT_ID}",authority)
 
     def test_successor_cloud_boundary_closes_predecessor_claim_state_and_lock(self):
         control="4"*40
@@ -1048,6 +1114,8 @@ jobs:
         metadata={
             recovery.PREDECESSOR_CLAIM_OBJECT:{"generation":recovery.PREDECESSOR_CLAIM_GENERATION},
             recovery.PREDECESSOR_RESULT_OBJECT:None,
+            recovery.SUPERSEDED_CLAIM_OBJECT:None,
+            recovery.SUPERSEDED_RESULT_OBJECT:None,
             recovery.evidence_object("claim",control):None,
             recovery.evidence_object("result",control):None,
             recovery.STATE_OBJECT:{"generation":recovery.SUCCESSOR_EXPECTED_GENERATION},
@@ -1064,8 +1132,13 @@ jobs:
         with patch.object(recovery,"PREDECESSOR_CLAIM_SHA256",claim["claim_sha256"]), patch.object(recovery,"PREDECESSOR_CLAIM_BODY_SHA256",claim_body_sha), patch.object(recovery,"SUCCESSOR_EXPECTED_STATE_CANONICAL_SHA256",state_sha), patch.object(recovery,"_successor_gcs_metadata",side_effect=meta), patch.object(recovery,"_successor_gcs_json",side_effect=obj):
             result=recovery.verify_successor_cloud_boundary(control)
             self.assertTrue(result["successor_claim_absent"])
+            self.assertTrue(result["superseded_claim_absent"])
+            self.assertTrue(result["superseded_result_absent"])
             self.assertTrue(result["product_lock_absent"])
             metadata[recovery.PREDECESSOR_RESULT_OBJECT]={"generation":"1"}
+            with self.assertRaises(RecoveryError): recovery.verify_successor_cloud_boundary(control)
+            metadata[recovery.PREDECESSOR_RESULT_OBJECT]=None
+            metadata[recovery.SUPERSEDED_CLAIM_OBJECT]={"generation":"1"}
             with self.assertRaises(RecoveryError): recovery.verify_successor_cloud_boundary(control)
 
 
