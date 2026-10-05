@@ -5452,8 +5452,332 @@ C5_TERMINAL_V2_FIELDS = (
 )
 
 
+
+def c5_expected_normal_identity_set_sha256() -> str:
+    rows = [
+        {"name": name, "service_account": service_account,
+         "workflow": workflow, "control_sha": control_sha}
+        for name, (service_account, workflow, control_sha)
+        in sorted(C5_EXPECTED_PHASE5_WIF_ROWS.items())
+        if name != "github_phase5_slice_c_recovery"
+    ]
+    return sha256(canonical(rows))
+
+
+def c5_expected_getmetadata_role_set_sha256() -> str:
+    return sha256(canonical({
+        role_id: sorted(C5_EXPECTED_ROLE_PERMISSIONS[role_id])
+        for role_id in sorted(C5_GETMETADATA_ROLES)
+    }))
+
+
+def _c5_post_effect_live_facts(
+    state: Any, new_recovery_control_sha: str
+) -> dict[str, Any]:
+    _c5_require_sha(new_recovery_control_sha, "C5_POST_EFFECT_NEW_CONTROL")
+    if not isinstance(state, dict):
+        raise RecoveryError("C5_POST_EFFECT_STATE_INVALID")
+    lineage = _c5_require_lineage(
+        str(state.get("lineage") or ""), "C5_POST_EFFECT_LINEAGE"
+    )
+    serial = state.get("serial")
+    _c5_nonnegative(serial, "C5_POST_EFFECT_SERIAL")
+    if lineage != C5_BOOTSTRAP_STATE_LINEAGE or serial < C5_BOOTSTRAP_STATE_SERIAL:
+        raise RecoveryError("C5_POST_EFFECT_STATE_IDENTITY_INVALID")
+    resources = state.get("resources")
+    if not isinstance(resources, list) or len(resources) != C5_EXPECTED_BOOTSTRAP_RESOURCE_COUNT:
+        raise RecoveryError("C5_POST_EFFECT_RESOURCE_COUNT_INVALID")
+
+    prefix = (
+        "principalSet://iam.googleapis.com/projects/400271474382/locations/global/"
+        "workloadIdentityPools/github/attribute.job_workflow_ref/8ft0-ai/resilio/"
+        ".github/workflows/"
+    )
+    rows: list[dict[str, str]] = []
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("type") != "google_service_account_iam_member"
+            or not str(resource.get("name") or "").startswith("github_phase5")
+        ):
+            continue
+        instances = resource.get("instances")
+        if not isinstance(instances, list) or len(instances) != 1:
+            raise RecoveryError("C5_POST_EFFECT_WIF_INSTANCE_INVALID")
+        attrs = instances[0].get("attributes") if isinstance(instances[0], dict) else None
+        if not isinstance(attrs, dict):
+            raise RecoveryError("C5_POST_EFFECT_WIF_ATTRIBUTES_INVALID")
+        service_account_id = str(attrs.get("service_account_id") or "")
+        marker = "/serviceAccounts/"
+        if marker not in service_account_id:
+            raise RecoveryError("C5_POST_EFFECT_WIF_SERVICE_ACCOUNT_INVALID")
+        rows.append({
+            "name": str(resource.get("name") or ""),
+            "service_account": service_account_id.split(marker, 1)[1],
+            "role": str(attrs.get("role") or ""),
+            "member": str(attrs.get("member") or ""),
+        })
+    if len(rows) != len(C5_EXPECTED_PHASE5_WIF_ROWS):
+        raise RecoveryError("C5_POST_EFFECT_WIF_RESOURCE_COUNT_INVALID")
+    by_name = {row["name"]: row for row in rows}
+    if set(by_name) != set(C5_EXPECTED_PHASE5_WIF_ROWS):
+        raise RecoveryError("C5_POST_EFFECT_WIF_NAME_SET_INVALID")
+
+    normal_ok = True
+    cache: dict[str, dict[str, Any]] = {}
+    for name, (expected_sa, expected_workflow, expected_sha) in C5_EXPECTED_PHASE5_WIF_ROWS.items():
+        row = by_name[name]
+        if row["service_account"] != expected_sa or row["role"] != "roles/iam.workloadIdentityUser":
+            normal_ok = False
+        if name != "github_phase5_slice_c_recovery":
+            if row["member"] != prefix + expected_workflow + "@" + expected_sha:
+                normal_ok = False
+            policy = cache.setdefault(row["service_account"], _c5_iam_policy(row["service_account"]))
+            if row["member"] not in _c5_policy_members(policy, row["role"]):
+                normal_ok = False
+
+    recovery = by_name["github_phase5_slice_c_recovery"]
+    recovery_policy = cache.setdefault(
+        recovery["service_account"], _c5_iam_policy(recovery["service_account"])
+    )
+    recovery_members = sorted(
+        member for member in _c5_policy_members(recovery_policy, recovery["role"])
+        if "/.github/workflows/phase5-slice-c-recovery-reusable.yml@" in member
+    )
+    old_suffix = "/.github/workflows/phase5-slice-c-recovery-reusable.yml@" + C5_OLD_RECOVERY_CONTROL_SHA
+    new_suffix = "/.github/workflows/phase5-slice-c-recovery-reusable.yml@" + new_recovery_control_sha
+    forbidden_suffixes = tuple(
+        "/.github/workflows/phase5-slice-c-recovery-reusable.yml@" + control
+        for control in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS
+    )
+    old_count = sum(member.endswith(old_suffix) for member in recovery_members)
+    new_count = sum(member.endswith(new_suffix) for member in recovery_members)
+    forbidden_counts = tuple(
+        sum(member.endswith(suffix) for member in recovery_members)
+        for suffix in forbidden_suffixes
+    )
+    known_count = old_count + new_count + sum(forbidden_counts)
+    unexpected_count = max(0, len(recovery_members) - known_count)
+
+    roles: dict[str, list[str]] = {}
+    roles_ok = True
+    for role_id in C5_GETMETADATA_ROLES:
+        role = _c5_role(role_id)
+        permissions = role.get("includedPermissions")
+        if not isinstance(permissions, list):
+            raise RecoveryError(f"C5_POST_EFFECT_ROLE_INVALID:{role_id}")
+        roles[role_id] = sorted(str(value) for value in permissions)
+        if (
+            frozenset(permissions) != C5_EXPECTED_ROLE_PERMISSIONS[role_id]
+            or len(permissions) != len(C5_EXPECTED_ROLE_PERMISSIONS[role_id])
+        ):
+            roles_ok = False
+
+    return {
+        "state_lineage": lineage,
+        "state_serial": serial,
+        "state_canonical_sha256": sha256(canonical(state)),
+        "old_wif_count": old_count,
+        "new_wif_count": new_count,
+        "forbidden_wif_counts": forbidden_counts,
+        "unexpected_wif_count": unexpected_count,
+        "recovery_wif_member_set_sha256": sha256(canonical(recovery_members)),
+        "normal_phase5_identity_set_sha256": (
+            c5_expected_normal_identity_set_sha256()
+            if normal_ok
+            else sha256(canonical({"mismatch": "normal_phase5", "rows": rows}))
+        ),
+        "getmetadata_role_set_sha256": sha256(canonical(roles)),
+        "normal_identities_ok": normal_ok,
+        "getmetadata_ok": roles_ok,
+    }
+
+
+def _c5_fresh_reconciliation(
+    terraform_workdir: str | Path,
+    old_recovery_control_sha: str,
+    new_recovery_control_sha: str,
+) -> dict[str, Any]:
+    workdir = Path(terraform_workdir).resolve()
+    if not workdir.is_dir():
+        raise RecoveryError("C5_OBSERVATION_TERRAFORM_WORKDIR_MISSING")
+    with tempfile.TemporaryDirectory(prefix="resilio-c5-observation-") as temp:
+        plan_path = Path(temp) / "reconciliation.tfplan"
+        result = subprocess.run(
+            [
+                "terraform",
+                f"-chdir={workdir}",
+                "plan",
+                "-input=false",
+                "-no-color",
+                "-lock=true",
+                "-detailed-exitcode",
+                f"-out={plan_path}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode not in (0, 2):
+            raise RecoveryError("C5_OBSERVATION_FRESH_PLAN_FAILED")
+        plan_bytes = plan_path.read_bytes()
+        plan = _c5_saved_plan_json(plan_path, workdir)
+        if result.returncode == 2:
+            c5_verify_wif_repin_plan(
+                plan, old_recovery_control_sha, new_recovery_control_sha
+            )
+            mode = "EXACT_PENDING_REVIEWED_EFFECT"
+        else:
+            if (
+                plan.get("format_version") != "1.2"
+                or plan.get("terraform_version") != "1.15.8"
+                or plan.get("errored") is not False
+                or plan.get("output_changes") not in ({}, None)
+            ):
+                raise RecoveryError("C5_OBSERVATION_NO_CHANGE_PLAN_INVALID")
+            for key in (
+                "resource_drift", "deferred_changes",
+                "deferred_action_invocations", "action_invocations",
+            ):
+                if plan.get(key) not in (None, []):
+                    raise RecoveryError(f"C5_OBSERVATION_NO_CHANGE_PLAN_UNEXPECTED:{key}")
+            rows = plan.get("resource_changes")
+            if not isinstance(rows, list):
+                raise RecoveryError("C5_OBSERVATION_NO_CHANGE_ROWS_INVALID")
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise RecoveryError("C5_OBSERVATION_NO_CHANGE_ROW_INVALID")
+                if ((row.get("change") or {}).get("actions")) not in (["no-op"], []):
+                    raise RecoveryError("C5_OBSERVATION_NO_CHANGE_EFFECT_PRESENT")
+            mode = "EXACT_NO_CHANGE"
+        return {"reconciliation": mode, "plan_sha256": sha256(plan_bytes)}
+
+
+def verify_c5_wif_repin_observation(
+    *,
+    successor_control_sha: str,
+    activation_main: str,
+    attempt_claim_comment_id: int,
+    terraform_workdir: str | Path,
+    observed_at: str,
+) -> dict[str, Any]:
+    _c5_require_sha(successor_control_sha, "C5_OBSERVE_CONTROL")
+    _c5_require_sha(activation_main, "C5_OBSERVE_ACTIVATION")
+    _c5_positive(attempt_claim_comment_id, "C5_OBSERVE_CLAIM_ID")
+    _timestamp(observed_at, "C5_OBSERVE_OBSERVED_AT")
+    branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if (
+        not isinstance(branch, dict)
+        or branch.get("commit", {}).get("sha") != activation_main
+    ):
+        raise RecoveryError("C5_OBSERVE_MAIN_MISMATCH")
+    verify_c5_repository_activation(activation_main, successor_control_sha)
+    comments = github_issue_comments(GOVERNING_ISSUE)
+    validate_c5_governance_history(comments)
+    validate_c5_activation_record(comments, successor_control_sha, activation_main)
+    claim = _c5_parse_attempt_claim(
+        _c5_comment_by_id(
+            comments, attempt_claim_comment_id, "C5_OBSERVE_ATTEMPT_CLAIM"
+        )
+    )
+    if (
+        claim["fields"]["C5_PROTOCOL_EPOCH_SHA256"] != C5_PROTOCOL_EPOCH_SHA256
+        or claim["fields"]["SUCCESSOR_CONTROL_SHA"] != successor_control_sha
+        or claim["fields"]["SUCCESSOR_ACTIVATION_MAIN"] != activation_main
+    ):
+        raise RecoveryError("C5_OBSERVE_CLAIM_TARGET_MISMATCH")
+
+    state = _successor_gcs_json(C5_BOOTSTRAP_STATE_OBJECT)
+    live = _c5_post_effect_live_facts(state, successor_control_sha)
+    lock_absent = _successor_gcs_metadata(C5_BOOTSTRAP_LOCK_OBJECT, True) is None
+    states: list[str] = []
+    for control in (
+        SUPERSEDED_CONTROL_SHA, FAILED_C3_CONTROL_SHA,
+        C5_OLD_RECOVERY_CONTROL_SHA, successor_control_sha,
+    ):
+        present = any(
+            _successor_gcs_metadata(evidence_object(kind, control), True) is not None
+            for kind in ("claim", "result")
+        )
+        states.append("PRESENT" if present else "ABSENT")
+    reconciliation = _c5_fresh_reconciliation(
+        terraform_workdir, C5_OLD_RECOVERY_CONTROL_SHA, successor_control_sha
+    )
+    body = c5_wif_repin_observation_body(
+        successor_control_sha=successor_control_sha,
+        successor_activation_main=activation_main,
+        attempt_claim_comment_id=attempt_claim_comment_id,
+        attempt_claim_body_sha256=claim["body_sha256"],
+        attempt_series_id_sha256=claim["fields"]["ATTEMPT_SERIES_ID_SHA256"],
+        attempt_generation=claim["generation"],
+        precondition_digest_sha256=claim["fields"]["PRECONDITION_DIGEST_SHA256"],
+        observed_at=observed_at,
+        state_lineage=live["state_lineage"],
+        state_serial=live["state_serial"],
+        state_canonical_sha256=live["state_canonical_sha256"],
+        old_wif_count=live["old_wif_count"],
+        new_wif_count=live["new_wif_count"],
+        forbidden_wif_counts=live["forbidden_wif_counts"],
+        unexpected_wif_count=live["unexpected_wif_count"],
+        recovery_wif_member_set_sha256=live["recovery_wif_member_set_sha256"],
+        claim_result_states=tuple(states),
+        bootstrap_lock_absent=lock_absent,
+        reconciliation=reconciliation["reconciliation"],
+        reconciliation_plan_sha256=reconciliation["plan_sha256"],
+        getmetadata_role_set_sha256=live["getmetadata_role_set_sha256"],
+        normal_phase5_identity_set_sha256=live["normal_phase5_identity_set_sha256"],
+    )
+    return {
+        "contract": "resilio-phase5-slice-c-c5-wif-observation-verifier/v1",
+        "body": body,
+        "c5_protocol_epoch_sha256": C5_PROTOCOL_EPOCH_SHA256,
+        "attempt_claim_comment_id": attempt_claim_comment_id,
+        "reconciliation": reconciliation["reconciliation"],
+        "verified_live": True,
+    }
+
+
+def c5_terminal_body_from_observation_comments(
+    successor_control_sha: str,
+    activation_main: str,
+    observation_1_comment_id: int,
+    observation_2_comment_id: int | None = None,
+) -> str:
+    comments = github_issue_comments(GOVERNING_ISSUE)
+    obs1_comment = _c5_comment_by_id(
+        comments, observation_1_comment_id, "C5_TERMINAL_BUILD_OBS1"
+    )
+    fields = _record_fields(
+        str(obs1_comment.get("body") or ""),
+        "PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",
+        C5_OBSERVATION_FIELDS,
+    )
+    claim = _c5_parse_attempt_claim(
+        _c5_comment_by_id(
+            comments,
+            _positive_int(fields["ATTEMPT_CLAIM_COMMENT_ID"], "C5_TERMINAL_BUILD_CLAIM_ID"),
+            "C5_TERMINAL_BUILD_CLAIM",
+        )
+    )
+    obs1 = validate_c5_wif_repin_observation(
+        obs1_comment, successor_control_sha, activation_main, claim
+    )
+    obs2 = None
+    if observation_2_comment_id is not None:
+        obs2 = validate_c5_wif_repin_observation(
+            _c5_comment_by_id(
+                comments, observation_2_comment_id, "C5_TERMINAL_BUILD_OBS2"
+            ),
+            successor_control_sha, activation_main, claim,
+        )
+    return c5_wif_repin_terminal_v2_body(
+        successor_control_sha, activation_main, claim, obs1, obs2
+    )
+
+
 def _c5_observation_outcome(
-    first: dict[str, Any], second: dict[str, Any] | None
+    first: dict[str, Any], second: dict[str, Any] | None,
+    claim: dict[str, Any] | None = None,
 ) -> str:
     f = first["fields"]
     forbidden = tuple(
@@ -5473,8 +5797,14 @@ def _c5_observation_outcome(
             "NEW_CONTROL_RECOVERY_CLAIM_RESULT",
         )
     )
+    baseline_lineage = C5_BOOTSTRAP_STATE_LINEAGE if claim is None else claim["fields"]["BOOTSTRAP_STATE_LINEAGE_BEFORE"]
+    baseline_serial = C5_BOOTSTRAP_STATE_SERIAL if claim is None else _positive_int(claim["fields"]["BOOTSTRAP_STATE_SERIAL_BEFORE"], "C5_OUTCOME_BASELINE_SERIAL")
     clean = (
         all(value == 0 for value in forbidden)
+        and int(f["UNEXPECTED_RECOVERY_WIF_COUNT"]) == 0
+        and f["BOOTSTRAP_STATE_LINEAGE"] == baseline_lineage
+        and f["GETMETADATA_ROLE_SET_SHA256"] == c5_expected_getmetadata_role_set_sha256()
+        and f["NORMAL_PHASE5_IDENTITY_SET_SHA256"] == c5_expected_normal_identity_set_sha256()
         and all(value == "ABSENT" for value in claims)
         and f["BOOTSTRAP_LOCK"] == "ABSENT"
     )
@@ -5482,6 +5812,7 @@ def _c5_observation_outcome(
         clean
         and f["OLD_RECOVERY_WIF_COUNT"] == "0"
         and f["NEW_RECOVERY_WIF_COUNT"] == "1"
+        and int(f["BOOTSTRAP_STATE_SERIAL"]) >= baseline_serial
         and f["RECONCILIATION"] == "EXACT_NO_CHANGE"
     ):
         if second is not None:
@@ -5498,6 +5829,8 @@ def _c5_observation_outcome(
             and clean
             and f["OLD_RECOVERY_WIF_COUNT"] == "1"
             and f["NEW_RECOVERY_WIF_COUNT"] == "0"
+            and int(f["BOOTSTRAP_STATE_SERIAL"]) == baseline_serial
+            and int(second_fields["BOOTSTRAP_STATE_SERIAL"]) == baseline_serial
             and f["RECONCILIATION"] == "EXACT_PENDING_REVIEWED_EFFECT"
             and second_fields["OLD_RECOVERY_WIF_COUNT"] == "1"
             and second_fields["NEW_RECOVERY_WIF_COUNT"] == "0"
@@ -5513,7 +5846,7 @@ def c5_wif_repin_terminal_v2_body(
     observation_1: dict[str, Any],
     observation_2: dict[str, Any] | None = None,
 ) -> str:
-    outcome = _c5_observation_outcome(observation_1, observation_2)
+    outcome = _c5_observation_outcome(observation_1, observation_2, claim)
     fields = {
         "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
         "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
@@ -5627,7 +5960,7 @@ def validate_c5_wif_repin_terminal(
         )
         if obs2["body_sha256"] != fields["OBSERVATION_2_BODY_SHA256"]:
             raise RecoveryError("C5_TERMINAL_OBS2_HASH_MISMATCH")
-    derived = _c5_observation_outcome(obs1, obs2)
+    derived = _c5_observation_outcome(obs1, obs2, claim)
     if fields["OUTCOME"] != derived:
         raise RecoveryError("C5_TERMINAL_OUTCOME_MISMATCH")
     if created <= (obs2 or obs1)["created_at"]:
