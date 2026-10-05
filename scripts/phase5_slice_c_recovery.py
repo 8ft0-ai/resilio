@@ -2982,6 +2982,8 @@ C5_ATTEMPT_CLAIM_FIELDS = (
     "FRESH_REVIEW_BODY_SHA256",
     "OWNER_APPLY_AUTHORITY_COMMENT_ID",
     "OWNER_APPLY_AUTHORITY_BODY_SHA256",
+    "EFFECT_EXECUTOR",
+    "BOOTSTRAP_STATE_LOCKING",
     "AUTHORITY_CONSUMPTION",
 )
 
@@ -3041,6 +3043,8 @@ def c5_attempt_claim_body(
             f"FRESH_REVIEW_BODY_SHA256={fresh_review_body_sha256}",
             f"OWNER_APPLY_AUTHORITY_COMMENT_ID={owner_apply_authority_comment_id}",
             f"OWNER_APPLY_AUTHORITY_BODY_SHA256={owner_apply_authority_body_sha256}",
+            "EFFECT_EXECUTOR=apply-c5-wif-repin-effect",
+            "BOOTSTRAP_STATE_LOCKING=CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED",
             "AUTHORITY_CONSUMPTION=CONSUMED_ON_POST",
         )
     )
@@ -3088,6 +3092,13 @@ def _c5_parse_attempt_claim(comment: dict[str, Any]) -> dict[str, Any]:
         raise RecoveryError("C5_ATTEMPT_CLAIM_SERIAL_MISMATCH")
     if fields["NONTERMINAL_ACTIONS_DIGEST_SHA256"] != sha256(canonical([])):
         raise RecoveryError("C5_ATTEMPT_CLAIM_ACTIONS_DIGEST_MISMATCH")
+    if fields["EFFECT_EXECUTOR"] != "apply-c5-wif-repin-effect":
+        raise RecoveryError("C5_ATTEMPT_EFFECT_EXECUTOR_INVALID")
+    if (
+        fields["BOOTSTRAP_STATE_LOCKING"]
+        != "CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED"
+    ):
+        raise RecoveryError("C5_ATTEMPT_BOOTSTRAP_LOCKING_INVALID")
     if fields["AUTHORITY_CONSUMPTION"] != "CONSUMED_ON_POST":
         raise RecoveryError("C5_ATTEMPT_AUTHORITY_CONSUMPTION_INVALID")
     expected_series = c5_attempt_series_id_sha256(
