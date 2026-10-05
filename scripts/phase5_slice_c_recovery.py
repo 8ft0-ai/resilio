@@ -4211,7 +4211,13 @@ def verify_c5_wif_repin_pre_effect(
         owner_apply_authority_comment_id,
     )
 
-    if not (\n        activation_record["created_at"] < review_authority["review_created_at"]\n        < review_authority["authority_created_at"]\n    ):\n        raise RecoveryError("C5_ACTIVATION_REVIEW_AUTHORITY_ORDER_INVALID")\n\n    controls = (
+    if not (
+        activation_record["created_at"] < review_authority["review_created_at"]
+        < review_authority["authority_created_at"]
+    ):
+        raise RecoveryError("C5_ACTIVATION_REVIEW_AUTHORITY_ORDER_INVALID")
+
+    controls = (
         SUPERSEDED_CONTROL_SHA,
         FAILED_C3_CONTROL_SHA,
         C5_OLD_RECOVERY_CONTROL_SHA,
