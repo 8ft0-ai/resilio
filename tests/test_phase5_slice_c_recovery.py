@@ -2617,6 +2617,26 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             "INCONSISTENT_EFFECT",
         )
 
+    def test_c5_reconciliation_digest_ignores_only_run_timestamp(self):
+        base = {
+            "format_version": "1.2",
+            "terraform_version": "1.15.8",
+            "timestamp": "2026-10-05T01:03:00Z",
+            "resource_changes": [{"address": "x", "change": {"actions": ["no-op"]}}],
+        }
+        later = copy.deepcopy(base)
+        later["timestamp"] = "2026-10-05T01:04:00Z"
+        self.assertEqual(
+            recovery._c5_reconciliation_plan_fact_sha256(base),
+            recovery._c5_reconciliation_plan_fact_sha256(later),
+        )
+        changed = copy.deepcopy(later)
+        changed["resource_changes"][0]["change"]["actions"] = ["delete", "create"]
+        self.assertNotEqual(
+            recovery._c5_reconciliation_plan_fact_sha256(base),
+            recovery._c5_reconciliation_plan_fact_sha256(changed),
+        )
+
     def test_c5_locked_effect_executor_requires_effect_ready_and_lock_true(self):
         control = "d" * 40
         activation = "e" * 40
@@ -2755,7 +2775,6 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                 activation_main=activation,
                 attempt_claim_comment_id=703,
                 terraform_workdir="ignored",
-                observed_at="2026-10-05T01:03:00Z",
             )
         self.assertTrue(result["verified_live"])
         self.assertIn("RECONCILIATION=EXACT_NO_CHANGE", result["body"])
