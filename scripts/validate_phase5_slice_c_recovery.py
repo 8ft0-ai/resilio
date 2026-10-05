@@ -247,6 +247,22 @@ def c5_semantic_errors(helper: str) -> list[str]:
                 + required_token
             )
 
+    attempt_claim = latest("c5_attempt_claim_body")
+    attempt_claim_source = (
+        ast.get_source_segment(helper, attempt_claim) or ""
+        if attempt_claim is not None
+        else ""
+    )
+    for required_token in (
+        "EFFECT_EXECUTOR=apply-c5-wif-repin-effect",
+        "BOOTSTRAP_STATE_LOCKING=CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED",
+    ):
+        if required_token not in attempt_claim_source:
+            errors.append(
+                "RECOVERY_C5_ATTEMPT_LOCK_PROVENANCE_MISSING:"
+                + required_token
+            )
+
     control_record = latest("c5_control_merge_record_body")
     control_record_calls = calls(control_record)
     control_record_source = ast.get_source_segment(helper, control_record) or "" if control_record is not None else ""
