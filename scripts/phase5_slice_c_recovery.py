@@ -2465,6 +2465,22 @@ C5_RETAINED_BASELINE_COMMENT_ID = 5987054333
 C5_RETAINED_BASELINE_BODY_SHA256 = "8cc150919fb7fe363f0e3c6e5ac0c96456c733e73f9712496b9c865b37b311c9"
 C5_BASE_MAIN = "6512a8df49c56ec797f106d02aae4d4114193779"
 C5_OLD_RECOVERY_CONTROL_SHA = "03123864097df51e6edafd67acc34702f0819de3"
+C5_ARCHITECTURE_CLOSURE_COMMENT_ID = 5993056257
+C5_PROTOCOL_EPOCH_TEXT = "\n".join((
+    "PHASE5_SLICE_C_C5_PROTOCOL_EPOCH_V1",
+    "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+    "C5_ARCHITECTURE_COMMENT_ID=5976498714",
+    "C5_ARCHITECTURE_BODY_SHA256=b1e6e4147d1e07bf47ba8d005114ba387ad15f888a8f4cf013bf0bcb7f2d4f7f",
+    "C5_ARCHITECTURE_REVIEW_COMMENT_ID=5976504154",
+    "C5_ARCHITECTURE_REVIEW_BODY_SHA256=70c65751e7d9ee0f6e77d307786f8881b0342447152419cd5e9e1a0acd463f4e",
+    "OWNER_DISPOSITION_COMMENT_ID=5985897003",
+    "OWNER_DISPOSITION_BODY_SHA256=bc0a13d8e972e0f29043a864c8729b1ca15e745c2579c43aa827946bab0804f2",
+    "RETAINED_EFFECT_BASELINE_COMMENT_ID=5987054333",
+    "RETAINED_EFFECT_BASELINE_BODY_SHA256=8cc150919fb7fe363f0e3c6e5ac0c96456c733e73f9712496b9c865b37b311c9",
+    "BASE_MAIN=6512a8df49c56ec797f106d02aae4d4114193779",
+    "OLD_RECOVERY_CONTROL_SHA=03123864097df51e6edafd67acc34702f0819de3",
+))
+C5_PROTOCOL_EPOCH_SHA256 = "785fd8bdb53812ebbca31e9d72da66667eb53b3b54925e6bd0a3c788180c600f"
 C5_BOOTSTRAP_STATE_LINEAGE = "ae08b2f4-f18f-204c-72aa-53e17f12eea7"
 C5_BOOTSTRAP_STATE_SERIAL = 71
 C5_C4_SAVED_PLAN_SHA256 = "3e15f30695eacca78cbe9c38df792c7ab9844687120e51a692b2f1f718b7f38b"
@@ -2794,6 +2810,7 @@ def c5_use_time_currentness_body(
         (
             "PHASE5_SLICE_C_C5_USE_TIME_CURRENTNESS_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
             f"C5_ARCHITECTURE_BODY_SHA256={C5_ARCHITECTURE_BODY_SHA256}",
             f"C5_ARCHITECTURE_REVIEW_COMMENT_ID={C5_ARCHITECTURE_REVIEW_COMMENT_ID}",
@@ -2835,6 +2852,8 @@ def c5_precondition_snapshot(
     owner_apply_authority_body_sha256: str,
     old_recovery_control_sha: str,
     new_recovery_control_sha: str,
+    nonterminal_actions_count: int = 0,
+    nonterminal_actions_digest_sha256: str | None = None,
 ) -> str:
     _c5_require_sha(successor_control_sha, "C5_SUCCESSOR_CONTROL_SHA")
     _c5_require_sha(successor_activation_main, "C5_SUCCESSOR_ACTIVATION_MAIN")
@@ -2856,10 +2875,17 @@ def c5_precondition_snapshot(
         new_recovery_control_sha == old_recovery_control_sha
     ):
         raise RecoveryError("C5_PRECONDITION_NEW_CONTROL_FORBIDDEN")
+    _c5_nonnegative(nonterminal_actions_count, "C5_PRECONDITION_NONTERMINAL_ACTIONS_COUNT")
+    if nonterminal_actions_digest_sha256 is None:
+        nonterminal_actions_digest_sha256 = sha256(canonical([]))
+    _c5_require_hash(nonterminal_actions_digest_sha256, "C5_PRECONDITION_NONTERMINAL_ACTIONS_DIGEST")
+    if nonterminal_actions_count != 0:
+        raise RecoveryError("C5_PRECONDITION_NONTERMINAL_ACTIONS_PRESENT")
     return "\n".join(
         (
             "PHASE5_SLICE_C_WIF_REPIN_PRECONDITION_SNAPSHOT_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
             f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
             f"SAVED_PLAN_SHA256={saved_plan_sha256}",
@@ -2882,6 +2908,9 @@ def c5_precondition_snapshot(
             "SUPERSEDED_C3_RECOVERY_CLAIM_RESULT=ABSENT",
             "BOOTSTRAP_LOCK=ABSENT",
             "ACTIVE_CONFLICTING_EXECUTIONS=0",
+            f"NONTERMINAL_ACTIONS_COUNT={nonterminal_actions_count}",
+            f"NONTERMINAL_ACTIONS_DIGEST_SHA256={nonterminal_actions_digest_sha256}",
+            "BOOTSTRAP_STATE_LOCKING=MANDATORY_NO_BYPASS",
             "TERRAFORM_VERSION=1.15.8",
             "PLAN_FORMAT_VERSION=1.2",
             "PLAN_APPLYABLE=true",
@@ -2920,6 +2949,7 @@ def c5_attempt_series_body(
         (
             "PHASE5_SLICE_C_WIF_REPIN_ATTEMPT_SERIES_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
             f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
             f"OLD_RECOVERY_CONTROL_SHA={old_recovery_control_sha}",
@@ -2934,6 +2964,7 @@ def c5_attempt_series_id_sha256(*args: Any, **kwargs: Any) -> str:
 
 C5_ATTEMPT_CLAIM_FIELDS = (
     "GOVERNING_ISSUE",
+    "C5_PROTOCOL_EPOCH_SHA256",
     "ATTEMPT_SERIES_ID_SHA256",
     "ATTEMPT_GENERATION",
     "SUCCESSOR_CONTROL_SHA",
@@ -2989,6 +3020,7 @@ def c5_attempt_claim_body(
         (
             "WIF_REPIN_ATTEMPT_CLAIM_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"ATTEMPT_SERIES_ID_SHA256={series_id}",
             f"ATTEMPT_GENERATION={generation}",
             f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
@@ -3018,6 +3050,8 @@ def _c5_parse_attempt_claim(comment: dict[str, Any]) -> dict[str, Any]:
     )
     if fields["GOVERNING_ISSUE"] != "8ft0-ai/resilio#109":
         raise RecoveryError("C5_ATTEMPT_CLAIM_ISSUE_MISMATCH")
+    if fields["C5_PROTOCOL_EPOCH_SHA256"] != C5_PROTOCOL_EPOCH_SHA256:
+        raise RecoveryError("C5_ATTEMPT_CLAIM_PROTOCOL_EPOCH_MISMATCH")
     for name in (
         "ATTEMPT_SERIES_ID_SHA256",
         "SAVED_PLAN_SHA256",
@@ -3143,6 +3177,7 @@ def c5_wif_repin_review_body(
         (
             "PHASE5_SLICE_C_C5_WIF_REPIN_PLAN_FRESH_REVIEW_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
             f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
             f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
@@ -3193,6 +3228,7 @@ def c5_wif_repin_authority_body(
         (
             "PHASE5_SLICE_C_C5_WIF_REPIN_APPLY_AUTHORITY_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
             f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
             f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
@@ -3387,6 +3423,7 @@ def c5_wif_repin_terminal_body(
         (
             "PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
             f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
             f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
@@ -3468,6 +3505,7 @@ def c5_dispatch_authority_body(
         (
             "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
             f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
             f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
@@ -4019,6 +4057,38 @@ def _c5_comment_by_id(
     return matches[0]
 
 
+C5_ACTIONS_TERMINAL_STATUSES = frozenset(("completed",))
+
+
+def c5_nonterminal_actions_snapshot() -> dict[str, Any]:
+    """Enumerate every Actions page and bind the complete nonterminal set."""
+    rows: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        payload = github(f"/repos/{REPOSITORY}/actions/runs?per_page=100&page={page}")
+        if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
+            raise RecoveryError("C5_ACTIONS_RUN_SET_INVALID")
+        batch = payload["workflow_runs"]
+        for run in batch:
+            if not isinstance(run, dict):
+                raise RecoveryError("C5_ACTIONS_RUN_INVALID")
+            status = str(run.get("status") or "")
+            if status not in C5_ACTIONS_TERMINAL_STATUSES:
+                run_id = run.get("id")
+                if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0:
+                    raise RecoveryError("C5_ACTIONS_NONTERMINAL_RUN_ID_INVALID")
+                rows.append({"id": run_id, "status": status,
+                    "event": str(run.get("event") or ""), "head_sha": str(run.get("head_sha") or ""),
+                    "path": str(run.get("path") or "")})
+        if len(batch) < 100:
+            break
+        page += 1
+        if page > 1000:
+            raise RecoveryError("C5_ACTIONS_PAGINATION_UNBOUNDED")
+    rows.sort(key=lambda row: (row["id"], row["status"], row["event"], row["head_sha"], row["path"]))
+    return {"count": len(rows), "digest_sha256": sha256(canonical(rows)), "runs": rows, "pages_scanned": page}
+
+
 def _c5_validate_plan_review_and_authority(
     comments: list[dict[str, Any]],
     successor_control_sha: str,
@@ -4141,7 +4211,7 @@ def verify_c5_wif_repin_pre_effect(
         owner_apply_authority_comment_id,
     )
 
-    controls = (
+    if not (\n        activation_record["created_at"] < review_authority["review_created_at"]\n        < review_authority["authority_created_at"]\n    ):\n        raise RecoveryError("C5_ACTIVATION_REVIEW_AUTHORITY_ORDER_INVALID")\n\n    controls = (
         SUPERSEDED_CONTROL_SHA,
         FAILED_C3_CONTROL_SHA,
         C5_OLD_RECOVERY_CONTROL_SHA,
@@ -4154,10 +4224,8 @@ def verify_c5_wif_repin_pre_effect(
                     f"C5_PRE_EFFECT_RECOVERY_{kind.upper()}_UNEXPECTED:{control}"
                 )
 
-    runs = github(
-        f"/repos/{REPOSITORY}/actions/runs?status=in_progress&per_page=100"
-    )
-    if not isinstance(runs, dict) or runs.get("total_count") != 0:
+    conflicts = c5_nonterminal_actions_snapshot()
+    if conflicts["count"] != 0:
         raise RecoveryError("C5_PRE_EFFECT_ACTIVE_CONFLICTING_EXECUTIONS")
 
     snapshot = c5_precondition_snapshot(
@@ -4173,6 +4241,8 @@ def verify_c5_wif_repin_pre_effect(
         review_authority["authority_body_sha256"],
         C5_OLD_RECOVERY_CONTROL_SHA,
         successor_control_sha,
+        conflicts["count"],
+        conflicts["digest_sha256"],
     )
     precondition_digest = sha256(snapshot.encode("utf-8"))
     history = validate_c5_attempt_history(
@@ -4311,6 +4381,38 @@ def _c5_review_field_map(
     return {name: values[name][0] for name in names}
 
 
+def verify_c5_control_use_time_currentness(successor_control_sha: str, expected_main: str) -> dict[str, Any]:
+    _c5_require_sha(successor_control_sha, "C5_CONTROL_CURRENTNESS_SUCCESSOR")
+    _c5_require_sha(expected_main, "C5_CONTROL_CURRENTNESS_MAIN")
+    branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if not isinstance(branch, dict) or branch.get("commit", {}).get("sha") != expected_main:
+        raise RecoveryError("C5_CONTROL_CURRENTNESS_MAIN_MISMATCH")
+    state = _successor_gcs_json(C5_BOOTSTRAP_STATE_OBJECT)
+    live = verify_c5_bootstrap_state_and_live_iam(state, successor_control_sha)
+    if _successor_gcs_metadata(C5_BOOTSTRAP_LOCK_OBJECT, True) is not None:
+        raise RecoveryError("C5_CONTROL_CURRENTNESS_BOOTSTRAP_LOCK_PRESENT")
+    for control in (SUPERSEDED_CONTROL_SHA, FAILED_C3_CONTROL_SHA, C5_OLD_RECOVERY_CONTROL_SHA, successor_control_sha):
+        for kind in ("claim", "result"):
+            if _successor_gcs_metadata(evidence_object(kind, control), True) is not None:
+                raise RecoveryError(f"C5_CONTROL_CURRENTNESS_{kind.upper()}_UNEXPECTED:{control}")
+    conflicts = c5_nonterminal_actions_snapshot()
+    if conflicts["count"] != 0:
+        raise RecoveryError("C5_CONTROL_CURRENTNESS_NONTERMINAL_ACTIONS")
+    snapshot = {"contract": "resilio-phase5-slice-c-c5-control-currentness/v1",
+        "c5_protocol_epoch_sha256": C5_PROTOCOL_EPOCH_SHA256, "current_main": expected_main,
+        "repository_caller_sha": C5_OLD_RECOVERY_CONTROL_SHA,
+        "repository_desired_wif_sha": C5_OLD_RECOVERY_CONTROL_SHA,
+        "live_recovery_wif": live["live_recovery_wif"], "state_lineage": live["state_lineage"],
+        "state_serial": live["state_serial"], "phase5_wif_state_resources": live["phase5_wif_state_resources"],
+        "getmetadata_unchanged": live["getmetadata_unchanged"],
+        "normal_phase5_identities_unchanged": live["normal_phase5_identities_unchanged"],
+        "claim_result_namespaces": "ABSENT", "bootstrap_lock": "ABSENT",
+        "nonterminal_actions_count": conflicts["count"],
+        "nonterminal_actions_digest_sha256": conflicts["digest_sha256"]}
+    snapshot["currentness_digest_sha256"] = sha256(canonical(snapshot))
+    return snapshot
+
+
 def c5_control_implementation_review_body(
     pr_number: int, reviewed_head: str
 ) -> str:
@@ -4324,6 +4426,7 @@ def c5_control_implementation_review_body(
             f"EXACT_HEAD={reviewed_head}",
             f"EXACT_BASE={C5_BASE_MAIN}",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
             f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
             f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
@@ -4350,6 +4453,7 @@ def c5_control_merge_authority_body(
         (
             "PHASE5_SLICE_C_C5_CONTROL_MERGE_AUTHORITY_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
             f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
             f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
@@ -4421,6 +4525,7 @@ def verify_c5_control_premerge(
         raise RecoveryError("C5_CONTROL_PREMERGE_REPOSITORY_MISMATCH")
     files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
     _c5_validate_pr_files(files, C5_CONTROL_ALLOWED_FILES, "C5_CONTROL_PREMERGE")
+    currentness = verify_c5_control_use_time_currentness(reviewed_head, C5_BASE_MAIN)
 
     review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
     if (
@@ -4469,6 +4574,8 @@ def verify_c5_control_premerge(
         "authority_id": authority_id,
         "authority_body_sha256": authority_sha,
         "authority_created_at": authority_created,
+        "c5_protocol_epoch_sha256": C5_PROTOCOL_EPOCH_SHA256,
+        "currentness_digest_sha256": currentness["currentness_digest_sha256"],
         "verified": True,
     }
 
@@ -4499,6 +4606,7 @@ def c5_control_merge_record_body(
         (
             "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
             f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
             f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
@@ -4523,6 +4631,7 @@ def c5_control_merge_record_body(
 
 C5_CONTROL_RECORD_FIELDS = (
     "GOVERNING_ISSUE",
+    "C5_PROTOCOL_EPOCH_SHA256",
     "C5_ARCHITECTURE",
     "OWNER_DISPOSITION",
     "RETAINED_EFFECT_BASELINE",
@@ -4572,6 +4681,7 @@ def validate_c5_control_merge_record(
     )
     expected = {
         "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
         "C5_ARCHITECTURE": str(C5_ARCHITECTURE_COMMENT_ID),
         "OWNER_DISPOSITION": str(C5_OWNER_DISPOSITION_COMMENT_ID),
         "RETAINED_EFFECT_BASELINE": str(C5_RETAINED_BASELINE_COMMENT_ID),
@@ -4700,6 +4810,7 @@ def c5_activation_review_body(
             f"EXACT_HEAD={reviewed_head}",
             f"EXACT_BASE={control_sha}",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
             f"C5_CONTROL_SHA={control_sha}",
             "ACTIVATION_EFFECT=REPOSITORY_CALLER_AND_DESIRED_WIF_C4_TO_C5_ONLY",
@@ -4724,6 +4835,7 @@ def c5_activation_merge_authority_body(
         (
             "PHASE5_SLICE_C_C5_ACTIVATION_MERGE_AUTHORITY_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
             f"C5_CONTROL_SHA={control_sha}",
             f"C5_ACTIVATION_PR={pr_number}",
@@ -4874,6 +4986,7 @@ def c5_activation_record_body(
         (
             "PHASE5_SLICE_C_C5_ACTIVATION_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
             f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
             f"C5_CONTROL_SHA={control_sha}",
             f"C5_ACTIVATION_PR={pr_number}",
@@ -4897,6 +5010,7 @@ def c5_activation_record_body(
 
 C5_ACTIVATION_RECORD_FIELDS = (
     "GOVERNING_ISSUE",
+    "C5_PROTOCOL_EPOCH_SHA256",
     "C5_ARCHITECTURE",
     "C5_CONTROL_SHA",
     "C5_ACTIVATION_PR",
@@ -4950,6 +5064,7 @@ def validate_c5_activation_record(
     )
     expected = {
         "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
         "C5_ARCHITECTURE": str(C5_ARCHITECTURE_COMMENT_ID),
         "C5_CONTROL_SHA": control_sha,
         "C5_ACTIVATION_BASE": control_sha,
