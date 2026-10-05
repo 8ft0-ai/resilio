@@ -154,6 +154,17 @@ def c5_semantic_errors(helper: str) -> list[str]:
         if required not in terminal_calls:
             errors.append(f"RECOVERY_C5_TERMINAL_MISSING_PROVENANCE_CALL:{required}")
 
+    observation = latest("verify_c5_wif_repin_observation")
+    observation_calls = calls(observation)
+    for required in (
+        "_c5_post_effect_live_facts",
+        "_c5_fresh_reconciliation",
+        "_successor_gcs_json",
+        "_successor_gcs_metadata",
+    ):
+        if required not in observation_calls:
+            errors.append(f"RECOVERY_C5_OBSERVATION_NOT_VERIFIER_OWNED:{required}")
+
     pre_effect = latest("verify_c5_wif_repin_pre_effect")
     pre_effect_calls = calls(pre_effect)
     if "c5_nonterminal_actions_snapshot" not in pre_effect_calls:
@@ -478,6 +489,12 @@ def main() -> int:
             "validate_c5_wif_repin_terminal",
             "validate_c5_dispatch_authority",
             "verify_c5_github_boundary",
+            "verify_c5_wif_repin_observation",
+            "_c5_post_effect_live_facts",
+            "_c5_fresh_reconciliation",
+            "RECONCILIATION_PLAN_SHA256",
+            "UNEXPECTED_RECOVERY_WIF_COUNT",
+            "BOOTSTRAP_STATE_SERIAL_BEFORE",
             "C5_PROCESS_OUTCOME_UNKNOWN_NOT_TERMINAL",
             "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V1",
             "C5_DISPATCH_REQUIRES_EFFECT_SUCCEEDED",
@@ -550,6 +567,7 @@ def main() -> int:
             "test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses",
             "test_c5_nonterminal_actions_snapshot_is_paginated",
             "test_c5_attempt_claim_binds_protocol_epoch",
+            "test_c5_observation_is_emitted_from_live_verifier_not_caller_outcome",
         ),
         "RECOVERY_C5_TESTS",
         errors,
@@ -618,6 +636,9 @@ def main() -> int:
             'commands.add_parser("emit-c5-wif-repin-review")',
             'commands.add_parser("emit-c5-wif-repin-authority")',
             'commands.add_parser("verify-c5-wif-repin-pre-effect")',
+            'commands.add_parser("emit-c5-wif-observation")',
+            'commands.add_parser("emit-c5-wif-terminal-v2")',
+            'commands.add_parser("emit-c5-dispatch-authority-v2")',
         ),
         "RECOVERY_C5_CLI",
         errors,
