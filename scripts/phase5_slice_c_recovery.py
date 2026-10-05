@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -5697,6 +5697,15 @@ def _c5_post_effect_live_facts(
     }
 
 
+def _c5_reconciliation_plan_fact_sha256(plan: dict[str, Any]) -> str:
+    """Hash semantic plan JSON while excluding Terraform's run timestamp."""
+    if not isinstance(plan, dict):
+        raise RecoveryError("C5_RECONCILIATION_PLAN_INVALID")
+    stable = dict(plan)
+    stable.pop("timestamp", None)
+    return sha256(canonical(stable))
+
+
 def _c5_fresh_reconciliation(
     terraform_workdir: str | Path,
     old_recovery_control_sha: str,
@@ -5724,7 +5733,6 @@ def _c5_fresh_reconciliation(
         )
         if result.returncode not in (0, 2):
             raise RecoveryError("C5_OBSERVATION_FRESH_PLAN_FAILED")
-        plan_bytes = plan_path.read_bytes()
         plan = _c5_saved_plan_json(plan_path, workdir)
         if result.returncode == 2:
             c5_verify_wif_repin_plan(
@@ -5754,7 +5762,10 @@ def _c5_fresh_reconciliation(
                 if ((row.get("change") or {}).get("actions")) not in (["no-op"], []):
                     raise RecoveryError("C5_OBSERVATION_NO_CHANGE_EFFECT_PRESENT")
             mode = "EXACT_NO_CHANGE"
-        return {"reconciliation": mode, "plan_sha256": sha256(plan_bytes)}
+        return {
+            "reconciliation": mode,
+            "plan_sha256": _c5_reconciliation_plan_fact_sha256(plan),
+        }
 
 
 def verify_c5_wif_repin_observation(
@@ -5763,12 +5774,13 @@ def verify_c5_wif_repin_observation(
     activation_main: str,
     attempt_claim_comment_id: int,
     terraform_workdir: str | Path,
-    observed_at: str,
 ) -> dict[str, Any]:
     _c5_require_sha(successor_control_sha, "C5_OBSERVE_CONTROL")
     _c5_require_sha(activation_main, "C5_OBSERVE_ACTIVATION")
     _c5_positive(attempt_claim_comment_id, "C5_OBSERVE_CLAIM_ID")
-    _timestamp(observed_at, "C5_OBSERVE_OBSERVED_AT")
+    observed_at = datetime.now(timezone.utc).isoformat(
+        timespec="seconds"
+    ).replace("+00:00", "Z")
     branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
     if (
         not isinstance(branch, dict)
@@ -5924,15 +5936,19 @@ def _c5_observation_outcome(
         return "EFFECT_SUCCEEDED"
     if second is not None:
         second_fields = second["fields"]
-        # The late-effect fence is measured only from durable GitHub comment
-        # creation times. OBSERVED_AT is descriptive verifier output and is
-        # deliberately not an authority-bearing clock.
-        separation = (
+        # The late-effect fence requires both the verifier-owned observation
+        # clock and durable GitHub comment creation times to span >=60 seconds.
+        # Neither caller-provided text nor posting delay alone can satisfy it.
+        durable_separation = (
             second["created_at"] - first["created_at"]
+        ).total_seconds()
+        verifier_separation = (
+            second["observed_at"] - first["observed_at"]
         ).total_seconds()
         if (
             first["fact_digest_sha256"] == second["fact_digest_sha256"]
-            and separation >= 60
+            and durable_separation >= 60
+            and verifier_separation >= 60
             and clean
             and f["OLD_RECOVERY_WIF_COUNT"] == "1"
             and f["NEW_RECOVERY_WIF_COUNT"] == "0"
@@ -6476,7 +6492,6 @@ def main() -> int:
     p.add_argument("--activation-main", required=True)
     p.add_argument("--attempt-claim-comment-id", required=True, type=int)
     p.add_argument("--terraform-workdir", required=True)
-    p.add_argument("--observed-at", required=True)
 
     p = commands.add_parser("emit-c5-wif-terminal-v2")
     p.add_argument("--successor-control-sha", required=True)
@@ -6687,7 +6702,6 @@ def main() -> int:
                 activation_main=args.activation_main,
                 attempt_claim_comment_id=args.attempt_claim_comment_id,
                 terraform_workdir=args.terraform_workdir,
-                observed_at=args.observed_at,
             )
             print(result["body"])
         elif args.command == "emit-c5-wif-terminal-v2":
