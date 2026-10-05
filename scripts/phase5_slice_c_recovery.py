@@ -6354,6 +6354,24 @@ def main() -> int:
     p.add_argument("--posted-claim-id", type=int)
     p.add_argument("--claim-output")
 
+    p = commands.add_parser("emit-c5-wif-observation")
+    p.add_argument("--successor-control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--attempt-claim-comment-id", required=True, type=int)
+    p.add_argument("--terraform-workdir", required=True)
+    p.add_argument("--observed-at", required=True)
+
+    p = commands.add_parser("emit-c5-wif-terminal-v2")
+    p.add_argument("--successor-control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--observation-1-comment-id", required=True, type=int)
+    p.add_argument("--observation-2-comment-id", type=int)
+
+    p = commands.add_parser("emit-c5-dispatch-authority-v2")
+    p.add_argument("--successor-control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--terminal-comment-id", required=True, type=int)
+
     p = commands.add_parser("verify-state")
     p.add_argument("--file", required=True)
 
@@ -6530,6 +6548,28 @@ def main() -> int:
             result["attempt_claim_body_sha256"] = sha256(claim_body.encode("utf-8"))
             result["precondition_snapshot_sha256"] = sha256(snapshot.encode("utf-8"))
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif args.command == "emit-c5-wif-observation":
+            result = verify_c5_wif_repin_observation(
+                successor_control_sha=args.successor_control_sha,
+                activation_main=args.activation_main,
+                attempt_claim_comment_id=args.attempt_claim_comment_id,
+                terraform_workdir=args.terraform_workdir,
+                observed_at=args.observed_at,
+            )
+            print(result["body"])
+        elif args.command == "emit-c5-wif-terminal-v2":
+            print(c5_terminal_body_from_observation_comments(
+                args.successor_control_sha,
+                args.activation_main,
+                args.observation_1_comment_id,
+                args.observation_2_comment_id,
+            ))
+        elif args.command == "emit-c5-dispatch-authority-v2":
+            print(c5_dispatch_authority_body(
+                args.successor_control_sha,
+                args.activation_main,
+                args.terminal_comment_id,
+            ))
         elif args.command == "verify-state":
             value = strict_json(Path(args.file).read_bytes())
             verify_state_identity(value)
