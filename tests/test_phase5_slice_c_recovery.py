@@ -2411,11 +2411,13 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             state_serial=recovery.C5_BOOTSTRAP_STATE_SERIAL,
             state_canonical_sha256="1" * 64,
             forbidden_wif_counts=(0, 0, 0),
+            unexpected_wif_count=0,
             recovery_wif_member_set_sha256="2" * 64,
             claim_result_states=("ABSENT", "ABSENT", "ABSENT", "ABSENT"),
             bootstrap_lock_absent=True,
-            getmetadata_role_set_sha256="3" * 64,
-            normal_phase5_identity_set_sha256="4" * 64,
+            reconciliation_plan_sha256="5" * 64,
+            getmetadata_role_set_sha256=recovery.c5_expected_getmetadata_role_set_sha256(),
+            normal_phase5_identity_set_sha256=recovery.c5_expected_normal_identity_set_sha256(),
         )
         if no_effect:
             common.update(
@@ -2584,6 +2586,59 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             recovery._c5_observation_outcome(chain["obs1"], changed),
             "INCONSISTENT_EFFECT",
         )
+
+    def test_c5_observation_is_emitted_from_live_verifier_not_caller_outcome(self):
+        chain = self._c5_v2_chain()
+        control = chain["control"]
+        activation = chain["activation"]
+        claim_comment = chain["comments"][2]
+        live = {
+            "state_lineage": recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            "state_serial": recovery.C5_BOOTSTRAP_STATE_SERIAL + 1,
+            "state_canonical_sha256": "1" * 64,
+            "old_wif_count": 0,
+            "new_wif_count": 1,
+            "forbidden_wif_counts": (0, 0, 0),
+            "unexpected_wif_count": 0,
+            "recovery_wif_member_set_sha256": "2" * 64,
+            "normal_phase5_identity_set_sha256": recovery.c5_expected_normal_identity_set_sha256(),
+            "getmetadata_role_set_sha256": recovery.c5_expected_getmetadata_role_set_sha256(),
+            "normal_identities_ok": True,
+            "getmetadata_ok": True,
+        }
+        comments = [claim_comment]
+        def fake_github(path):
+            if path == f"/repos/{recovery.REPOSITORY}/branches/{recovery.DEFAULT_BRANCH}":
+                return {"commit": {"sha": activation}}
+            raise AssertionError(path)
+        with patch.object(recovery, "github", side_effect=fake_github), patch.object(
+            recovery, "verify_c5_repository_activation", return_value={"verified": True}
+        ), patch.object(
+            recovery, "github_issue_comments", return_value=comments
+        ), patch.object(
+            recovery, "validate_c5_governance_history", return_value={}
+        ), patch.object(
+            recovery, "validate_c5_activation_record", return_value={}
+        ), patch.object(
+            recovery, "_successor_gcs_json", return_value={}
+        ), patch.object(
+            recovery, "_c5_post_effect_live_facts", return_value=live
+        ), patch.object(
+            recovery, "_successor_gcs_metadata", return_value=None
+        ), patch.object(
+            recovery, "_c5_fresh_reconciliation",
+            return_value={"reconciliation": "EXACT_NO_CHANGE", "plan_sha256": "5" * 64},
+        ):
+            result = recovery.verify_c5_wif_repin_observation(
+                successor_control_sha=control,
+                activation_main=activation,
+                attempt_claim_comment_id=703,
+                terraform_workdir="ignored",
+                observed_at="2026-10-05T01:03:00Z",
+            )
+        self.assertTrue(result["verified_live"])
+        self.assertIn("RECONCILIATION=EXACT_NO_CHANGE", result["body"])
+        self.assertNotIn("OUTCOME=", result["body"])
 
     def test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses(self):
         statuses = ("queued", "waiting", "requested", "pending", "in_progress")
