@@ -172,6 +172,12 @@ def c5_semantic_errors(helper: str) -> list[str]:
     if "status=in_progress" in helper:
         errors.append("RECOVERY_C5_IN_PROGRESS_ONLY_ACTIONS_FILTER_REACHABLE")
 
+    control_record = latest("c5_control_merge_record_body")
+    control_record_calls = calls(control_record)
+    control_record_source = ast.get_source_segment(helper, control_record) or "" if control_record is not None else ""
+    if "C5_CONTROL_CURRENTNESS_DIGEST_SHA256" not in control_record_source:
+        errors.append("RECOVERY_C5_CONTROL_RECORD_CURRENTNESS_NOT_BOUND")
+
     premerge = latest("verify_c5_control_premerge")
     if "verify_c5_control_use_time_currentness" not in calls(premerge):
         errors.append("RECOVERY_C5_CONTROL_PREMERGE_CURRENTNESS_NOT_RECHECKED")
@@ -485,6 +491,10 @@ def main() -> int:
             "C5_ARCHITECTURE_CLOSURE_COMMENT_ID = 5993056257",
             "c5_nonterminal_actions_snapshot",
             "verify_c5_control_use_time_currentness",
+            "C5_CONTROL_CURRENTNESS_DIGEST_SHA256",
+            "C5_CONTROL_CURRENTNESS_CAPTURE=FRESH_POST_MERGE",
+            "C5_CONTROL_CURRENTNESS_CALLER_NOT_C4",
+            "C5_CONTROL_CURRENTNESS_DESIRED_WIF_NOT_C4",
             "validate_c5_wif_repin_observation",
             "validate_c5_wif_repin_terminal",
             "validate_c5_dispatch_authority",
