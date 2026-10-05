@@ -2,6 +2,7 @@
 """Credential-free validation for the inert Slice C C5 retained-effect recovery control."""
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -78,6 +79,103 @@ def _permission_blocks(lines: list[str]) -> list[tuple[int, tuple[str, ...]]]:
         blocks.append((indent, tuple(values)))
     return blocks
 
+
+
+def c5_semantic_errors(helper: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        tree = ast.parse(helper)
+    except SyntaxError as exc:
+        return [f"RECOVERY_C5_HELPER_SYNTAX_INVALID:{exc.lineno}:{exc.offset}"]
+
+    functions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(node.name, []).append(node)
+
+    def latest(name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        rows = functions.get(name) or []
+        return rows[-1] if rows else None
+
+    def calls(node: ast.AST | None) -> set[str]:
+        if node is None:
+            return set()
+        out: set[str] = set()
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            target = child.func
+            if isinstance(target, ast.Name):
+                out.add(target.id)
+            elif isinstance(target, ast.Attribute):
+                out.add(target.attr)
+        return out
+
+    runtime = latest("verify_successor_github_boundary")
+    runtime_calls = calls(runtime)
+    if runtime is None or "verify_c5_github_boundary" not in runtime_calls:
+        errors.append("RECOVERY_C5_RUNTIME_DOES_NOT_ENTER_C5_PROTOCOL")
+    predecessor_calls = {
+        "validate_successor_activation_record",
+        "validate_successor_wif_repin_terminal",
+        "validate_successor_dispatch_authority",
+        "_legacy_verify_successor_github_boundary",
+    }
+    leaked = sorted(runtime_calls & predecessor_calls)
+    if leaked:
+        errors.append(
+            "RECOVERY_C5_RUNTIME_REACHES_PREDECESSOR_GOVERNANCE:" + ",".join(leaked)
+        )
+
+    c5_boundary = latest("verify_c5_github_boundary")
+    boundary_calls = calls(c5_boundary)
+    for required in (
+        "validate_c5_governance_history",
+        "validate_c5_activation_record",
+        "validate_c5_dispatch_authority",
+    ):
+        if required not in boundary_calls:
+            errors.append(f"RECOVERY_C5_BOUNDARY_MISSING_CALL:{required}")
+
+    dispatch = latest("c5_dispatch_authority_body")
+    dispatch_calls = calls(dispatch)
+    if "validate_c5_wif_repin_terminal" not in dispatch_calls:
+        errors.append("RECOVERY_C5_DISPATCH_DOES_NOT_VALIDATE_TERMINAL")
+    if "c5_terminal_record_summary" in dispatch_calls:
+        errors.append("RECOVERY_C5_DISPATCH_ACCEPTS_CALLER_TERMINAL_SUMMARY")
+
+    terminal = latest("validate_c5_wif_repin_terminal")
+    terminal_calls = calls(terminal)
+    for required in (
+        "_c5_parse_attempt_claim",
+        "validate_c5_wif_repin_observation",
+        "validate_c5_activation_record",
+    ):
+        if required not in terminal_calls:
+            errors.append(f"RECOVERY_C5_TERMINAL_MISSING_PROVENANCE_CALL:{required}")
+
+    pre_effect = latest("verify_c5_wif_repin_pre_effect")
+    pre_effect_calls = calls(pre_effect)
+    if "c5_nonterminal_actions_snapshot" not in pre_effect_calls:
+        errors.append("RECOVERY_C5_PRE_EFFECT_INCOMPLETE_ACTIONS_CURRENTNESS")
+    if "status=in_progress" in helper:
+        errors.append("RECOVERY_C5_IN_PROGRESS_ONLY_ACTIONS_FILTER_REACHABLE")
+
+    premerge = latest("verify_c5_control_premerge")
+    if "verify_c5_control_use_time_currentness" not in calls(premerge):
+        errors.append("RECOVERY_C5_CONTROL_PREMERGE_CURRENTNESS_NOT_RECHECKED")
+
+    main = latest("main")
+    if "verify_successor_github_boundary" not in calls(main):
+        errors.append("RECOVERY_C5_CLI_RUNTIME_ENTRYPOINT_NOT_REACHABLE")
+
+    if (
+        'C5_PROTOCOL_EPOCH_SHA256 = "785fd8bdb53812ebbca31e9d72da66667eb53b3b54925e6bd0a3c788180c600f"'
+        not in helper
+    ):
+        errors.append("RECOVERY_C5_PROTOCOL_EPOCH_IDENTITY_MISSING")
+
+    return errors
 
 def workflow_structure_errors(workflow: str) -> list[str]:
     errors: list[str] = []
@@ -369,6 +467,17 @@ def main() -> int:
             "NO_EFFECT_STABLE",
             "INCONSISTENT_EFFECT",
             "PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V1",
+            "PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",
+            "PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V2",
+            "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V2",
+            "C5_PROTOCOL_EPOCH_SHA256",
+            "C5_ARCHITECTURE_CLOSURE_COMMENT_ID = 5993056257",
+            "c5_nonterminal_actions_snapshot",
+            "verify_c5_control_use_time_currentness",
+            "validate_c5_wif_repin_observation",
+            "validate_c5_wif_repin_terminal",
+            "validate_c5_dispatch_authority",
+            "verify_c5_github_boundary",
             "C5_PROCESS_OUTCOME_UNKNOWN_NOT_TERMINAL",
             "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V1",
             "C5_DISPATCH_REQUIRES_EFFECT_SUCCEEDED",
@@ -431,10 +540,22 @@ def main() -> int:
             "test_c5_activation_file_transform_is_exact_two_file_sha_repin",
             "test_c5_control_and_activation_authority_constructors_are_strict",
             "test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready",
+            "test_c5_runtime_protocol_epoch_rejects_predecessor_control",
+            "test_c5_public_runtime_routes_only_to_c5_protocol",
+            "test_c5_arbitrary_effect_label_cannot_create_dispatch_authority",
+            "test_c5_terminal_outcome_mismatch_is_rejected",
+            "test_c5_edited_observation_raw_body_is_rejected",
+            "test_c5_no_effect_requires_two_validated_observations",
+            "test_c5_no_effect_rejects_fact_digest_mismatch_or_short_interval",
+            "test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses",
+            "test_c5_nonterminal_actions_snapshot_is_paginated",
+            "test_c5_attempt_claim_binds_protocol_epoch",
         ),
         "RECOVERY_C5_TESTS",
         errors,
     )
+    errors.extend(c5_semantic_errors(helper))
+
     for token in (
         "github-p5-product-applier@",
         "terraform apply",
