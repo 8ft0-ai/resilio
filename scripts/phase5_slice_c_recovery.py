@@ -3256,6 +3256,8 @@ def c5_wif_repin_authority_body(
             f"FRESH_REVIEW_COMMENT_ID={fresh_review_comment_id}",
             f"FRESH_REVIEW_BODY_SHA256={fresh_review_body_sha256}",
             "AUTHORITY=APPLY_EXACT_REVIEWED_WIF_REPIN_PLAN_ONCE",
+            "EFFECT_EXECUTOR=apply-c5-wif-repin-effect",
+            "BOOTSTRAP_STATE_LOCKING=CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED",
             "REPLAN=NOT_AUTHORISED",
             "PLAN_REPLACEMENT=NOT_AUTHORISED",
             "SAME_GENERATION_RETRY=NOT_AUTHORISED",
@@ -4370,6 +4372,73 @@ def verify_c5_wif_repin_pre_effect(
         "attempt_claim_body": claim_body,
         "posted_claim_comment_id": posted_claim_comment_id,
         "ready_for_effect": posted_claim_comment_id is not None,
+    }
+
+
+def execute_c5_wif_repin_effect(
+    *,
+    successor_control_sha: str,
+    activation_main: str,
+    saved_plan_path: str | Path,
+    terraform_workdir: str | Path,
+    structural_manifest_path: str | Path,
+    fresh_review_comment_id: int,
+    owner_apply_authority_comment_id: int,
+    posted_claim_comment_id: int,
+) -> dict[str, Any]:
+    """Consume one posted claim through the only authorised locked apply path."""
+    verification = verify_c5_wif_repin_pre_effect(
+        successor_control_sha=successor_control_sha,
+        activation_main=activation_main,
+        saved_plan_path=saved_plan_path,
+        terraform_workdir=terraform_workdir,
+        structural_manifest_path=structural_manifest_path,
+        fresh_review_comment_id=fresh_review_comment_id,
+        owner_apply_authority_comment_id=owner_apply_authority_comment_id,
+        posted_claim_comment_id=posted_claim_comment_id,
+    )
+    if (
+        verification.get("phase") != "EFFECT_READY"
+        or verification.get("ready_for_effect") is not True
+        or verification.get("posted_claim_comment_id") != posted_claim_comment_id
+    ):
+        raise RecoveryError("C5_EFFECT_REVERIFY_NOT_EFFECT_READY")
+
+    plan_path = Path(saved_plan_path).resolve()
+    workdir = Path(terraform_workdir).resolve()
+    if not plan_path.is_file():
+        raise RecoveryError("C5_EFFECT_SAVED_PLAN_MISSING")
+    if not workdir.is_dir():
+        raise RecoveryError("C5_EFFECT_TERRAFORM_WORKDIR_MISSING")
+
+    command = [
+        "terraform",
+        f"-chdir={workdir}",
+        "apply",
+        "-input=false",
+        "-lock=true",
+        str(plan_path),
+    ]
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RecoveryError("C5_EFFECT_APPLY_FAILED__OUTCOME_REQUIRES_OBSERVATION")
+
+    return {
+        "contract": "resilio-phase5-slice-c-c5-locked-effect/v1",
+        "phase": "EFFECT_ATTEMPTED",
+        "successor_control_sha": successor_control_sha,
+        "activation_main": activation_main,
+        "saved_plan_sha256": verification["saved_plan_sha256"],
+        "attempt_series_id_sha256": verification["attempt_series_id_sha256"],
+        "attempt_generation": verification["attempt_generation"],
+        "posted_claim_comment_id": posted_claim_comment_id,
+        "bootstrap_state_locking": "CANONICAL_TERRAFORM_LOCK_TRUE",
+        "observation_required": True,
     }
 
 
@@ -5855,8 +5924,11 @@ def _c5_observation_outcome(
         return "EFFECT_SUCCEEDED"
     if second is not None:
         second_fields = second["fields"]
+        # The late-effect fence is measured only from durable GitHub comment
+        # creation times. OBSERVED_AT is descriptive verifier output and is
+        # deliberately not an authority-bearing clock.
         separation = (
-            second["observed_at"] - first["observed_at"]
+            second["created_at"] - first["created_at"]
         ).total_seconds()
         if (
             first["fact_digest_sha256"] == second["fact_digest_sha256"]
@@ -6389,6 +6461,16 @@ def main() -> int:
     p.add_argument("--posted-claim-id", type=int)
     p.add_argument("--claim-output")
 
+    p = commands.add_parser("apply-c5-wif-repin-effect")
+    p.add_argument("--successor-control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--saved-plan", required=True)
+    p.add_argument("--terraform-workdir", required=True)
+    p.add_argument("--structural-manifest", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--authority-id", required=True, type=int)
+    p.add_argument("--posted-claim-id", required=True, type=int)
+
     p = commands.add_parser("emit-c5-wif-observation")
     p.add_argument("--successor-control-sha", required=True)
     p.add_argument("--activation-main", required=True)
@@ -6586,6 +6668,18 @@ def main() -> int:
                 result["attempt_claim_output"] = args.claim_output
             result["attempt_claim_body_sha256"] = sha256(claim_body.encode("utf-8"))
             result["precondition_snapshot_sha256"] = sha256(snapshot.encode("utf-8"))
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif args.command == "apply-c5-wif-repin-effect":
+            result = execute_c5_wif_repin_effect(
+                successor_control_sha=args.successor_control_sha,
+                activation_main=args.activation_main,
+                saved_plan_path=args.saved_plan,
+                terraform_workdir=args.terraform_workdir,
+                structural_manifest_path=args.structural_manifest,
+                fresh_review_comment_id=args.review_id,
+                owner_apply_authority_comment_id=args.authority_id,
+                posted_claim_comment_id=args.posted_claim_id,
+            )
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif args.command == "emit-c5-wif-observation":
             result = verify_c5_wif_repin_observation(
