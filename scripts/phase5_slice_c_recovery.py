@@ -4407,6 +4407,24 @@ def verify_c5_control_use_time_currentness(successor_control_sha: str, expected_
     branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
     if not isinstance(branch, dict) or branch.get("commit", {}).get("sha") != expected_main:
         raise RecoveryError("C5_CONTROL_CURRENTNESS_MAIN_MISMATCH")
+    caller = _c5_fetch_repo_text(
+        ".github/workflows/phase5-slice-c-recovery.yml", expected_main
+    )
+    authority = _c5_fetch_repo_text(
+        "infra/bootstrap/phase5_authority.tf", expected_main
+    )
+    expected_caller = (
+        "uses: 8ft0-ai/resilio/.github/workflows/"
+        f"phase5-slice-c-recovery-reusable.yml@{C5_OLD_RECOVERY_CONTROL_SHA}"
+    )
+    expected_desired = (
+        'phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/'
+        f'phase5-slice-c-recovery-reusable.yml@{C5_OLD_RECOVERY_CONTROL_SHA}"'
+    )
+    if caller.count(expected_caller) != 1:
+        raise RecoveryError("C5_CONTROL_CURRENTNESS_CALLER_NOT_C4")
+    if authority.count(expected_desired) != 1:
+        raise RecoveryError("C5_CONTROL_CURRENTNESS_DESIRED_WIF_NOT_C4")
     state = _successor_gcs_json(C5_BOOTSTRAP_STATE_OBJECT)
     live = verify_c5_bootstrap_state_and_live_iam(state, successor_control_sha)
     if _successor_gcs_metadata(C5_BOOTSTRAP_LOCK_OBJECT, True) is not None:
@@ -4609,6 +4627,7 @@ def c5_control_merge_record_body(
     review_body_sha256: str,
     authority_id: int,
     authority_body_sha256: str,
+    currentness_digest_sha256: str,
 ) -> str:
     _c5_require_sha(control_sha, "C5_CONTROL_SHA")
     _c5_positive(pr_number, "C5_CONTROL_RECORD_PR")
@@ -4621,6 +4640,9 @@ def c5_control_merge_record_body(
     _c5_positive(authority_id, "C5_CONTROL_RECORD_AUTHORITY_ID")
     _c5_require_hash(
         authority_body_sha256, "C5_CONTROL_RECORD_AUTHORITY_BODY_SHA256"
+    )
+    _c5_require_hash(
+        currentness_digest_sha256, "C5_CONTROL_RECORD_CURRENTNESS_DIGEST_SHA256"
     )
     return "\n".join(
         (
@@ -4639,6 +4661,9 @@ def c5_control_merge_record_body(
             f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
             f"C5_OWNER_MERGE_AUTHORITY_COMMENT_ID={authority_id}",
             f"C5_OWNER_MERGE_AUTHORITY_BODY_SHA256={authority_body_sha256}",
+            f"C5_CONTROL_CURRENTNESS_DIGEST_SHA256={currentness_digest_sha256}",
+            f"C5_CONTROL_CURRENTNESS_EXPECTED_MAIN={control_sha}",
+            "C5_CONTROL_CURRENTNESS_CAPTURE=FRESH_POST_MERGE",
             "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
             "CALLER_REMAINS=C4",
             "DESIRED_WIF_REMAINS=C4",
@@ -4664,6 +4689,9 @@ C5_CONTROL_RECORD_FIELDS = (
     "C5_FRESH_REVIEW_BODY_SHA256",
     "C5_OWNER_MERGE_AUTHORITY_COMMENT_ID",
     "C5_OWNER_MERGE_AUTHORITY_BODY_SHA256",
+    "C5_CONTROL_CURRENTNESS_DIGEST_SHA256",
+    "C5_CONTROL_CURRENTNESS_EXPECTED_MAIN",
+    "C5_CONTROL_CURRENTNESS_CAPTURE",
     "MERGED_TREE_EQUALS_REVIEWED_TREE",
     "CALLER_REMAINS",
     "DESIRED_WIF_REMAINS",
@@ -4707,6 +4735,8 @@ def validate_c5_control_merge_record(
         "RETAINED_EFFECT_BASELINE": str(C5_RETAINED_BASELINE_COMMENT_ID),
         "C5_CONTROL_BASE": C5_BASE_MAIN,
         "C5_CONTROL_MERGE": control_sha,
+        "C5_CONTROL_CURRENTNESS_EXPECTED_MAIN": control_sha,
+        "C5_CONTROL_CURRENTNESS_CAPTURE": "FRESH_POST_MERGE",
         "MERGED_TREE_EQUALS_REVIEWED_TREE": "TRUE",
         "CALLER_REMAINS": "C4",
         "DESIRED_WIF_REMAINS": "C4",
@@ -4738,6 +4768,10 @@ def validate_c5_control_merge_record(
     authority_hash = _c5_require_hash(
         fields["C5_OWNER_MERGE_AUTHORITY_BODY_SHA256"],
         "C5_CONTROL_RECORD_AUTHORITY_BODY_SHA256",
+    )
+    currentness_hash = _c5_require_hash(
+        fields["C5_CONTROL_CURRENTNESS_DIGEST_SHA256"],
+        "C5_CONTROL_RECORD_CURRENTNESS_DIGEST_SHA256",
     )
 
     pr = github(f"/repos/{REPOSITORY}/pulls/{pr_number}")
@@ -4809,6 +4843,7 @@ def validate_c5_control_merge_record(
         "review_body_sha256": review_hash,
         "authority_id": authority_id,
         "authority_body_sha256": authority_hash,
+        "currentness_digest_sha256": currentness_hash,
     }
 
 
@@ -6489,10 +6524,14 @@ def main() -> int:
             result.pop("authority_created_at", None)
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif args.command == "emit-c5-control-merge-record":
+            currentness = verify_c5_control_use_time_currentness(
+                args.reviewed_head, args.control_sha
+            )
             print(c5_control_merge_record_body(
                 args.control_sha, args.pr_number, args.reviewed_head,
                 args.reviewed_tree, args.review_id, args.review_body_sha256,
                 args.authority_id, args.authority_body_sha256,
+                currentness["currentness_digest_sha256"],
             ))
         elif args.command == "emit-c5-activation-review":
             print(c5_activation_review_body(
