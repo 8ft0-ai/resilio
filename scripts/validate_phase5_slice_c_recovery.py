@@ -154,6 +154,15 @@ def c5_semantic_errors(helper: str) -> list[str]:
         if required not in terminal_calls:
             errors.append(f"RECOVERY_C5_TERMINAL_MISSING_PROVENANCE_CALL:{required}")
 
+    outcome = latest("_c5_observation_outcome")
+    outcome_source = (
+        ast.get_source_segment(helper, outcome) or "" if outcome is not None else ""
+    )
+    if 'second["created_at"] - first["created_at"]' not in outcome_source:
+        errors.append("RECOVERY_C5_NO_EFFECT_FENCE_NOT_DURABLE_COMMENT_TIME")
+    if 'second["observed_at"] - first["observed_at"]' in outcome_source:
+        errors.append("RECOVERY_C5_NO_EFFECT_FENCE_USES_CALLER_OBSERVED_AT")
+
     observation = latest("verify_c5_wif_repin_observation")
     observation_calls = calls(observation)
     for required in (
@@ -172,6 +181,50 @@ def c5_semantic_errors(helper: str) -> list[str]:
     if "status=in_progress" in helper:
         errors.append("RECOVERY_C5_IN_PROGRESS_ONLY_ACTIONS_FILTER_REACHABLE")
 
+    effect = latest("execute_c5_wif_repin_effect")
+    effect_calls = calls(effect)
+    effect_source = (
+        ast.get_source_segment(helper, effect) or "" if effect is not None else ""
+    )
+    if "verify_c5_wif_repin_pre_effect" not in effect_calls:
+        errors.append("RECOVERY_C5_EFFECT_MISSING_IMMEDIATE_REVERIFY")
+    if "run" not in effect_calls:
+        errors.append("RECOVERY_C5_EFFECT_MISSING_TERRAFORM_EXECUTION")
+    for required_token in (
+        '"apply"',
+        '"-input=false"',
+        '"-lock=true"',
+        '"C5_EFFECT_REVERIFY_NOT_EFFECT_READY"',
+        '"C5_EFFECT_APPLY_FAILED__OUTCOME_REQUIRES_OBSERVATION"',
+    ):
+        if required_token not in effect_source:
+            errors.append(
+                "RECOVERY_C5_EFFECT_LOCKED_APPLY_CONTRACT_MISSING:"
+                + required_token
+            )
+    for forbidden_token in ("shell=True", '"destroy"', '"-lock=false"'):
+        if forbidden_token in effect_source:
+            errors.append(
+                "RECOVERY_C5_EFFECT_LOCKED_APPLY_CONTRACT_FORBIDDEN:"
+                + forbidden_token
+            )
+
+    authority_body = latest("c5_wif_repin_authority_body")
+    authority_source = (
+        ast.get_source_segment(helper, authority_body) or ""
+        if authority_body is not None
+        else ""
+    )
+    for required_token in (
+        "EFFECT_EXECUTOR=apply-c5-wif-repin-effect",
+        "BOOTSTRAP_STATE_LOCKING=CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED",
+    ):
+        if required_token not in authority_source:
+            errors.append(
+                "RECOVERY_C5_EFFECT_AUTHORITY_LOCK_BINDING_MISSING:"
+                + required_token
+            )
+
     control_record = latest("c5_control_merge_record_body")
     control_record_calls = calls(control_record)
     control_record_source = ast.get_source_segment(helper, control_record) or "" if control_record is not None else ""
@@ -183,8 +236,11 @@ def c5_semantic_errors(helper: str) -> list[str]:
         errors.append("RECOVERY_C5_CONTROL_PREMERGE_CURRENTNESS_NOT_RECHECKED")
 
     main = latest("main")
-    if "verify_successor_github_boundary" not in calls(main):
+    main_calls = calls(main)
+    if "verify_successor_github_boundary" not in main_calls:
         errors.append("RECOVERY_C5_CLI_RUNTIME_ENTRYPOINT_NOT_REACHABLE")
+    if "execute_c5_wif_repin_effect" not in main_calls:
+        errors.append("RECOVERY_C5_CLI_LOCKED_EFFECT_ENTRYPOINT_NOT_REACHABLE")
 
     if (
         'C5_PROTOCOL_EPOCH_SHA256 = "785fd8bdb53812ebbca31e9d72da66667eb53b3b54925e6bd0a3c788180c600f"'
@@ -574,6 +630,8 @@ def main() -> int:
             "test_c5_edited_observation_raw_body_is_rejected",
             "test_c5_no_effect_requires_two_validated_observations",
             "test_c5_no_effect_rejects_fact_digest_mismatch_or_short_interval",
+            "test_c5_no_effect_fence_uses_durable_comment_timestamps",
+            "test_c5_locked_effect_executor_requires_effect_ready_and_lock_true",
             "test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses",
             "test_c5_nonterminal_actions_snapshot_is_paginated",
             "test_c5_attempt_claim_binds_protocol_epoch",
@@ -586,7 +644,6 @@ def main() -> int:
 
     for token in (
         "github-p5-product-applier@",
-        "terraform apply",
         "terraform destroy",
         "serviceAccounts.setIamPolicy",
         "BOOTSTRAP_APPLY_RUN",
@@ -646,6 +703,7 @@ def main() -> int:
             'commands.add_parser("emit-c5-wif-repin-review")',
             'commands.add_parser("emit-c5-wif-repin-authority")',
             'commands.add_parser("verify-c5-wif-repin-pre-effect")',
+            'commands.add_parser("apply-c5-wif-repin-effect")',
             'commands.add_parser("emit-c5-wif-observation")',
             'commands.add_parser("emit-c5-wif-terminal-v2")',
             'commands.add_parser("emit-c5-dispatch-authority-v2")',
