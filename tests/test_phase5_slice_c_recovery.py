@@ -668,7 +668,7 @@ def run_successor_boundary(fixture):
         for item in patches: item.start()
         try:
             output=Path(tmp)/"candidate.json"
-            result=recovery.verify_successor_github_boundary(fixture["activation"],fixture["control"],output)
+            result=recovery._legacy_verify_successor_github_boundary(fixture["activation"],fixture["control"],output)
             return result,output.read_bytes()
         finally:
             for item in reversed(patches): item.stop()
@@ -1772,27 +1772,30 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
         return control, activation, body
 
     def test_c5_terminal_binds_total_effect_evidence_and_enables_only_effect_dispatch(self):
-        control, activation, body = self._effect_terminal_body()
-        self.assertIn("OUTCOME=EFFECT_SUCCEEDED", body)
-        terminal = recovery.c5_terminal_record_summary(
-            901, body, "EFFECT_SUCCEEDED"
-        )
-        authority = recovery.c5_dispatch_authority_body(
-            control, activation, terminal
-        )
-        self.assertIn(
-            "AUTHORITY=DISPATCH_EXACTLY_ONE_C5_RECONCILIATION_ONLY_RECOVERY",
-            authority,
-        )
+        control = "d" * 40
+        activation = "e" * 40
+        terminal = {"outcome": "EFFECT_SUCCEEDED", "body_sha256": "a" * 64}
+        with patch.object(recovery, "github_issue_comments", return_value=[]), patch.object(
+            recovery, "validate_c5_wif_repin_terminal", return_value=terminal
+        ) as validate:
+            authority = recovery.c5_dispatch_authority_body(control, activation, 901)
+        self.assertIn("PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V2", authority)
+        self.assertIn("C5_PROTOCOL_EPOCH_SHA256=", authority)
+        validate.assert_called_once_with([], control, activation, 901)
 
-        no_effect = dict(terminal)
-        no_effect["outcome"] = "NO_EFFECT_STABLE"
-        with self.assertRaises(RecoveryError):
-            recovery.c5_dispatch_authority_body(control, activation, no_effect)
+        with patch.object(recovery, "github_issue_comments", return_value=[]), patch.object(
+            recovery,
+            "validate_c5_wif_repin_terminal",
+            return_value={"outcome": "NO_EFFECT_STABLE", "body_sha256": "b" * 64},
+        ):
+            with self.assertRaises(RecoveryError):
+                recovery.c5_dispatch_authority_body(control, activation, 902)
 
         with self.assertRaises(RecoveryError):
-            recovery.c5_dispatch_authority_body(
-                recovery.C5_OLD_RECOVERY_CONTROL_SHA, activation, terminal
+            recovery.verify_successor_github_boundary(
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                "ignored",
             )
 
     def test_c5_process_unknown_cannot_be_emitted_as_terminal(self):
@@ -2372,6 +2375,262 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                 recovery.C5_OLD_RECOVERY_CONTROL_SHA, 141, "f" * 40
             )
 
+    def _c5_v2_chain(self, *, no_effect=False, second_delta_seconds=60):
+        control = "d" * 40
+        activation = "e" * 40
+        review_body = "c5-review"
+        authority_body = "c5-authority"
+        review_hash = recovery.sha256(review_body.encode())
+        authority_hash = recovery.sha256(authority_body.encode())
+        claim_body = recovery.c5_attempt_claim_body(
+            control,
+            activation,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            control,
+            1,
+            "a" * 64,
+            "b" * 64,
+            "f" * 64,
+            701,
+            review_hash,
+            702,
+            authority_hash,
+        )
+        claim_comment = owner_comment(703, claim_body, "2026-10-05T01:02:00Z")
+        claim = recovery._c5_parse_attempt_claim(claim_comment)
+
+        common = dict(
+            successor_control_sha=control,
+            successor_activation_main=activation,
+            attempt_claim_comment_id=703,
+            attempt_claim_body_sha256=claim["body_sha256"],
+            attempt_series_id_sha256=claim["fields"]["ATTEMPT_SERIES_ID_SHA256"],
+            attempt_generation=1,
+            precondition_digest_sha256="f" * 64,
+            state_lineage=recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            state_serial=recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            state_canonical_sha256="1" * 64,
+            forbidden_wif_counts=(0, 0, 0),
+            recovery_wif_member_set_sha256="2" * 64,
+            claim_result_states=("ABSENT", "ABSENT", "ABSENT", "ABSENT"),
+            bootstrap_lock_absent=True,
+            getmetadata_role_set_sha256="3" * 64,
+            normal_phase5_identity_set_sha256="4" * 64,
+        )
+        if no_effect:
+            common.update(
+                old_wif_count=1,
+                new_wif_count=0,
+                reconciliation="EXACT_PENDING_REVIEWED_EFFECT",
+            )
+        else:
+            common.update(
+                old_wif_count=0,
+                new_wif_count=1,
+                reconciliation="EXACT_NO_CHANGE",
+            )
+        obs1_body = recovery.c5_wif_repin_observation_body(
+            **common, observed_at="2026-10-05T01:03:00Z"
+        )
+        obs1_comment = owner_comment(704, obs1_body, "2026-10-05T01:03:00Z")
+        obs1 = recovery.validate_c5_wif_repin_observation(
+            obs1_comment, control, activation, claim
+        )
+        obs2_comment = None
+        obs2 = None
+        if no_effect:
+            observed_minute = 3 + second_delta_seconds // 60
+            observed_second = second_delta_seconds % 60
+            timestamp = (
+                f"2026-10-05T01:{observed_minute:02d}:{observed_second:02d}Z"
+            )
+            obs2_body = recovery.c5_wif_repin_observation_body(
+                **common, observed_at=timestamp
+            )
+            obs2_comment = owner_comment(705, obs2_body, timestamp)
+            obs2 = recovery.validate_c5_wif_repin_observation(
+                obs2_comment, control, activation, claim
+            )
+        terminal_body = recovery.c5_wif_repin_terminal_v2_body(
+            control, activation, claim, obs1, obs2
+        )
+        terminal_id = 706 if obs2 is not None else 705
+        terminal_time = "2026-10-05T01:05:00Z" if obs2 is not None else "2026-10-05T01:04:00Z"
+        terminal_comment = owner_comment(terminal_id, terminal_body, terminal_time)
+        comments = [
+            owner_comment(701, review_body, "2026-10-05T01:00:00Z"),
+            owner_comment(702, authority_body, "2026-10-05T01:01:00Z"),
+            claim_comment,
+            obs1_comment,
+        ]
+        if obs2_comment is not None:
+            comments.append(obs2_comment)
+        comments.append(terminal_comment)
+        return {
+            "control": control,
+            "activation": activation,
+            "claim": claim,
+            "obs1": obs1,
+            "obs2": obs2,
+            "terminal_id": terminal_id,
+            "terminal_comment": terminal_comment,
+            "comments": comments,
+        }
+
+    def test_c5_runtime_protocol_epoch_rejects_predecessor_control(self):
+        with self.assertRaises(RecoveryError):
+            recovery.verify_successor_github_boundary(
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                "ignored",
+            )
+
+    def test_c5_public_runtime_routes_only_to_c5_protocol(self):
+        control = "d" * 40
+        activation = "e" * 40
+        expected = {"contract": "c5"}
+        with patch.object(
+            recovery, "verify_c5_github_boundary", return_value=expected
+        ) as c5, patch.object(
+            recovery, "_legacy_verify_successor_github_boundary"
+        ) as legacy:
+            self.assertEqual(
+                recovery.verify_successor_github_boundary(
+                    activation, control, "candidate.json"
+                ),
+                expected,
+            )
+        c5.assert_called_once()
+        legacy.assert_not_called()
+
+    def test_c5_arbitrary_effect_label_cannot_create_dispatch_authority(self):
+        chain = self._c5_v2_chain()
+        fake = owner_comment(
+            999,
+            "\n".join(
+                (
+                    "PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V2",
+                    "OUTCOME=EFFECT_SUCCEEDED",
+                )
+            ),
+            "2026-10-05T01:06:00Z",
+        )
+        with patch.object(
+            recovery, "github_issue_comments", return_value=chain["comments"] + [fake]
+        ):
+            with self.assertRaises(RecoveryError):
+                recovery.c5_dispatch_authority_body(
+                    chain["control"], chain["activation"], 999
+                )
+
+    def test_c5_terminal_outcome_mismatch_is_rejected(self):
+        chain = self._c5_v2_chain()
+        bad = copy.deepcopy(chain["terminal_comment"])
+        bad["body"] = bad["body"].replace(
+            "OUTCOME=EFFECT_SUCCEEDED", "OUTCOME=NO_EFFECT_STABLE"
+        )
+        bad["updated_at"] = bad["created_at"]
+        comments = [
+            row if row["id"] != chain["terminal_id"] else bad
+            for row in chain["comments"]
+        ]
+        with patch.object(
+            recovery,
+            "validate_c5_activation_record",
+            return_value={
+                "created_at": recovery._timestamp(
+                    "2026-10-05T00:59:00Z", "activation"
+                )
+            },
+        ):
+            with self.assertRaises(RecoveryError):
+                recovery.validate_c5_wif_repin_terminal(
+                    comments,
+                    chain["control"],
+                    chain["activation"],
+                    chain["terminal_id"],
+                )
+
+    def test_c5_edited_observation_raw_body_is_rejected(self):
+        chain = self._c5_v2_chain()
+        edited = copy.deepcopy(chain["comments"][3])
+        edited["updated_at"] = "2026-10-05T01:03:01Z"
+        with self.assertRaises(RecoveryError):
+            recovery.validate_c5_wif_repin_observation(
+                edited, chain["control"], chain["activation"], chain["claim"]
+            )
+
+    def test_c5_no_effect_requires_two_validated_observations(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        self.assertEqual(
+            recovery._c5_observation_outcome(chain["obs1"], chain["obs2"]),
+            "NO_EFFECT_STABLE",
+        )
+        self.assertEqual(
+            recovery._c5_observation_outcome(chain["obs1"], None),
+            "INCONSISTENT_EFFECT",
+        )
+
+    def test_c5_no_effect_rejects_fact_digest_mismatch_or_short_interval(self):
+        short = self._c5_v2_chain(no_effect=True, second_delta_seconds=0)
+        self.assertEqual(
+            recovery._c5_observation_outcome(short["obs1"], short["obs2"]),
+            "INCONSISTENT_EFFECT",
+        )
+        chain = self._c5_v2_chain(no_effect=True)
+        changed = copy.deepcopy(chain["obs2"])
+        changed["fact_digest_sha256"] = "9" * 64
+        self.assertEqual(
+            recovery._c5_observation_outcome(chain["obs1"], changed),
+            "INCONSISTENT_EFFECT",
+        )
+
+    def test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses(self):
+        statuses = ("queued", "waiting", "requested", "pending", "in_progress")
+        runs = [
+            {"id": index + 1, "status": status, "event": "workflow_dispatch",
+             "head_sha": "a" * 40, "path": "x.yml"}
+            for index, status in enumerate(statuses)
+        ]
+        with patch.object(
+            recovery, "github", return_value={"workflow_runs": runs}
+        ):
+            result = recovery.c5_nonterminal_actions_snapshot()
+        self.assertEqual(result["count"], len(statuses))
+        self.assertRegex(result["digest_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_c5_nonterminal_actions_snapshot_is_paginated(self):
+        first = [
+            {"id": index + 1, "status": "completed", "event": "push",
+             "head_sha": "a" * 40, "path": "x.yml"}
+            for index in range(100)
+        ]
+        second = [
+            {"id": 101, "status": "queued", "event": "workflow_dispatch",
+             "head_sha": "b" * 40, "path": "y.yml"}
+        ]
+        def fake(path):
+            if path.endswith("page=1"):
+                return {"workflow_runs": first}
+            if path.endswith("page=2"):
+                return {"workflow_runs": second}
+            raise AssertionError(path)
+        with patch.object(recovery, "github", side_effect=fake):
+            result = recovery.c5_nonterminal_actions_snapshot()
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["pages_scanned"], 2)
+
+    def test_c5_attempt_claim_binds_protocol_epoch(self):
+        body = recovery.c5_attempt_claim_body(
+            "d" * 40, "e" * 40, recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            "d" * 40, 1, "a" * 64, "b" * 64, "c" * 64,
+            701, "d" * 64, 702, "e" * 64,
+        )
+        self.assertIn(
+            f"C5_PROTOCOL_EPOCH_SHA256={recovery.C5_PROTOCOL_EPOCH_SHA256}",
+            body,
+        )
+
     def test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready(self):
         control = "d" * 40
         activation = "e" * 40
@@ -2416,7 +2675,7 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             if path.startswith(
                 f"/repos/{recovery.REPOSITORY}/actions/runs?"
             ):
-                return {"total_count": 0}
+                return {"workflow_runs": []}
             raise AssertionError(path)
 
         with tempfile.TemporaryDirectory() as tmp:
