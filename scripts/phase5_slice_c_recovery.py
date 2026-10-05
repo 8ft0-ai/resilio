@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2974,6 +2975,9 @@ C5_ATTEMPT_CLAIM_FIELDS = (
     "SAVED_PLAN_SHA256",
     "STRUCTURAL_MANIFEST_SHA256",
     "PRECONDITION_DIGEST_SHA256",
+    "BOOTSTRAP_STATE_LINEAGE_BEFORE",
+    "BOOTSTRAP_STATE_SERIAL_BEFORE",
+    "NONTERMINAL_ACTIONS_DIGEST_SHA256",
     "FRESH_REVIEW_COMMENT_ID",
     "FRESH_REVIEW_BODY_SHA256",
     "OWNER_APPLY_AUTHORITY_COMMENT_ID",
@@ -3030,6 +3034,9 @@ def c5_attempt_claim_body(
             f"SAVED_PLAN_SHA256={saved_plan_sha256}",
             f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
             f"PRECONDITION_DIGEST_SHA256={precondition_digest_sha256}",
+            f"BOOTSTRAP_STATE_LINEAGE_BEFORE={C5_BOOTSTRAP_STATE_LINEAGE}",
+            f"BOOTSTRAP_STATE_SERIAL_BEFORE={C5_BOOTSTRAP_STATE_SERIAL}",
+            f"NONTERMINAL_ACTIONS_DIGEST_SHA256={sha256(canonical([]))}",
             f"FRESH_REVIEW_COMMENT_ID={fresh_review_comment_id}",
             f"FRESH_REVIEW_BODY_SHA256={fresh_review_body_sha256}",
             f"OWNER_APPLY_AUTHORITY_COMMENT_ID={owner_apply_authority_comment_id}",
@@ -3059,6 +3066,7 @@ def _c5_parse_attempt_claim(comment: dict[str, Any]) -> dict[str, Any]:
         "PRECONDITION_DIGEST_SHA256",
         "FRESH_REVIEW_BODY_SHA256",
         "OWNER_APPLY_AUTHORITY_BODY_SHA256",
+        "NONTERMINAL_ACTIONS_DIGEST_SHA256",
     ):
         _c5_require_hash(fields[name], f"C5_ATTEMPT_CLAIM_{name}")
     for name in (
@@ -3074,6 +3082,12 @@ def _c5_parse_attempt_claim(comment: dict[str, Any]) -> dict[str, Any]:
         fields["OWNER_APPLY_AUTHORITY_COMMENT_ID"],
         "C5_ATTEMPT_OWNER_APPLY_AUTHORITY_COMMENT_ID",
     )
+    if fields["BOOTSTRAP_STATE_LINEAGE_BEFORE"] != C5_BOOTSTRAP_STATE_LINEAGE:
+        raise RecoveryError("C5_ATTEMPT_CLAIM_LINEAGE_MISMATCH")
+    if _positive_int(fields["BOOTSTRAP_STATE_SERIAL_BEFORE"], "C5_ATTEMPT_CLAIM_SERIAL") != C5_BOOTSTRAP_STATE_SERIAL:
+        raise RecoveryError("C5_ATTEMPT_CLAIM_SERIAL_MISMATCH")
+    if fields["NONTERMINAL_ACTIONS_DIGEST_SHA256"] != sha256(canonical([])):
+        raise RecoveryError("C5_ATTEMPT_CLAIM_ACTIONS_DIGEST_MISMATCH")
     if fields["AUTHORITY_CONSUMPTION"] != "CONSUMED_ON_POST":
         raise RecoveryError("C5_ATTEMPT_AUTHORITY_CONSUMPTION_INVALID")
     expected_series = c5_attempt_series_id_sha256(
@@ -5216,6 +5230,7 @@ C5_OBSERVATION_FIELDS = (
     "FORBIDDEN_C1_RECOVERY_WIF_COUNT",
     "SUPERSEDED_C2_RECOVERY_WIF_COUNT",
     "SUPERSEDED_C3_RECOVERY_WIF_COUNT",
+    "UNEXPECTED_RECOVERY_WIF_COUNT",
     "RECOVERY_WIF_MEMBER_SET_SHA256",
     "C2_RECOVERY_CLAIM_RESULT",
     "C3_RECOVERY_CLAIM_RESULT",
@@ -5223,6 +5238,7 @@ C5_OBSERVATION_FIELDS = (
     "NEW_CONTROL_RECOVERY_CLAIM_RESULT",
     "BOOTSTRAP_LOCK",
     "RECONCILIATION",
+    "RECONCILIATION_PLAN_SHA256",
     "GETMETADATA_ROLE_SET_SHA256",
     "NORMAL_PHASE5_IDENTITY_SET_SHA256",
     "OBSERVATION_COMPLETE",
@@ -5254,10 +5270,12 @@ def c5_wif_repin_observation_body(
     old_wif_count: int,
     new_wif_count: int,
     forbidden_wif_counts: tuple[int, int, int],
+    unexpected_wif_count: int,
     recovery_wif_member_set_sha256: str,
     claim_result_states: tuple[str, str, str, str],
     bootstrap_lock_absent: bool,
     reconciliation: str,
+    reconciliation_plan_sha256: str,
     getmetadata_role_set_sha256: str,
     normal_phase5_identity_set_sha256: str,
 ) -> str:
@@ -5278,6 +5296,7 @@ def c5_wif_repin_observation_body(
         (recovery_wif_member_set_sha256, "WIF_SET"),
         (getmetadata_role_set_sha256, "GETMETADATA"),
         (normal_phase5_identity_set_sha256, "NORMAL_IDENTITIES"),
+        (reconciliation_plan_sha256, "RECONCILIATION_PLAN"),
     ):
         _c5_require_hash(value, f"C5_OBSERVATION_{label}_HASH")
     _timestamp(observed_at, "C5_OBSERVATION_OBSERVED_AT")
@@ -5289,6 +5308,7 @@ def c5_wif_repin_observation_body(
         raise RecoveryError("C5_OBSERVATION_VECTOR_INVALID")
     for value in forbidden_wif_counts:
         _c5_nonnegative(value, "C5_OBSERVATION_FORBIDDEN_WIF_COUNT")
+    _c5_nonnegative(unexpected_wif_count, "C5_OBSERVATION_UNEXPECTED_WIF_COUNT")
     for value in claim_result_states:
         _c5_require_enum(
             value, {"ABSENT", "PRESENT"}, "C5_OBSERVATION_CLAIM_RESULT"
@@ -5317,6 +5337,7 @@ def c5_wif_repin_observation_body(
         "FORBIDDEN_C1_RECOVERY_WIF_COUNT": str(forbidden_wif_counts[0]),
         "SUPERSEDED_C2_RECOVERY_WIF_COUNT": str(forbidden_wif_counts[1]),
         "SUPERSEDED_C3_RECOVERY_WIF_COUNT": str(forbidden_wif_counts[2]),
+        "UNEXPECTED_RECOVERY_WIF_COUNT": str(unexpected_wif_count),
         "RECOVERY_WIF_MEMBER_SET_SHA256": recovery_wif_member_set_sha256,
         "C2_RECOVERY_CLAIM_RESULT": claim_result_states[0],
         "C3_RECOVERY_CLAIM_RESULT": claim_result_states[1],
@@ -5324,6 +5345,7 @@ def c5_wif_repin_observation_body(
         "NEW_CONTROL_RECOVERY_CLAIM_RESULT": claim_result_states[3],
         "BOOTSTRAP_LOCK": "ABSENT" if bootstrap_lock_absent else "PRESENT",
         "RECONCILIATION": reconciliation,
+        "RECONCILIATION_PLAN_SHA256": reconciliation_plan_sha256,
         "GETMETADATA_ROLE_SET_SHA256": getmetadata_role_set_sha256,
         "NORMAL_PHASE5_IDENTITY_SET_SHA256": normal_phase5_identity_set_sha256,
         "OBSERVATION_COMPLETE": "TRUE",
@@ -5383,9 +5405,13 @@ def validate_c5_wif_repin_observation(
         "RECOVERY_WIF_MEMBER_SET_SHA256",
         "GETMETADATA_ROLE_SET_SHA256",
         "NORMAL_PHASE5_IDENTITY_SET_SHA256",
+        "RECONCILIATION_PLAN_SHA256",
         "FACT_DIGEST_SHA256",
     ):
         _c5_require_hash(fields[name], f"C5_OBSERVATION_{name}")
+    _c5_nonnegative(int(fields["UNEXPECTED_RECOVERY_WIF_COUNT"]), "C5_OBSERVATION_UNEXPECTED_WIF_COUNT")
+    if fields["BOOTSTRAP_STATE_LINEAGE"] != expected_claim["fields"]["BOOTSTRAP_STATE_LINEAGE_BEFORE"]:
+        raise RecoveryError("C5_OBSERVATION_LINEAGE_MISMATCH")
     if (
         claim_id != expected_claim["comment_id"]
         or fields["ATTEMPT_CLAIM_BODY_SHA256"] != expected_claim["body_sha256"]
