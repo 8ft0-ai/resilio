@@ -5185,6 +5185,635 @@ def validate_c5_activation_record(
         "authority_body_sha256": authority_hash,
     }
 
+
+# C5 closure R1: total observation -> terminal -> authority provenance.
+# Historical predecessor validators remain below this line only as evidence
+# interpreters; the public successor runtime entrypoint is rebound to C5.
+_legacy_verify_successor_github_boundary = verify_successor_github_boundary
+
+C5_OBSERVATION_FIELDS = (
+    "GOVERNING_ISSUE",
+    "C5_PROTOCOL_EPOCH_SHA256",
+    "SUCCESSOR_CONTROL_SHA",
+    "SUCCESSOR_ACTIVATION_MAIN",
+    "ATTEMPT_CLAIM_COMMENT_ID",
+    "ATTEMPT_CLAIM_BODY_SHA256",
+    "ATTEMPT_SERIES_ID_SHA256",
+    "ATTEMPT_GENERATION",
+    "PRECONDITION_DIGEST_SHA256",
+    "OBSERVED_AT",
+    "BOOTSTRAP_STATE_LINEAGE",
+    "BOOTSTRAP_STATE_SERIAL",
+    "BOOTSTRAP_STATE_CANONICAL_SHA256",
+    "OLD_RECOVERY_WIF_COUNT",
+    "NEW_RECOVERY_WIF_COUNT",
+    "FORBIDDEN_C1_RECOVERY_WIF_COUNT",
+    "SUPERSEDED_C2_RECOVERY_WIF_COUNT",
+    "SUPERSEDED_C3_RECOVERY_WIF_COUNT",
+    "RECOVERY_WIF_MEMBER_SET_SHA256",
+    "C2_RECOVERY_CLAIM_RESULT",
+    "C3_RECOVERY_CLAIM_RESULT",
+    "OLD_CONTROL_RECOVERY_CLAIM_RESULT",
+    "NEW_CONTROL_RECOVERY_CLAIM_RESULT",
+    "BOOTSTRAP_LOCK",
+    "RECONCILIATION",
+    "GETMETADATA_ROLE_SET_SHA256",
+    "NORMAL_PHASE5_IDENTITY_SET_SHA256",
+    "OBSERVATION_COMPLETE",
+    "FACT_DIGEST_SHA256",
+)
+
+
+def _c5_observation_fact_lines(fields: dict[str, str]) -> tuple[str, ...]:
+    return tuple(
+        f"{name}={fields[name]}"
+        for name in C5_OBSERVATION_FIELDS
+        if name not in ("OBSERVED_AT", "FACT_DIGEST_SHA256")
+    )
+
+
+def c5_wif_repin_observation_body(
+    *,
+    successor_control_sha: str,
+    successor_activation_main: str,
+    attempt_claim_comment_id: int,
+    attempt_claim_body_sha256: str,
+    attempt_series_id_sha256: str,
+    attempt_generation: int,
+    precondition_digest_sha256: str,
+    observed_at: str,
+    state_lineage: str,
+    state_serial: int,
+    state_canonical_sha256: str,
+    old_wif_count: int,
+    new_wif_count: int,
+    forbidden_wif_counts: tuple[int, int, int],
+    recovery_wif_member_set_sha256: str,
+    claim_result_states: tuple[str, str, str, str],
+    bootstrap_lock_absent: bool,
+    reconciliation: str,
+    getmetadata_role_set_sha256: str,
+    normal_phase5_identity_set_sha256: str,
+) -> str:
+    _c5_require_sha(successor_control_sha, "C5_OBSERVATION_CONTROL")
+    _c5_require_sha(successor_activation_main, "C5_OBSERVATION_ACTIVATION")
+    if (
+        successor_control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+        or successor_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS
+    ):
+        raise RecoveryError("C5_OBSERVATION_CONTROL_FORBIDDEN")
+    _c5_positive(attempt_claim_comment_id, "C5_OBSERVATION_CLAIM_ID")
+    _c5_positive(attempt_generation, "C5_OBSERVATION_GENERATION")
+    for value, label in (
+        (attempt_claim_body_sha256, "CLAIM"),
+        (attempt_series_id_sha256, "SERIES"),
+        (precondition_digest_sha256, "PRECONDITION"),
+        (state_canonical_sha256, "STATE"),
+        (recovery_wif_member_set_sha256, "WIF_SET"),
+        (getmetadata_role_set_sha256, "GETMETADATA"),
+        (normal_phase5_identity_set_sha256, "NORMAL_IDENTITIES"),
+    ):
+        _c5_require_hash(value, f"C5_OBSERVATION_{label}_HASH")
+    _timestamp(observed_at, "C5_OBSERVATION_OBSERVED_AT")
+    _c5_require_lineage(state_lineage, "C5_OBSERVATION_LINEAGE")
+    _c5_nonnegative(state_serial, "C5_OBSERVATION_SERIAL")
+    _c5_nonnegative(old_wif_count, "C5_OBSERVATION_OLD_WIF_COUNT")
+    _c5_nonnegative(new_wif_count, "C5_OBSERVATION_NEW_WIF_COUNT")
+    if len(forbidden_wif_counts) != 3 or len(claim_result_states) != 4:
+        raise RecoveryError("C5_OBSERVATION_VECTOR_INVALID")
+    for value in forbidden_wif_counts:
+        _c5_nonnegative(value, "C5_OBSERVATION_FORBIDDEN_WIF_COUNT")
+    for value in claim_result_states:
+        _c5_require_enum(
+            value, {"ABSENT", "PRESENT"}, "C5_OBSERVATION_CLAIM_RESULT"
+        )
+    _c5_require_enum(
+        reconciliation,
+        {"EXACT_NO_CHANGE", "EXACT_PENDING_REVIEWED_EFFECT", "INCONSISTENT"},
+        "C5_OBSERVATION_RECONCILIATION",
+    )
+    fields = {
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
+        "SUCCESSOR_CONTROL_SHA": successor_control_sha,
+        "SUCCESSOR_ACTIVATION_MAIN": successor_activation_main,
+        "ATTEMPT_CLAIM_COMMENT_ID": str(attempt_claim_comment_id),
+        "ATTEMPT_CLAIM_BODY_SHA256": attempt_claim_body_sha256,
+        "ATTEMPT_SERIES_ID_SHA256": attempt_series_id_sha256,
+        "ATTEMPT_GENERATION": str(attempt_generation),
+        "PRECONDITION_DIGEST_SHA256": precondition_digest_sha256,
+        "OBSERVED_AT": observed_at,
+        "BOOTSTRAP_STATE_LINEAGE": state_lineage,
+        "BOOTSTRAP_STATE_SERIAL": str(state_serial),
+        "BOOTSTRAP_STATE_CANONICAL_SHA256": state_canonical_sha256,
+        "OLD_RECOVERY_WIF_COUNT": str(old_wif_count),
+        "NEW_RECOVERY_WIF_COUNT": str(new_wif_count),
+        "FORBIDDEN_C1_RECOVERY_WIF_COUNT": str(forbidden_wif_counts[0]),
+        "SUPERSEDED_C2_RECOVERY_WIF_COUNT": str(forbidden_wif_counts[1]),
+        "SUPERSEDED_C3_RECOVERY_WIF_COUNT": str(forbidden_wif_counts[2]),
+        "RECOVERY_WIF_MEMBER_SET_SHA256": recovery_wif_member_set_sha256,
+        "C2_RECOVERY_CLAIM_RESULT": claim_result_states[0],
+        "C3_RECOVERY_CLAIM_RESULT": claim_result_states[1],
+        "OLD_CONTROL_RECOVERY_CLAIM_RESULT": claim_result_states[2],
+        "NEW_CONTROL_RECOVERY_CLAIM_RESULT": claim_result_states[3],
+        "BOOTSTRAP_LOCK": "ABSENT" if bootstrap_lock_absent else "PRESENT",
+        "RECONCILIATION": reconciliation,
+        "GETMETADATA_ROLE_SET_SHA256": getmetadata_role_set_sha256,
+        "NORMAL_PHASE5_IDENTITY_SET_SHA256": normal_phase5_identity_set_sha256,
+        "OBSERVATION_COMPLETE": "TRUE",
+    }
+    fields["FACT_DIGEST_SHA256"] = sha256(
+        "\n".join(_c5_observation_fact_lines(fields)).encode("utf-8")
+    )
+    return "\n".join(
+        ("PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",)
+        + tuple(f"{name}={fields[name]}" for name in C5_OBSERVATION_FIELDS)
+    )
+
+
+def validate_c5_wif_repin_observation(
+    comment: dict[str, Any],
+    successor_control_sha: str,
+    activation_main: str,
+    expected_claim: dict[str, Any],
+) -> dict[str, Any]:
+    created, raw_hash = _require_unedited_owner_comment(
+        comment, GOVERNING_ISSUE, "C5_OBSERVATION"
+    )
+    fields = _record_fields(
+        str(comment.get("body") or ""),
+        "PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",
+        C5_OBSERVATION_FIELDS,
+    )
+    if (
+        fields["GOVERNING_ISSUE"] != "8ft0-ai/resilio#109"
+        or fields["C5_PROTOCOL_EPOCH_SHA256"] != C5_PROTOCOL_EPOCH_SHA256
+    ):
+        raise RecoveryError("C5_OBSERVATION_PROTOCOL_ROOT_MISMATCH")
+    if (
+        fields["SUCCESSOR_CONTROL_SHA"] != successor_control_sha
+        or fields["SUCCESSOR_ACTIVATION_MAIN"] != activation_main
+    ):
+        raise RecoveryError("C5_OBSERVATION_TARGET_MISMATCH")
+    if fields["OBSERVATION_COMPLETE"] != "TRUE":
+        raise RecoveryError("C5_OBSERVATION_INCOMPLETE")
+    digest = sha256(
+        "\n".join(_c5_observation_fact_lines(fields)).encode("utf-8")
+    )
+    if fields["FACT_DIGEST_SHA256"] != digest:
+        raise RecoveryError("C5_OBSERVATION_FACT_DIGEST_MISMATCH")
+    observed_at = _timestamp(fields["OBSERVED_AT"], "C5_OBSERVATION_OBSERVED_AT")
+    claim_id = _positive_int(
+        fields["ATTEMPT_CLAIM_COMMENT_ID"], "C5_OBSERVATION_CLAIM_ID"
+    )
+    generation = _positive_int(
+        fields["ATTEMPT_GENERATION"], "C5_OBSERVATION_GENERATION"
+    )
+    for name in (
+        "ATTEMPT_CLAIM_BODY_SHA256",
+        "ATTEMPT_SERIES_ID_SHA256",
+        "PRECONDITION_DIGEST_SHA256",
+        "BOOTSTRAP_STATE_CANONICAL_SHA256",
+        "RECOVERY_WIF_MEMBER_SET_SHA256",
+        "GETMETADATA_ROLE_SET_SHA256",
+        "NORMAL_PHASE5_IDENTITY_SET_SHA256",
+        "FACT_DIGEST_SHA256",
+    ):
+        _c5_require_hash(fields[name], f"C5_OBSERVATION_{name}")
+    if (
+        claim_id != expected_claim["comment_id"]
+        or fields["ATTEMPT_CLAIM_BODY_SHA256"] != expected_claim["body_sha256"]
+        or fields["ATTEMPT_SERIES_ID_SHA256"]
+        != expected_claim["fields"]["ATTEMPT_SERIES_ID_SHA256"]
+        or generation != expected_claim["generation"]
+        or fields["PRECONDITION_DIGEST_SHA256"]
+        != expected_claim["fields"]["PRECONDITION_DIGEST_SHA256"]
+    ):
+        raise RecoveryError("C5_OBSERVATION_CLAIM_BINDING_MISMATCH")
+    if created <= expected_claim["created_at"]:
+        raise RecoveryError("C5_OBSERVATION_PRECEDES_ATTEMPT")
+    return {
+        "comment_id": int(comment["id"]),
+        "created_at": created,
+        "observed_at": observed_at,
+        "body_sha256": raw_hash,
+        "fact_digest_sha256": digest,
+        "fields": fields,
+    }
+
+
+C5_TERMINAL_V2_FIELDS = (
+    "GOVERNING_ISSUE",
+    "C5_PROTOCOL_EPOCH_SHA256",
+    "SUCCESSOR_CONTROL_SHA",
+    "SUCCESSOR_ACTIVATION_MAIN",
+    "ATTEMPT_CLAIM_COMMENT_ID",
+    "ATTEMPT_CLAIM_BODY_SHA256",
+    "ATTEMPT_SERIES_ID_SHA256",
+    "ATTEMPT_GENERATION",
+    "PRECONDITION_DIGEST_SHA256",
+    "OBSERVATION_1_COMMENT_ID",
+    "OBSERVATION_1_BODY_SHA256",
+    "OBSERVATION_2_COMMENT_ID",
+    "OBSERVATION_2_BODY_SHA256",
+    "OUTCOME",
+)
+
+
+def _c5_observation_outcome(
+    first: dict[str, Any], second: dict[str, Any] | None
+) -> str:
+    f = first["fields"]
+    forbidden = tuple(
+        int(f[name])
+        for name in (
+            "FORBIDDEN_C1_RECOVERY_WIF_COUNT",
+            "SUPERSEDED_C2_RECOVERY_WIF_COUNT",
+            "SUPERSEDED_C3_RECOVERY_WIF_COUNT",
+        )
+    )
+    claims = tuple(
+        f[name]
+        for name in (
+            "C2_RECOVERY_CLAIM_RESULT",
+            "C3_RECOVERY_CLAIM_RESULT",
+            "OLD_CONTROL_RECOVERY_CLAIM_RESULT",
+            "NEW_CONTROL_RECOVERY_CLAIM_RESULT",
+        )
+    )
+    clean = (
+        all(value == 0 for value in forbidden)
+        and all(value == "ABSENT" for value in claims)
+        and f["BOOTSTRAP_LOCK"] == "ABSENT"
+    )
+    if (
+        clean
+        and f["OLD_RECOVERY_WIF_COUNT"] == "0"
+        and f["NEW_RECOVERY_WIF_COUNT"] == "1"
+        and f["RECONCILIATION"] == "EXACT_NO_CHANGE"
+    ):
+        if second is not None:
+            raise RecoveryError("C5_EFFECT_SUCCEEDED_SECOND_OBSERVATION_FORBIDDEN")
+        return "EFFECT_SUCCEEDED"
+    if second is not None:
+        second_fields = second["fields"]
+        separation = (
+            second["observed_at"] - first["observed_at"]
+        ).total_seconds()
+        if (
+            first["fact_digest_sha256"] == second["fact_digest_sha256"]
+            and separation >= 60
+            and clean
+            and f["OLD_RECOVERY_WIF_COUNT"] == "1"
+            and f["NEW_RECOVERY_WIF_COUNT"] == "0"
+            and f["RECONCILIATION"] == "EXACT_PENDING_REVIEWED_EFFECT"
+            and second_fields["OLD_RECOVERY_WIF_COUNT"] == "1"
+            and second_fields["NEW_RECOVERY_WIF_COUNT"] == "0"
+        ):
+            return "NO_EFFECT_STABLE"
+    return "INCONSISTENT_EFFECT"
+
+
+def c5_wif_repin_terminal_v2_body(
+    successor_control_sha: str,
+    activation_main: str,
+    claim: dict[str, Any],
+    observation_1: dict[str, Any],
+    observation_2: dict[str, Any] | None = None,
+) -> str:
+    outcome = _c5_observation_outcome(observation_1, observation_2)
+    fields = {
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
+        "SUCCESSOR_CONTROL_SHA": successor_control_sha,
+        "SUCCESSOR_ACTIVATION_MAIN": activation_main,
+        "ATTEMPT_CLAIM_COMMENT_ID": str(claim["comment_id"]),
+        "ATTEMPT_CLAIM_BODY_SHA256": claim["body_sha256"],
+        "ATTEMPT_SERIES_ID_SHA256": claim["fields"]["ATTEMPT_SERIES_ID_SHA256"],
+        "ATTEMPT_GENERATION": str(claim["generation"]),
+        "PRECONDITION_DIGEST_SHA256": claim["fields"][
+            "PRECONDITION_DIGEST_SHA256"
+        ],
+        "OBSERVATION_1_COMMENT_ID": str(observation_1["comment_id"]),
+        "OBSERVATION_1_BODY_SHA256": observation_1["body_sha256"],
+        "OBSERVATION_2_COMMENT_ID": (
+            str(observation_2["comment_id"]) if observation_2 else "NONE"
+        ),
+        "OBSERVATION_2_BODY_SHA256": (
+            observation_2["body_sha256"] if observation_2 else "NONE"
+        ),
+        "OUTCOME": outcome,
+    }
+    return "\n".join(
+        ("PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V2",)
+        + tuple(f"{name}={fields[name]}" for name in C5_TERMINAL_V2_FIELDS)
+    )
+
+
+def validate_c5_wif_repin_terminal(
+    comments: list[dict[str, Any]],
+    successor_control_sha: str,
+    activation_main: str,
+    terminal_comment_id: int,
+) -> dict[str, Any]:
+    terminal = _c5_comment_by_id(comments, terminal_comment_id, "C5_TERMINAL")
+    created, body_hash = _require_unedited_owner_comment(
+        terminal, GOVERNING_ISSUE, "C5_TERMINAL"
+    )
+    fields = _record_fields(
+        str(terminal.get("body") or ""),
+        "PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V2",
+        C5_TERMINAL_V2_FIELDS,
+    )
+    if (
+        fields["GOVERNING_ISSUE"] != "8ft0-ai/resilio#109"
+        or fields["C5_PROTOCOL_EPOCH_SHA256"] != C5_PROTOCOL_EPOCH_SHA256
+    ):
+        raise RecoveryError("C5_TERMINAL_PROTOCOL_ROOT_MISMATCH")
+    if (
+        fields["SUCCESSOR_CONTROL_SHA"] != successor_control_sha
+        or fields["SUCCESSOR_ACTIVATION_MAIN"] != activation_main
+    ):
+        raise RecoveryError("C5_TERMINAL_TARGET_MISMATCH")
+    claim = _c5_parse_attempt_claim(
+        _c5_comment_by_id(
+            comments,
+            _positive_int(
+                fields["ATTEMPT_CLAIM_COMMENT_ID"], "C5_TERMINAL_CLAIM_ID"
+            ),
+            "C5_TERMINAL_CLAIM",
+        )
+    )
+    if (
+        claim["body_sha256"] != fields["ATTEMPT_CLAIM_BODY_SHA256"]
+        or claim["fields"]["C5_PROTOCOL_EPOCH_SHA256"]
+        != C5_PROTOCOL_EPOCH_SHA256
+        or claim["fields"]["SUCCESSOR_CONTROL_SHA"] != successor_control_sha
+        or claim["fields"]["SUCCESSOR_ACTIVATION_MAIN"] != activation_main
+        or claim["fields"]["ATTEMPT_SERIES_ID_SHA256"]
+        != fields["ATTEMPT_SERIES_ID_SHA256"]
+        or str(claim["generation"]) != fields["ATTEMPT_GENERATION"]
+        or claim["fields"]["PRECONDITION_DIGEST_SHA256"]
+        != fields["PRECONDITION_DIGEST_SHA256"]
+    ):
+        raise RecoveryError("C5_TERMINAL_CLAIM_CHAIN_MISMATCH")
+    obs1 = validate_c5_wif_repin_observation(
+        _c5_comment_by_id(
+            comments,
+            _positive_int(
+                fields["OBSERVATION_1_COMMENT_ID"], "C5_TERMINAL_OBS1_ID"
+            ),
+            "C5_TERMINAL_OBS1",
+        ),
+        successor_control_sha,
+        activation_main,
+        claim,
+    )
+    if obs1["body_sha256"] != fields["OBSERVATION_1_BODY_SHA256"]:
+        raise RecoveryError("C5_TERMINAL_OBS1_HASH_MISMATCH")
+    obs2 = None
+    if (
+        fields["OBSERVATION_2_COMMENT_ID"] != "NONE"
+        or fields["OBSERVATION_2_BODY_SHA256"] != "NONE"
+    ):
+        if (
+            fields["OBSERVATION_2_COMMENT_ID"] == "NONE"
+            or fields["OBSERVATION_2_BODY_SHA256"] == "NONE"
+        ):
+            raise RecoveryError("C5_TERMINAL_OBS2_PARTIAL")
+        obs2 = validate_c5_wif_repin_observation(
+            _c5_comment_by_id(
+                comments,
+                _positive_int(
+                    fields["OBSERVATION_2_COMMENT_ID"], "C5_TERMINAL_OBS2_ID"
+                ),
+                "C5_TERMINAL_OBS2",
+            ),
+            successor_control_sha,
+            activation_main,
+            claim,
+        )
+        if obs2["body_sha256"] != fields["OBSERVATION_2_BODY_SHA256"]:
+            raise RecoveryError("C5_TERMINAL_OBS2_HASH_MISMATCH")
+    derived = _c5_observation_outcome(obs1, obs2)
+    if fields["OUTCOME"] != derived:
+        raise RecoveryError("C5_TERMINAL_OUTCOME_MISMATCH")
+    if created <= (obs2 or obs1)["created_at"]:
+        raise RecoveryError("C5_TERMINAL_PRECEDES_OBSERVATION")
+    activation = validate_c5_activation_record(
+        comments, successor_control_sha, activation_main
+    )
+    review = _c5_comment_by_id(
+        comments,
+        _positive_int(
+            claim["fields"]["FRESH_REVIEW_COMMENT_ID"], "C5_TERMINAL_REVIEW_ID"
+        ),
+        "C5_TERMINAL_REVIEW",
+    )
+    authority = _c5_comment_by_id(
+        comments,
+        _positive_int(
+            claim["fields"]["OWNER_APPLY_AUTHORITY_COMMENT_ID"],
+            "C5_TERMINAL_AUTHORITY_ID",
+        ),
+        "C5_TERMINAL_AUTHORITY",
+    )
+    review_created, review_hash = _require_unedited_owner_comment(
+        review, GOVERNING_ISSUE, "C5_TERMINAL_REVIEW"
+    )
+    authority_created, authority_hash = _require_unedited_owner_comment(
+        authority, GOVERNING_ISSUE, "C5_TERMINAL_AUTHORITY"
+    )
+    if (
+        review_hash != claim["fields"]["FRESH_REVIEW_BODY_SHA256"]
+        or authority_hash != claim["fields"]["OWNER_APPLY_AUTHORITY_BODY_SHA256"]
+        or not (
+            activation["created_at"]
+            < review_created
+            < authority_created
+            < claim["created_at"]
+        )
+    ):
+        raise RecoveryError("C5_TERMINAL_AUTHORITY_CHAIN_INVALID")
+    return {
+        "comment_id": terminal_comment_id,
+        "created_at": created,
+        "body_sha256": body_hash,
+        "outcome": derived,
+        "observation_1": obs1,
+        "observation_2": obs2,
+        "claim": claim,
+        "protocol_epoch_sha256": C5_PROTOCOL_EPOCH_SHA256,
+    }
+
+
+C5_DISPATCH_AUTHORITY_V2_FIELDS = (
+    "GOVERNING_ISSUE",
+    "C5_PROTOCOL_EPOCH_SHA256",
+    "SUCCESSOR_CONTROL_SHA",
+    "SUCCESSOR_ACTIVATION_MAIN",
+    "C5_WIF_REPIN_TERMINAL_COMMENT_ID",
+    "C5_WIF_REPIN_TERMINAL_BODY_SHA256",
+    "C5_WIF_REPIN_TERMINAL_OUTCOME",
+    "C4_DISPATCH",
+    "AUTHORITY",
+)
+
+
+def c5_dispatch_authority_body(
+    successor_control_sha: str,
+    successor_activation_main: str,
+    terminal_comment_id: int,
+) -> str:
+    comments = github_issue_comments(GOVERNING_ISSUE)
+    terminal = validate_c5_wif_repin_terminal(
+        comments,
+        successor_control_sha,
+        successor_activation_main,
+        terminal_comment_id,
+    )
+    if terminal["outcome"] != "EFFECT_SUCCEEDED":
+        raise RecoveryError("C5_DISPATCH_REQUIRES_EFFECT_SUCCEEDED")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V2",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"C5_WIF_REPIN_TERMINAL_COMMENT_ID={terminal_comment_id}",
+            f"C5_WIF_REPIN_TERMINAL_BODY_SHA256={terminal['body_sha256']}",
+            "C5_WIF_REPIN_TERMINAL_OUTCOME=EFFECT_SUCCEEDED",
+            "C4_DISPATCH=PERMANENTLY_FORBIDDEN",
+            "AUTHORITY=DISPATCH_EXACTLY_ONE_C5_RECONCILIATION_ONLY_RECOVERY",
+        )
+    )
+
+
+def validate_c5_dispatch_authority(
+    comments: list[dict[str, Any]],
+    successor_control_sha: str,
+    activation_main: str,
+) -> dict[str, Any]:
+    candidates = [
+        row
+        for row in comments
+        if _owner_issue_comment(row, GOVERNING_ISSUE)
+        and canonical_comment_text(row.get("body")).startswith(
+            "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V2\n"
+        )
+        and f"SUCCESSOR_CONTROL_SHA={successor_control_sha}"
+        in canonical_comment_text(row.get("body"))
+        and f"SUCCESSOR_ACTIVATION_MAIN={activation_main}"
+        in canonical_comment_text(row.get("body"))
+    ]
+    if len(candidates) != 1:
+        raise RecoveryError("C5_DISPATCH_AUTHORITY_NOT_UNIQUE")
+    row = candidates[0]
+    created, raw_hash = _require_unedited_owner_comment(
+        row, GOVERNING_ISSUE, "C5_DISPATCH_AUTHORITY"
+    )
+    fields = _record_fields(
+        str(row.get("body") or ""),
+        "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V2",
+        C5_DISPATCH_AUTHORITY_V2_FIELDS,
+    )
+    expected = {
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
+        "SUCCESSOR_CONTROL_SHA": successor_control_sha,
+        "SUCCESSOR_ACTIVATION_MAIN": activation_main,
+        "C5_WIF_REPIN_TERMINAL_OUTCOME": "EFFECT_SUCCEEDED",
+        "C4_DISPATCH": "PERMANENTLY_FORBIDDEN",
+        "AUTHORITY": "DISPATCH_EXACTLY_ONE_C5_RECONCILIATION_ONLY_RECOVERY",
+    }
+    for key, value in expected.items():
+        if fields[key] != value:
+            raise RecoveryError(f"C5_DISPATCH_AUTHORITY_FIELD_MISMATCH:{key}")
+    terminal_id = _positive_int(
+        fields["C5_WIF_REPIN_TERMINAL_COMMENT_ID"], "C5_DISPATCH_TERMINAL_ID"
+    )
+    terminal = validate_c5_wif_repin_terminal(
+        comments, successor_control_sha, activation_main, terminal_id
+    )
+    if (
+        terminal["body_sha256"] != fields["C5_WIF_REPIN_TERMINAL_BODY_SHA256"]
+        or terminal["outcome"] != "EFFECT_SUCCEEDED"
+    ):
+        raise RecoveryError("C5_DISPATCH_TERMINAL_INVALID")
+    if created <= terminal["created_at"]:
+        raise RecoveryError("C5_DISPATCH_AUTHORITY_PRECEDES_TERMINAL")
+    return {
+        "comment_id": int(row["id"]),
+        "created_at": created,
+        "body_sha256": raw_hash,
+        "terminal": terminal,
+    }
+
+
+def verify_c5_github_boundary(
+    activation_sha: str, control_sha: str, candidate_output: str | Path
+) -> dict[str, Any]:
+    _c5_require_sha(activation_sha, "C5_RUNTIME_ACTIVATION")
+    _c5_require_sha(control_sha, "C5_RUNTIME_CONTROL")
+    if (
+        control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+        or control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS
+    ):
+        raise RecoveryError("C4_DISPATCH_PERMANENTLY_FORBIDDEN")
+    branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if (
+        not isinstance(branch, dict)
+        or branch.get("commit", {}).get("sha") != activation_sha
+    ):
+        raise RecoveryError("C5_RUNTIME_MAIN_MISMATCH")
+    issue = github(f"/repos/{REPOSITORY}/issues/{GOVERNING_ISSUE}")
+    if not isinstance(issue, dict) or issue.get("state") != "open":
+        raise RecoveryError("C5_RUNTIME_GOVERNING_ISSUE_NOT_OPEN")
+    comments = github_issue_comments(GOVERNING_ISSUE)
+    validate_c5_governance_history(comments)
+    activation = validate_c5_activation_record(
+        comments, control_sha, activation_sha
+    )
+    dispatch = validate_c5_dispatch_authority(
+        comments, control_sha, activation_sha
+    )
+    active = fetch_candidate(activation_sha)
+    reviewed = fetch_candidate(REVIEWED_HEAD)
+    if active != reviewed:
+        raise RecoveryError("C5_RUNTIME_PRODUCT_CANDIDATE_DRIFT")
+    Path(candidate_output).write_bytes(canonical(active) + b"\n")
+    terminal = dispatch["terminal"]
+    document = {
+        "contract": "resilio-phase5-slice-c-c5-github-boundary/v1",
+        "governing_issue": GOVERNING_ISSUE,
+        "c5_protocol_epoch_sha256": C5_PROTOCOL_EPOCH_SHA256,
+        "c5_architecture_closure_comment_id": C5_ARCHITECTURE_CLOSURE_COMMENT_ID,
+        "control_sha": control_sha,
+        "activation_sha": activation_sha,
+        "activation_record_comment_id": activation["comment_id"],
+        "activation_record_body_sha256": activation["body_sha256"],
+        "attempt_claim_comment_id": terminal["claim"]["comment_id"],
+        "attempt_claim_body_sha256": terminal["claim"]["body_sha256"],
+        "terminal_comment_id": terminal["comment_id"],
+        "terminal_body_sha256": terminal["body_sha256"],
+        "terminal_outcome": terminal["outcome"],
+        "dispatch_authority_comment_id": dispatch["comment_id"],
+        "dispatch_authority_body_sha256": dispatch["body_sha256"],
+        "c4_dispatch": "PERMANENTLY_FORBIDDEN",
+    }
+    document["governance_chain_sha256"] = sha256(canonical(document))
+    return document
+
+
+def verify_successor_github_boundary(
+    activation_sha: str, control_sha: str, candidate_output: str | Path
+) -> dict[str, Any]:
+    """The existing immutable workflow command enters the C5 protocol only."""
+    return verify_c5_github_boundary(activation_sha, control_sha, candidate_output)
+
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
