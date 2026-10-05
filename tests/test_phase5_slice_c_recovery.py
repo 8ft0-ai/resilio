@@ -2663,6 +2663,7 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
         }
         activation_record = {
             "comment_id": 950,
+            "created_at": recovery._timestamp("2026-10-05T02:58:00Z", "activation"),
             "body_sha256": "c" * 64,
             "control_record_comment_id": 949,
             "control_record_body_sha256": "d" * 64,
