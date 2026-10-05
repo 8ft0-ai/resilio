@@ -2825,6 +2825,11 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             f"C5_PROTOCOL_EPOCH_SHA256={recovery.C5_PROTOCOL_EPOCH_SHA256}",
             body,
         )
+        self.assertIn("EFFECT_EXECUTOR=apply-c5-wif-repin-effect", body)
+        self.assertIn(
+            "BOOTSTRAP_STATE_LOCKING=CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED",
+            body,
+        )
 
     def test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready(self):
         control = "d" * 40
