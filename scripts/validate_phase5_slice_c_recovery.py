@@ -160,8 +160,12 @@ def c5_semantic_errors(helper: str) -> list[str]:
     )
     if 'second["created_at"] - first["created_at"]' not in outcome_source:
         errors.append("RECOVERY_C5_NO_EFFECT_FENCE_NOT_DURABLE_COMMENT_TIME")
-    if 'second["observed_at"] - first["observed_at"]' in outcome_source:
-        errors.append("RECOVERY_C5_NO_EFFECT_FENCE_USES_CALLER_OBSERVED_AT")
+    if 'second["observed_at"] - first["observed_at"]' not in outcome_source:
+        errors.append("RECOVERY_C5_NO_EFFECT_FENCE_NOT_VERIFIER_TIME")
+    if "durable_separation >= 60" not in outcome_source:
+        errors.append("RECOVERY_C5_NO_EFFECT_DURABLE_INTERVAL_NOT_ENFORCED")
+    if "verifier_separation >= 60" not in outcome_source:
+        errors.append("RECOVERY_C5_NO_EFFECT_VERIFIER_INTERVAL_NOT_ENFORCED")
 
     observation = latest("verify_c5_wif_repin_observation")
     observation_calls = calls(observation)
@@ -173,6 +177,24 @@ def c5_semantic_errors(helper: str) -> list[str]:
     ):
         if required not in observation_calls:
             errors.append(f"RECOVERY_C5_OBSERVATION_NOT_VERIFIER_OWNED:{required}")
+    observation_source = (
+        ast.get_source_segment(helper, observation) or ""
+        if observation is not None
+        else ""
+    )
+    if "datetime.now(timezone.utc)" not in observation_source:
+        errors.append("RECOVERY_C5_OBSERVATION_CLOCK_NOT_VERIFIER_OWNED")
+    if '"--observed-at"' in helper:
+        errors.append("RECOVERY_C5_CALLER_OBSERVATION_CLOCK_REACHABLE")
+
+    reconciliation_digest = latest("_c5_reconciliation_plan_fact_sha256")
+    digest_source = (
+        ast.get_source_segment(helper, reconciliation_digest) or ""
+        if reconciliation_digest is not None
+        else ""
+    )
+    if 'stable.pop("timestamp", None)' not in digest_source:
+        errors.append("RECOVERY_C5_RECONCILIATION_DIGEST_NOT_SEMANTIC")
 
     pre_effect = latest("verify_c5_wif_repin_pre_effect")
     pre_effect_calls = calls(pre_effect)
@@ -631,6 +653,7 @@ def main() -> int:
             "test_c5_no_effect_requires_two_validated_observations",
             "test_c5_no_effect_rejects_fact_digest_mismatch_or_short_interval",
             "test_c5_no_effect_fence_uses_durable_comment_timestamps",
+            "test_c5_reconciliation_digest_ignores_only_run_timestamp",
             "test_c5_locked_effect_executor_requires_effect_ready_and_lock_true",
             "test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses",
             "test_c5_nonterminal_actions_snapshot_is_paginated",
