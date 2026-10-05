@@ -2587,6 +2587,127 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             "INCONSISTENT_EFFECT",
         )
 
+    def test_c5_no_effect_fence_uses_durable_comment_timestamps(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        forged_comment = copy.deepcopy(
+            next(row for row in chain["comments"] if row["id"] == 705)
+        )
+        # The body still claims an observation 60 seconds after observation 1,
+        # but the durable GitHub record was actually created only one second later.
+        forged_comment["created_at"] = "2026-10-05T01:03:01Z"
+        forged_comment["updated_at"] = forged_comment["created_at"]
+        forged = recovery.validate_c5_wif_repin_observation(
+            forged_comment,
+            chain["control"],
+            chain["activation"],
+            chain["claim"],
+        )
+        self.assertEqual(
+            (forged["observed_at"] - chain["obs1"]["observed_at"]).total_seconds(),
+            60,
+        )
+        self.assertEqual(
+            (forged["created_at"] - chain["obs1"]["created_at"]).total_seconds(),
+            1,
+        )
+        self.assertEqual(
+            recovery._c5_observation_outcome(
+                chain["obs1"], forged, chain["claim"]
+            ),
+            "INCONSISTENT_EFFECT",
+        )
+
+    def test_c5_locked_effect_executor_requires_effect_ready_and_lock_true(self):
+        control = "d" * 40
+        activation = "e" * 40
+        authority = recovery.c5_wif_repin_authority_body(
+            control,
+            activation,
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            901,
+            "c" * 64,
+        )
+        self.assertIn(
+            "EFFECT_EXECUTOR=apply-c5-wif-repin-effect",
+            authority,
+        )
+        self.assertIn(
+            "BOOTSTRAP_STATE_LOCKING=CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED",
+            authority,
+        )
+
+        verified = {
+            "phase": "EFFECT_READY",
+            "ready_for_effect": True,
+            "posted_claim_comment_id": 903,
+            "saved_plan_sha256": "a" * 64,
+            "attempt_series_id_sha256": "b" * 64,
+            "attempt_generation": 1,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved = root / "repin.tfplan"
+            manifest = root / "manifest.json"
+            saved.write_bytes(b"exact-reviewed-plan")
+            manifest.write_text("{}", encoding="utf-8")
+
+            with patch.object(
+                recovery,
+                "verify_c5_wif_repin_pre_effect",
+                return_value=verified,
+            ) as reverify, patch.object(
+                recovery.subprocess, "run"
+            ) as run:
+                run.return_value.returncode = 0
+                result = recovery.execute_c5_wif_repin_effect(
+                    successor_control_sha=control,
+                    activation_main=activation,
+                    saved_plan_path=saved,
+                    terraform_workdir=root,
+                    structural_manifest_path=manifest,
+                    fresh_review_comment_id=901,
+                    owner_apply_authority_comment_id=902,
+                    posted_claim_comment_id=903,
+                )
+            reverify.assert_called_once()
+            command = run.call_args.args[0]
+            self.assertEqual(command[0], "terraform")
+            self.assertIn(f"-chdir={root.resolve()}", command)
+            self.assertIn("apply", command)
+            self.assertIn("-input=false", command)
+            self.assertIn("-lock=true", command)
+            self.assertNotIn("-lock=false", command)
+            self.assertEqual(command[-1], str(saved.resolve()))
+            self.assertEqual(
+                result["bootstrap_state_locking"],
+                "CANONICAL_TERRAFORM_LOCK_TRUE",
+            )
+            self.assertTrue(result["observation_required"])
+
+            not_ready = dict(verified)
+            not_ready["phase"] = "CLAIM_READY"
+            not_ready["ready_for_effect"] = False
+            with patch.object(
+                recovery,
+                "verify_c5_wif_repin_pre_effect",
+                return_value=not_ready,
+            ), patch.object(recovery.subprocess, "run") as blocked_run:
+                with self.assertRaises(RecoveryError):
+                    recovery.execute_c5_wif_repin_effect(
+                        successor_control_sha=control,
+                        activation_main=activation,
+                        saved_plan_path=saved,
+                        terraform_workdir=root,
+                        structural_manifest_path=manifest,
+                        fresh_review_comment_id=901,
+                        owner_apply_authority_comment_id=902,
+                        posted_claim_comment_id=903,
+                    )
+                blocked_run.assert_not_called()
+
     def test_c5_observation_is_emitted_from_live_verifier_not_caller_outcome(self):
         chain = self._c5_v2_chain()
         control = chain["control"]
