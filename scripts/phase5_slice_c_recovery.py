@@ -6525,7 +6525,7 @@ def main() -> int:
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif args.command == "emit-c5-control-merge-record":
             currentness = verify_c5_control_use_time_currentness(
-                args.reviewed_head, args.control_sha
+                args.control_sha, args.control_sha
             )
             print(c5_control_merge_record_body(
                 args.control_sha, args.pr_number, args.reviewed_head,
