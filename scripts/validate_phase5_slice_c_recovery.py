@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-free validation for the inert Slice C C4 successor recovery control."""
+"""Credential-free validation for the inert Slice C C5 retained-effect recovery control."""
 from __future__ import annotations
 
 import re
@@ -13,10 +13,18 @@ HELPER = ROOT / "scripts/phase5_slice_c_recovery.py"
 AUTHORITY = ROOT / "infra/bootstrap/phase5_authority.tf"
 VALIDATE = ROOT / ".github/workflows/validate.yml"
 CANDIDATE = ROOT / "infra/product/candidate.json"
+TESTS = ROOT / "tests/test_phase5_slice_c_recovery.py"
 
 NORMAL_CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
 RECOVERY_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
 SUCCESSOR_CONTROL_SHA = "03123864097df51e6edafd67acc34702f0819de3"
+C5_ARCHITECTURE_COMMENT_ID = "5976498714"
+C5_ARCHITECTURE_REVIEW_COMMENT_ID = "5976504154"
+C5_OWNER_DISPOSITION_COMMENT_ID = "5985897003"
+C5_RETAINED_BASELINE_COMMENT_ID = "5987054333"
+C5_BASE_MAIN = "6512a8df49c56ec797f106d02aae4d4114193779"
+C5_BOOTSTRAP_STATE_LINEAGE = "ae08b2f4-f18f-204c-72aa-53e17f12eea7"
+C5_BOOTSTRAP_STATE_SERIAL = "71"
 BOUNDARY = "5833629251"
 RECOVERY_DESIGN = "5963131897"
 GENERATION = "1790344068764582"
@@ -145,7 +153,7 @@ def require(text: str, tokens: tuple[str, ...], label: str, errors: list[str]) -
 
 def main() -> int:
     errors: list[str] = []
-    for path in (WORKFLOW, CALLER, HELPER, AUTHORITY, VALIDATE, CANDIDATE):
+    for path in (WORKFLOW, CALLER, HELPER, AUTHORITY, VALIDATE, CANDIDATE, TESTS):
         if not path.is_file():
             errors.append(f"RECOVERY_REQUIRED_FILE_MISSING:{path.relative_to(ROOT)}")
     if errors:
@@ -159,6 +167,7 @@ def main() -> int:
     authority = AUTHORITY.read_text(encoding="utf-8")
     validate = VALIDATE.read_text(encoding="utf-8")
     candidate = CANDIDATE.read_text(encoding="utf-8")
+    tests = TESTS.read_text(encoding="utf-8")
     errors.extend(workflow_structure_errors(workflow))
 
     require(
@@ -333,8 +342,97 @@ def main() -> int:
             'REVIEWED_BASE = "a8c4ed5895fe7333c051bcea2d4bb9994310a62f"',
             f'NORMAL_CONTROL_SHA = "{NORMAL_CONTROL_SHA}"',
             "decode_github_base64",
+            f"C5_ARCHITECTURE_COMMENT_ID = {C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5_ARCHITECTURE_REVIEW_COMMENT_ID = {C5_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_OWNER_DISPOSITION_COMMENT_ID = {C5_OWNER_DISPOSITION_COMMENT_ID}",
+            f"C5_RETAINED_BASELINE_COMMENT_ID = {C5_RETAINED_BASELINE_COMMENT_ID}",
+            f'C5_BASE_MAIN = "{C5_BASE_MAIN}"',
+            f'C5_OLD_RECOVERY_CONTROL_SHA = "{SUCCESSOR_CONTROL_SHA}"',
+            f'C5_BOOTSTRAP_STATE_LINEAGE = "{C5_BOOTSTRAP_STATE_LINEAGE}"',
+            f"C5_BOOTSTRAP_STATE_SERIAL = {C5_BOOTSTRAP_STATE_SERIAL}",
+            "validate_c5_governance_history",
+            "PHASE5_SLICE_C_C4_WIF_INCIDENT_DISPOSITION_V1",
+            "RETAINED_C4_EFFECT_BASELINE_V1",
+            "PHASE5_SLICE_C_C5_USE_TIME_CURRENTNESS_V1",
+            "PHASE5_SLICE_C_WIF_REPIN_PRECONDITION_SNAPSHOT_V1",
+            "PLAN_EFFECTS=EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_OLD_TO_NEW",
+            "c5_precondition_digest_sha256",
+            "PHASE5_SLICE_C_WIF_REPIN_ATTEMPT_SERIES_V1",
+            "WIF_REPIN_ATTEMPT_CLAIM_V1",
+            "validate_c5_attempt_history",
+            "validate_c5_posted_attempt_claim",
+            "PHASE5_SLICE_C_C5_WIF_REPIN_PLAN_FRESH_REVIEW_V1",
+            "PHASE5_SLICE_C_C5_WIF_REPIN_APPLY_AUTHORITY_V1",
+            "SAME_GENERATION_RETRY=NOT_AUTHORISED",
+            "c5_classify_wif_repin_outcome",
+            "PROCESS_OUTCOME_UNKNOWN",
+            "NO_EFFECT_STABLE",
+            "INCONSISTENT_EFFECT",
+            "PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V1",
+            "C5_PROCESS_OUTCOME_UNKNOWN_NOT_TERMINAL",
+            "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V1",
+            "C5_DISPATCH_REQUIRES_EFFECT_SUCCEEDED",
+            "C4_DISPATCH_PERMANENTLY_FORBIDDEN",
+            "C5_CONTROL_ALLOWED_FILES",
+            "C5_ACTIVATION_ALLOWED_FILES",
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
+            "PHASE5_SLICE_C_C5_CONTROL_MERGE_AUTHORITY_V1",
+            "verify_c5_control_premerge",
+            "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
+            "validate_c5_control_merge_record",
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5_ACTIVATION_SECURITY_AUTHORITY_REVIEW",
+            "PHASE5_SLICE_C_C5_ACTIVATION_MERGE_AUTHORITY_V1",
+            "verify_c5_activation_premerge",
+            "PHASE5_SLICE_C_C5_ACTIVATION_V1",
+            "validate_c5_activation_record",
+            "verify_c5_repository_activation",
+            "verify_c5_bootstrap_state_and_live_iam",
+            "c5_verify_wif_repin_plan",
+            "verify_c5_wif_repin_pre_effect",
+            '"phase": phase',
+            'phase = "CLAIM_READY"',
+            'phase = "EFFECT_READY"',
+            '"ready_for_effect": posted_claim_comment_id is not None',
+            'method="POST"',
+            'data=b"{}"',
+            "C5_EXPECTED_BOOTSTRAP_RESOURCE_COUNT = 138",
+            "C5_EXPECTED_PHASE5_WIF_ROWS",
+            "C5_EXPECTED_ROLE_PERMISSIONS",
+            "C5_PHASE5_WIF_LIVE_SET_MISMATCH",
+            "C5_ROLE_PERMISSIONS_CHANGED",
+            "_c5_saved_plan_json",
+            '"terraform",',
+            '"show",',
+            '"-json",',
+            "c5_verify_structural_manifest",
+            "resilio-bootstrap-wif-repin-structural-manifest/v1",
+            "C5_STRUCTURAL_MANIFEST_EFFECT_MISMATCH",
         ),
         "RECOVERY_HELPER",
+        errors,
+    )
+
+    require(
+        tests,
+        (
+            "class C5RetainedEffectProtocolTests",
+            "test_c5_precondition_constructor_rejects_hostile_identity_inputs",
+            "test_c5_review_and_authority_reject_one_nibble_or_uppercase_hashes",
+            "test_c5_attempt_history_requires_unique_contiguous_generations",
+            "test_c5_posted_claim_revalidation_binds_raw_body_and_chronology",
+            "test_c5_outcome_algebra_no_effect_requires_two_observations_60_seconds",
+            "test_c5_process_unknown_cannot_be_emitted_as_terminal",
+            "test_c5_terminal_binds_total_effect_evidence_and_enables_only_effect_dispatch",
+            "test_c5_governance_history_closes_architecture_review_disposition_baseline",
+            "test_c5_wif_plan_requires_exact_one_old_to_new_replacement",
+            "test_c5_structural_manifest_exactly_matches_old_to_new_effect",
+            "test_c5_bootstrap_live_iam_requires_all_eight_and_c4_only",
+            "test_c5_repository_activation_requires_exact_caller_and_desired_pin",
+            "test_c5_activation_file_transform_is_exact_two_file_sha_repin",
+            "test_c5_control_and_activation_authority_constructors_are_strict",
+            "test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready",
+        ),
+        "RECOVERY_C5_TESTS",
         errors,
     )
     for token in (
@@ -385,12 +483,31 @@ def main() -> int:
     if validate.count("python3 scripts/validate_phase5_slice_c_recovery.py") != 1:
         errors.append("RECOVERY_VALIDATOR_NOT_WIRED_EXACTLY_ONCE")
 
+    require(
+        helper,
+        (
+            'commands.add_parser("emit-c5-control-review")',
+            'commands.add_parser("emit-c5-control-merge-authority")',
+            'commands.add_parser("verify-c5-control-premerge")',
+            'commands.add_parser("emit-c5-control-merge-record")',
+            'commands.add_parser("emit-c5-activation-review")',
+            'commands.add_parser("emit-c5-activation-merge-authority")',
+            'commands.add_parser("verify-c5-activation-premerge")',
+            'commands.add_parser("emit-c5-activation-record")',
+            'commands.add_parser("emit-c5-wif-repin-review")',
+            'commands.add_parser("emit-c5-wif-repin-authority")',
+            'commands.add_parser("verify-c5-wif-repin-pre-effect")',
+        ),
+        "RECOVERY_C5_CLI",
+        errors,
+    )
+
     if errors:
         print("Phase 5 Slice C recovery seed validation failed:", file=sys.stderr)
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         return 1
-    print("Phase 5 Slice C inert C4 successor recovery control validation passed")
+    print("Phase 5 Slice C inert C5 retained-effect recovery control validation passed")
     return 0
 
 

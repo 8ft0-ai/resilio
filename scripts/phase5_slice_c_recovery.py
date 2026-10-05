@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -2450,6 +2451,2625 @@ def successor_build_result(before: Any, after: Any, plan: Any, control_sha: str,
     return private,public
 
 
+
+# C5 retained-effect recovery protocol.  This surface is intentionally inert in
+# the C5 control seed: the repository caller and bootstrap WIF remain pinned to
+# C4 until a separately reviewed/authorised activation and WIF-repin sequence.
+C5_ARCHITECTURE_COMMENT_ID = 5976498714
+C5_ARCHITECTURE_BODY_SHA256 = "b1e6e4147d1e07bf47ba8d005114ba387ad15f888a8f4cf013bf0bcb7f2d4f7f"
+C5_ARCHITECTURE_REVIEW_COMMENT_ID = 5976504154
+C5_ARCHITECTURE_REVIEW_BODY_SHA256 = "70c65751e7d9ee0f6e77d307786f8881b0342447152419cd5e9e1a0acd463f4e"
+C5_OWNER_DISPOSITION_COMMENT_ID = 5985897003
+C5_OWNER_DISPOSITION_BODY_SHA256 = "bc0a13d8e972e0f29043a864c8729b1ca15e745c2579c43aa827946bab0804f2"
+C5_RETAINED_BASELINE_COMMENT_ID = 5987054333
+C5_RETAINED_BASELINE_BODY_SHA256 = "8cc150919fb7fe363f0e3c6e5ac0c96456c733e73f9712496b9c865b37b311c9"
+C5_BASE_MAIN = "6512a8df49c56ec797f106d02aae4d4114193779"
+C5_OLD_RECOVERY_CONTROL_SHA = "03123864097df51e6edafd67acc34702f0819de3"
+C5_BOOTSTRAP_STATE_LINEAGE = "ae08b2f4-f18f-204c-72aa-53e17f12eea7"
+C5_BOOTSTRAP_STATE_SERIAL = 71
+C5_C4_SAVED_PLAN_SHA256 = "3e15f30695eacca78cbe9c38df792c7ab9844687120e51a692b2f1f718b7f38b"
+C5_C4_STRUCTURAL_MANIFEST_SHA256 = "6e31aa0792c9966094fef6df56d0d55c006358e826c88ccd39a89debdc967c01"
+C5_C4_INCIDENT_ID = 5976408137
+C5_C4_INCIDENT_BODY_SHA256 = "4e145d27623c1fe4abcdaa70c9423d16fe958e35a0373bab8c1c5738a0d35ab2"
+C5_C4_MALFORMED_AUTHORITY_ID = 5976341959
+C5_C4_MALFORMED_AUTHORITY_BODY_SHA256 = "65cce5859085af8c2d4ee335fba02b81a3b9f0f1f0b9d76da0ce5155977cb5b0"
+C5_C4_INVALID_TERMINAL_ID = 5976373231
+C5_C4_INVALID_TERMINAL_BODY_SHA256 = "2c01be737dda00f967c2167fb00c50a6e99bbe2e9c157c30a1651a172fd2cfdf"
+C5_FORBIDDEN_RECOVERY_CONTROL_SHAS = (
+    PREDECESSOR_CONTROL_SHA,
+    SUPERSEDED_CONTROL_SHA,
+    FAILED_C3_CONTROL_SHA,
+)
+C5_TERMINAL_OUTCOMES = frozenset(
+    ("EFFECT_SUCCEEDED", "NO_EFFECT_STABLE", "INCONSISTENT_EFFECT")
+)
+C5_ALL_OUTCOMES = C5_TERMINAL_OUTCOMES | frozenset(("PROCESS_OUTCOME_UNKNOWN",))
+
+
+def _c5_require_sha(value: str, label: str) -> str:
+    if not FULL_SHA.fullmatch(str(value or "")):
+        raise RecoveryError(f"{label}_INVALID")
+    return str(value)
+
+
+def _c5_require_hash(value: str, label: str) -> str:
+    if not HEX64.fullmatch(str(value or "")):
+        raise RecoveryError(f"{label}_INVALID")
+    return str(value)
+
+
+def _c5_require_lineage(value: str, label: str) -> str:
+    text = str(value or "")
+    if not text or len(text) > 128 or "\n" in text or "\r" in text:
+        raise RecoveryError(f"{label}_INVALID")
+    return text
+
+
+def _c5_require_enum(value: str, allowed: set[str] | frozenset[str], label: str) -> str:
+    if value not in allowed:
+        raise RecoveryError(f"{label}_INVALID")
+    return value
+
+
+def _c5_positive(value: int, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise RecoveryError(f"{label}_INVALID")
+    return value
+
+
+def _c5_nonnegative(value: int, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise RecoveryError(f"{label}_INVALID")
+    return value
+
+
+def validate_c5_governance_history(comments: list[dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(comments, list):
+        raise RecoveryError("C5_GOVERNANCE_COMMENTS_INVALID")
+
+    architecture = _successor_fixed_comment(
+        comments,
+        C5_ARCHITECTURE_COMMENT_ID,
+        C5_ARCHITECTURE_BODY_SHA256,
+        "C5_ARCHITECTURE",
+    )
+    for token in (
+        "STATUS=C5_ARCHITECTURE_REVISION_4_COMPLETE_PENDING_FRESH_REVIEW",
+        f"CURRENT_MAIN={C5_BASE_MAIN}",
+        "CURRENT_REPOSITORY_CALLER=C4",
+        "CURRENT_REPOSITORY_DESIRED_WIF=C4",
+        "CURRENT_LIVE_RECOVERY_WIF=C4_ONLY",
+        f"CURRENT_BOOTSTRAP_STATE_LINEAGE={C5_BOOTSTRAP_STATE_LINEAGE}",
+        f"CURRENT_BOOTSTRAP_STATE_SERIAL={C5_BOOTSTRAP_STATE_SERIAL}",
+        "C4_DISPATCH=PERMANENTLY_FORBIDDEN",
+        "C5_IMPLEMENTATION=NOT_AUTHORISED",
+    ):
+        if token not in architecture["body"]:
+            raise RecoveryError("C5_ARCHITECTURE_CONTRACT_MISMATCH")
+
+    architecture_review = _successor_fixed_comment(
+        comments,
+        C5_ARCHITECTURE_REVIEW_COMMENT_ID,
+        C5_ARCHITECTURE_REVIEW_BODY_SHA256,
+        "C5_ARCHITECTURE_REVIEW",
+    )
+    for token in (
+        f"REVIEW_TARGET={C5_ARCHITECTURE_COMMENT_ID}",
+        "DISPOSITION=APPROVED",
+        "MATERIAL_BLOCKERS=NONE",
+        "INCIDENT_TRUTH_AND_NON_RETROACTIVITY=PASS",
+        "OWNER_DISPOSITION_AUTHORITY_CLOSURE=PASS",
+        "USE_TIME_CURRENTNESS=PASS",
+        "RETAINED_EFFECT_BASELINE=PASS",
+        "TERMINAL_AND_DISPATCH_GATING=PASS",
+        "RETAIN_POSITIVE_REACHABILITY=PASS",
+        "REVERT_REACHABILITY=PASS",
+    ):
+        if token not in architecture_review["body"]:
+            raise RecoveryError("C5_ARCHITECTURE_REVIEW_CONTRACT_MISMATCH")
+
+    disposition_candidates = [
+        comment
+        for comment in comments
+        if _owner_issue_comment(comment, GOVERNING_ISSUE)
+        and canonical_comment_text(comment.get("body")).startswith(
+            "PHASE5_SLICE_C_C4_WIF_INCIDENT_DISPOSITION_V1\n"
+        )
+    ]
+    if len(disposition_candidates) != 1:
+        raise RecoveryError("C5_OWNER_DISPOSITION_NOT_UNIQUE")
+    disposition = _successor_fixed_comment(
+        comments,
+        C5_OWNER_DISPOSITION_COMMENT_ID,
+        C5_OWNER_DISPOSITION_BODY_SHA256,
+        "C5_OWNER_DISPOSITION",
+    )
+    disposition_fields = _record_fields(
+        disposition["body"],
+        "PHASE5_SLICE_C_C4_WIF_INCIDENT_DISPOSITION_V1",
+        (
+            "GOVERNING_ISSUE",
+            "C5_ARCHITECTURE_COMMENT_ID",
+            "C5_ARCHITECTURE_BODY_SHA256",
+            "C5_ARCHITECTURE_REVIEW_COMMENT_ID",
+            "C5_ARCHITECTURE_REVIEW_BODY_SHA256",
+            "INCIDENT_ID",
+            "INCIDENT_BODY_SHA256",
+            "MALFORMED_AUTHORITY_ID",
+            "MALFORMED_AUTHORITY_BODY_SHA256",
+            "INVALID_TERMINAL_ID",
+            "INVALID_TERMINAL_BODY_SHA256",
+            "SAVED_PLAN_SHA256",
+            "STRUCTURAL_MANIFEST_SHA256",
+            "CURRENT_MAIN",
+            "BOOTSTRAP_STATE_LINEAGE",
+            "BOOTSTRAP_STATE_SERIAL",
+            "LIVE_RECOVERY_WIF",
+            "POST_APPLY_RECONCILIATION",
+            "NON_RETROACTIVE_ACK",
+            "DISPOSITION",
+            "AUTHORITY_SCOPE",
+        ),
+    )
+    expected_disposition = {
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_ARCHITECTURE_COMMENT_ID": str(C5_ARCHITECTURE_COMMENT_ID),
+        "C5_ARCHITECTURE_BODY_SHA256": C5_ARCHITECTURE_BODY_SHA256,
+        "C5_ARCHITECTURE_REVIEW_COMMENT_ID": str(C5_ARCHITECTURE_REVIEW_COMMENT_ID),
+        "C5_ARCHITECTURE_REVIEW_BODY_SHA256": C5_ARCHITECTURE_REVIEW_BODY_SHA256,
+        "INCIDENT_ID": str(C5_C4_INCIDENT_ID),
+        "INCIDENT_BODY_SHA256": C5_C4_INCIDENT_BODY_SHA256,
+        "MALFORMED_AUTHORITY_ID": str(C5_C4_MALFORMED_AUTHORITY_ID),
+        "MALFORMED_AUTHORITY_BODY_SHA256": C5_C4_MALFORMED_AUTHORITY_BODY_SHA256,
+        "INVALID_TERMINAL_ID": str(C5_C4_INVALID_TERMINAL_ID),
+        "INVALID_TERMINAL_BODY_SHA256": C5_C4_INVALID_TERMINAL_BODY_SHA256,
+        "SAVED_PLAN_SHA256": C5_C4_SAVED_PLAN_SHA256,
+        "STRUCTURAL_MANIFEST_SHA256": C5_C4_STRUCTURAL_MANIFEST_SHA256,
+        "CURRENT_MAIN": C5_BASE_MAIN,
+        "BOOTSTRAP_STATE_LINEAGE": C5_BOOTSTRAP_STATE_LINEAGE,
+        "BOOTSTRAP_STATE_SERIAL": str(C5_BOOTSTRAP_STATE_SERIAL),
+        "LIVE_RECOVERY_WIF": "C4_ONLY",
+        "POST_APPLY_RECONCILIATION": "EXACT_NO_CHANGE",
+        "NON_RETROACTIVE_ACK": "TRUE",
+        "DISPOSITION": "RETAIN_EXACT_EFFECT",
+        "AUTHORITY_SCOPE": "C5_INERT_CONTROL_IMPLEMENTATION_ONLY",
+    }
+    if disposition_fields != expected_disposition:
+        raise RecoveryError("C5_OWNER_DISPOSITION_CONTRACT_MISMATCH")
+
+    baseline_candidates = [
+        comment
+        for comment in comments
+        if _owner_issue_comment(comment, GOVERNING_ISSUE)
+        and canonical_comment_text(comment.get("body")).startswith(
+            "RETAINED_C4_EFFECT_BASELINE_V1\n"
+        )
+    ]
+    if len(baseline_candidates) != 1:
+        raise RecoveryError("C5_RETAINED_BASELINE_NOT_UNIQUE")
+    baseline = _successor_fixed_comment(
+        comments,
+        C5_RETAINED_BASELINE_COMMENT_ID,
+        C5_RETAINED_BASELINE_BODY_SHA256,
+        "C5_RETAINED_BASELINE",
+    )
+    baseline_fields = _record_fields(
+        baseline["body"],
+        "RETAINED_C4_EFFECT_BASELINE_V1",
+        (
+            "STATUS",
+            "GOVERNING_ISSUE",
+            "OWNER_DISPOSITION_COMMENT_ID",
+            "OWNER_DISPOSITION_BODY_SHA256",
+            "DISPOSITION",
+            "AUTHORITY_SCOPE",
+            "C5_ARCHITECTURE_COMMENT_ID",
+            "C5_ARCHITECTURE_BODY_SHA256",
+            "C5_ARCHITECTURE_REVIEW_COMMENT_ID",
+            "C5_ARCHITECTURE_REVIEW_BODY_SHA256",
+            "INCIDENT_ID",
+            "MALFORMED_C4_AUTHORITY_ID",
+            "INVALID_C4_TERMINAL_ID",
+            "CURRENT_MAIN",
+            "REPOSITORY_CALLER",
+            "REPOSITORY_DESIRED_WIF",
+            "LIVE_RECOVERY_WIF",
+            "BOOTSTRAP_STATE_LINEAGE",
+            "BOOTSTRAP_STATE_SERIAL",
+            "BOOTSTRAP_STATE_RESOURCE_COUNT",
+            "C2_RECOVERY_CLAIM_RESULT",
+            "C3_RECOVERY_CLAIM_RESULT",
+            "C4_RECOVERY_CLAIM_RESULT",
+            "BOOTSTRAP_LOCK",
+            "ACTIVE_GITHUB_ACTIONS_RUNS",
+            "PHASE5_WIF_STATE_RESOURCES",
+            "ALL_PHASE5_WIF_LIVE_MATCHES",
+            "GETMETADATA_PLAN_ROLE",
+            "GETMETADATA_APPLY_ROLE",
+            "BOOTSTRAP_RECONCILIATION",
+            "TERRAFORM_PLAN_EXIT",
+            "NON_RETROACTIVE_ACK",
+            "C4_DISPATCH",
+            "CLOUD_MUTATION",
+            "NEXT_AUTHORISED_SCOPE",
+        ),
+    )
+    expected_baseline = {
+        "STATUS": "C5_RETAINED_EFFECT_BASELINE_ESTABLISHED",
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "OWNER_DISPOSITION_COMMENT_ID": str(C5_OWNER_DISPOSITION_COMMENT_ID),
+        "OWNER_DISPOSITION_BODY_SHA256": C5_OWNER_DISPOSITION_BODY_SHA256,
+        "DISPOSITION": "RETAIN_EXACT_EFFECT",
+        "AUTHORITY_SCOPE": "C5_INERT_CONTROL_IMPLEMENTATION_ONLY",
+        "C5_ARCHITECTURE_COMMENT_ID": str(C5_ARCHITECTURE_COMMENT_ID),
+        "C5_ARCHITECTURE_BODY_SHA256": C5_ARCHITECTURE_BODY_SHA256,
+        "C5_ARCHITECTURE_REVIEW_COMMENT_ID": str(C5_ARCHITECTURE_REVIEW_COMMENT_ID),
+        "C5_ARCHITECTURE_REVIEW_BODY_SHA256": C5_ARCHITECTURE_REVIEW_BODY_SHA256,
+        "INCIDENT_ID": str(C5_C4_INCIDENT_ID),
+        "MALFORMED_C4_AUTHORITY_ID": str(C5_C4_MALFORMED_AUTHORITY_ID),
+        "INVALID_C4_TERMINAL_ID": str(C5_C4_INVALID_TERMINAL_ID),
+        "CURRENT_MAIN": C5_BASE_MAIN,
+        "REPOSITORY_CALLER": "C4",
+        "REPOSITORY_DESIRED_WIF": "C4",
+        "LIVE_RECOVERY_WIF": "C4_ONLY",
+        "BOOTSTRAP_STATE_LINEAGE": C5_BOOTSTRAP_STATE_LINEAGE,
+        "BOOTSTRAP_STATE_SERIAL": str(C5_BOOTSTRAP_STATE_SERIAL),
+        "BOOTSTRAP_STATE_RESOURCE_COUNT": "138",
+        "C2_RECOVERY_CLAIM_RESULT": "ABSENT",
+        "C3_RECOVERY_CLAIM_RESULT": "ABSENT",
+        "C4_RECOVERY_CLAIM_RESULT": "ABSENT",
+        "BOOTSTRAP_LOCK": "ABSENT",
+        "ACTIVE_GITHUB_ACTIONS_RUNS": "0",
+        "PHASE5_WIF_STATE_RESOURCES": "8",
+        "ALL_PHASE5_WIF_LIVE_MATCHES": "PASS",
+        "GETMETADATA_PLAN_ROLE": "PRESENT",
+        "GETMETADATA_APPLY_ROLE": "PRESENT",
+        "BOOTSTRAP_RECONCILIATION": "EXACT_NO_CHANGE",
+        "TERRAFORM_PLAN_EXIT": "0",
+        "NON_RETROACTIVE_ACK": "TRUE",
+        "C4_DISPATCH": "PERMANENTLY_FORBIDDEN",
+        "CLOUD_MUTATION": "NOT_AUTHORISED",
+        "NEXT_AUTHORISED_SCOPE": "C5_INERT_CONTROL_IMPLEMENTATION_ONLY",
+    }
+    if baseline_fields != expected_baseline:
+        raise RecoveryError("C5_RETAINED_BASELINE_CONTRACT_MISMATCH")
+    if not (
+        architecture["created_at"]
+        < architecture_review["created_at"]
+        < disposition["created_at"]
+        < baseline["created_at"]
+    ):
+        raise RecoveryError("C5_GOVERNANCE_TIMELINE_INVALID")
+    return {
+        "architecture": architecture,
+        "architecture_review": architecture_review,
+        "disposition": disposition,
+        "retained_baseline": baseline,
+    }
+
+
+def c5_use_time_currentness_body(
+    current_main: str,
+    repository_caller_sha: str,
+    repository_desired_wif_sha: str,
+    live_recovery_wif: str,
+    state_lineage: str,
+    state_serial: int,
+    c2_claim_result: str,
+    c3_claim_result: str,
+    c4_claim_result: str,
+    bootstrap_reconciliation: str,
+    getmetadata_plan_role: str,
+    getmetadata_apply_role: str,
+    normal_phase5_identities: str,
+    bootstrap_lock: str,
+    active_conflicting_executions: int,
+) -> str:
+    _c5_require_sha(current_main, "C5_CURRENT_MAIN")
+    _c5_require_sha(repository_caller_sha, "C5_REPOSITORY_CALLER_SHA")
+    _c5_require_sha(repository_desired_wif_sha, "C5_REPOSITORY_DESIRED_WIF_SHA")
+    _c5_require_lineage(state_lineage, "C5_BOOTSTRAP_STATE_LINEAGE")
+    _c5_nonnegative(state_serial, "C5_BOOTSTRAP_STATE_SERIAL")
+    _c5_nonnegative(active_conflicting_executions, "C5_ACTIVE_CONFLICTING_EXECUTIONS")
+    expected = (
+        current_main == C5_BASE_MAIN
+        and repository_caller_sha == C5_OLD_RECOVERY_CONTROL_SHA
+        and repository_desired_wif_sha == C5_OLD_RECOVERY_CONTROL_SHA
+        and live_recovery_wif == "C4_ONLY"
+        and state_lineage == C5_BOOTSTRAP_STATE_LINEAGE
+        and state_serial == C5_BOOTSTRAP_STATE_SERIAL
+        and c2_claim_result == "ABSENT"
+        and c3_claim_result == "ABSENT"
+        and c4_claim_result == "ABSENT"
+        and bootstrap_reconciliation == "EXACT_NO_CHANGE"
+        and getmetadata_plan_role == "PRESENT"
+        and getmetadata_apply_role == "PRESENT"
+        and normal_phase5_identities == "UNCHANGED"
+        and bootstrap_lock == "ABSENT"
+        and active_conflicting_executions == 0
+    )
+    if not expected:
+        raise RecoveryError("C5_USE_TIME_CURRENTNESS_MISMATCH")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_USE_TIME_CURRENTNESS_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5_ARCHITECTURE_BODY_SHA256={C5_ARCHITECTURE_BODY_SHA256}",
+            f"C5_ARCHITECTURE_REVIEW_COMMENT_ID={C5_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_ARCHITECTURE_REVIEW_BODY_SHA256={C5_ARCHITECTURE_REVIEW_BODY_SHA256}",
+            f"OWNER_DISPOSITION_COMMENT_ID={C5_OWNER_DISPOSITION_COMMENT_ID}",
+            f"OWNER_DISPOSITION_BODY_SHA256={C5_OWNER_DISPOSITION_BODY_SHA256}",
+            f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE_BODY_SHA256={C5_RETAINED_BASELINE_BODY_SHA256}",
+            f"CURRENT_MAIN={current_main}",
+            f"REPOSITORY_CALLER_SHA={repository_caller_sha}",
+            f"REPOSITORY_DESIRED_WIF_SHA={repository_desired_wif_sha}",
+            f"LIVE_RECOVERY_WIF={live_recovery_wif}",
+            f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+            f"BOOTSTRAP_STATE_SERIAL={state_serial}",
+            f"C2_RECOVERY_CLAIM_RESULT={c2_claim_result}",
+            f"C3_RECOVERY_CLAIM_RESULT={c3_claim_result}",
+            f"C4_RECOVERY_CLAIM_RESULT={c4_claim_result}",
+            f"BOOTSTRAP_RECONCILIATION={bootstrap_reconciliation}",
+            f"GETMETADATA_PLAN_ROLE={getmetadata_plan_role}",
+            f"GETMETADATA_APPLY_ROLE={getmetadata_apply_role}",
+            f"NORMAL_PHASE5_IDENTITIES={normal_phase5_identities}",
+            f"BOOTSTRAP_LOCK={bootstrap_lock}",
+            f"ACTIVE_CONFLICTING_EXECUTIONS={active_conflicting_executions}",
+            "CURRENTNESS=PASS",
+        )
+    )
+
+
+def c5_precondition_snapshot(
+    successor_control_sha: str,
+    successor_activation_main: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    state_lineage: str,
+    state_serial: int,
+    fresh_review_comment_id: int,
+    fresh_review_body_sha256: str,
+    owner_apply_authority_comment_id: int,
+    owner_apply_authority_body_sha256: str,
+    old_recovery_control_sha: str,
+    new_recovery_control_sha: str,
+) -> str:
+    _c5_require_sha(successor_control_sha, "C5_SUCCESSOR_CONTROL_SHA")
+    _c5_require_sha(successor_activation_main, "C5_SUCCESSOR_ACTIVATION_MAIN")
+    _c5_require_hash(saved_plan_sha256, "C5_SAVED_PLAN_SHA256")
+    _c5_require_hash(structural_manifest_sha256, "C5_STRUCTURAL_MANIFEST_SHA256")
+    _c5_require_lineage(state_lineage, "C5_PRECONDITION_LINEAGE")
+    _c5_nonnegative(state_serial, "C5_PRECONDITION_SERIAL")
+    _c5_positive(fresh_review_comment_id, "C5_FRESH_REVIEW_COMMENT_ID")
+    _c5_require_hash(fresh_review_body_sha256, "C5_FRESH_REVIEW_BODY_SHA256")
+    _c5_positive(owner_apply_authority_comment_id, "C5_OWNER_APPLY_AUTHORITY_COMMENT_ID")
+    _c5_require_hash(owner_apply_authority_body_sha256, "C5_OWNER_APPLY_AUTHORITY_BODY_SHA256")
+    _c5_require_sha(old_recovery_control_sha, "C5_OLD_RECOVERY_CONTROL_SHA")
+    _c5_require_sha(new_recovery_control_sha, "C5_NEW_RECOVERY_CONTROL_SHA")
+    if old_recovery_control_sha != C5_OLD_RECOVERY_CONTROL_SHA:
+        raise RecoveryError("C5_PRECONDITION_OLD_CONTROL_MISMATCH")
+    if new_recovery_control_sha != successor_control_sha:
+        raise RecoveryError("C5_PRECONDITION_NEW_CONTROL_MISMATCH")
+    if new_recovery_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        new_recovery_control_sha == old_recovery_control_sha
+    ):
+        raise RecoveryError("C5_PRECONDITION_NEW_CONTROL_FORBIDDEN")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_WIF_REPIN_PRECONDITION_SNAPSHOT_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha256}",
+            f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
+            f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+            f"BOOTSTRAP_STATE_SERIAL={state_serial}",
+            f"FRESH_REVIEW_COMMENT_ID={fresh_review_comment_id}",
+            f"FRESH_REVIEW_BODY_SHA256={fresh_review_body_sha256}",
+            f"OWNER_APPLY_AUTHORITY_COMMENT_ID={owner_apply_authority_comment_id}",
+            f"OWNER_APPLY_AUTHORITY_BODY_SHA256={owner_apply_authority_body_sha256}",
+            f"OLD_RECOVERY_CONTROL_SHA={old_recovery_control_sha}",
+            f"NEW_RECOVERY_CONTROL_SHA={new_recovery_control_sha}",
+            f"FORBIDDEN_RECOVERY_CONTROL_SHA_1={PREDECESSOR_CONTROL_SHA}",
+            f"FORBIDDEN_RECOVERY_CONTROL_SHA_2={SUPERSEDED_CONTROL_SHA}",
+            f"FORBIDDEN_RECOVERY_CONTROL_SHA_3={FAILED_C3_CONTROL_SHA}",
+            "LIVE_RECOVERY_WIF=OLD_ONLY",
+            "OLD_CONTROL_RECOVERY_CLAIM_RESULT=ABSENT",
+            "NEW_CONTROL_RECOVERY_CLAIM_RESULT=ABSENT",
+            "SUPERSEDED_C2_RECOVERY_CLAIM_RESULT=ABSENT",
+            "SUPERSEDED_C3_RECOVERY_CLAIM_RESULT=ABSENT",
+            "BOOTSTRAP_LOCK=ABSENT",
+            "ACTIVE_CONFLICTING_EXECUTIONS=0",
+            "TERRAFORM_VERSION=1.15.8",
+            "PLAN_FORMAT_VERSION=1.2",
+            "PLAN_APPLYABLE=true",
+            "PLAN_COMPLETE=true",
+            "PLAN_ERRORED=false",
+            "PLAN_EFFECTS=EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_OLD_TO_NEW",
+            "OUTPUT_CHANGES=0",
+        )
+    )
+
+
+def c5_precondition_digest_sha256(*args: Any, **kwargs: Any) -> str:
+    snapshot = c5_precondition_snapshot(*args, **kwargs)
+    return sha256(snapshot.encode("utf-8"))
+
+
+def c5_attempt_series_body(
+    successor_control_sha: str,
+    successor_activation_main: str,
+    old_recovery_control_sha: str,
+    new_recovery_control_sha: str,
+) -> str:
+    _c5_require_sha(successor_control_sha, "C5_ATTEMPT_SUCCESSOR_CONTROL_SHA")
+    _c5_require_sha(successor_activation_main, "C5_ATTEMPT_SUCCESSOR_ACTIVATION_MAIN")
+    _c5_require_sha(old_recovery_control_sha, "C5_ATTEMPT_OLD_CONTROL_SHA")
+    _c5_require_sha(new_recovery_control_sha, "C5_ATTEMPT_NEW_CONTROL_SHA")
+    if old_recovery_control_sha != C5_OLD_RECOVERY_CONTROL_SHA:
+        raise RecoveryError("C5_ATTEMPT_OLD_CONTROL_MISMATCH")
+    if new_recovery_control_sha != successor_control_sha:
+        raise RecoveryError("C5_ATTEMPT_NEW_CONTROL_MISMATCH")
+    if new_recovery_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        new_recovery_control_sha == old_recovery_control_sha
+    ):
+        raise RecoveryError("C5_ATTEMPT_NEW_CONTROL_FORBIDDEN")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_WIF_REPIN_ATTEMPT_SERIES_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"OLD_RECOVERY_CONTROL_SHA={old_recovery_control_sha}",
+            f"NEW_RECOVERY_CONTROL_SHA={new_recovery_control_sha}",
+        )
+    )
+
+
+def c5_attempt_series_id_sha256(*args: Any, **kwargs: Any) -> str:
+    return sha256(c5_attempt_series_body(*args, **kwargs).encode("utf-8"))
+
+
+C5_ATTEMPT_CLAIM_FIELDS = (
+    "GOVERNING_ISSUE",
+    "ATTEMPT_SERIES_ID_SHA256",
+    "ATTEMPT_GENERATION",
+    "SUCCESSOR_CONTROL_SHA",
+    "SUCCESSOR_ACTIVATION_MAIN",
+    "OLD_RECOVERY_CONTROL_SHA",
+    "NEW_RECOVERY_CONTROL_SHA",
+    "SAVED_PLAN_SHA256",
+    "STRUCTURAL_MANIFEST_SHA256",
+    "PRECONDITION_DIGEST_SHA256",
+    "FRESH_REVIEW_COMMENT_ID",
+    "FRESH_REVIEW_BODY_SHA256",
+    "OWNER_APPLY_AUTHORITY_COMMENT_ID",
+    "OWNER_APPLY_AUTHORITY_BODY_SHA256",
+    "AUTHORITY_CONSUMPTION",
+)
+
+
+def c5_attempt_claim_body(
+    successor_control_sha: str,
+    successor_activation_main: str,
+    old_recovery_control_sha: str,
+    new_recovery_control_sha: str,
+    generation: int,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    precondition_digest_sha256: str,
+    fresh_review_comment_id: int,
+    fresh_review_body_sha256: str,
+    owner_apply_authority_comment_id: int,
+    owner_apply_authority_body_sha256: str,
+) -> str:
+    series_id = c5_attempt_series_id_sha256(
+        successor_control_sha,
+        successor_activation_main,
+        old_recovery_control_sha,
+        new_recovery_control_sha,
+    )
+    _c5_positive(generation, "C5_ATTEMPT_GENERATION")
+    _c5_require_hash(saved_plan_sha256, "C5_ATTEMPT_SAVED_PLAN_SHA256")
+    _c5_require_hash(structural_manifest_sha256, "C5_ATTEMPT_STRUCTURAL_MANIFEST_SHA256")
+    _c5_require_hash(precondition_digest_sha256, "C5_ATTEMPT_PRECONDITION_DIGEST_SHA256")
+    _c5_positive(fresh_review_comment_id, "C5_ATTEMPT_FRESH_REVIEW_COMMENT_ID")
+    _c5_require_hash(fresh_review_body_sha256, "C5_ATTEMPT_FRESH_REVIEW_BODY_SHA256")
+    _c5_positive(
+        owner_apply_authority_comment_id,
+        "C5_ATTEMPT_OWNER_APPLY_AUTHORITY_COMMENT_ID",
+    )
+    _c5_require_hash(
+        owner_apply_authority_body_sha256,
+        "C5_ATTEMPT_OWNER_APPLY_AUTHORITY_BODY_SHA256",
+    )
+    return "\n".join(
+        (
+            "WIF_REPIN_ATTEMPT_CLAIM_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"ATTEMPT_SERIES_ID_SHA256={series_id}",
+            f"ATTEMPT_GENERATION={generation}",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"OLD_RECOVERY_CONTROL_SHA={old_recovery_control_sha}",
+            f"NEW_RECOVERY_CONTROL_SHA={new_recovery_control_sha}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha256}",
+            f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
+            f"PRECONDITION_DIGEST_SHA256={precondition_digest_sha256}",
+            f"FRESH_REVIEW_COMMENT_ID={fresh_review_comment_id}",
+            f"FRESH_REVIEW_BODY_SHA256={fresh_review_body_sha256}",
+            f"OWNER_APPLY_AUTHORITY_COMMENT_ID={owner_apply_authority_comment_id}",
+            f"OWNER_APPLY_AUTHORITY_BODY_SHA256={owner_apply_authority_body_sha256}",
+            "AUTHORITY_CONSUMPTION=CONSUMED_ON_POST",
+        )
+    )
+
+
+def _c5_parse_attempt_claim(comment: dict[str, Any]) -> dict[str, Any]:
+    created, body_sha = _require_unedited_owner_comment(
+        comment, GOVERNING_ISSUE, "C5_ATTEMPT_CLAIM"
+    )
+    fields = _record_fields(
+        str(comment.get("body") or ""),
+        "WIF_REPIN_ATTEMPT_CLAIM_V1",
+        C5_ATTEMPT_CLAIM_FIELDS,
+    )
+    if fields["GOVERNING_ISSUE"] != "8ft0-ai/resilio#109":
+        raise RecoveryError("C5_ATTEMPT_CLAIM_ISSUE_MISMATCH")
+    for name in (
+        "ATTEMPT_SERIES_ID_SHA256",
+        "SAVED_PLAN_SHA256",
+        "STRUCTURAL_MANIFEST_SHA256",
+        "PRECONDITION_DIGEST_SHA256",
+        "FRESH_REVIEW_BODY_SHA256",
+        "OWNER_APPLY_AUTHORITY_BODY_SHA256",
+    ):
+        _c5_require_hash(fields[name], f"C5_ATTEMPT_CLAIM_{name}")
+    for name in (
+        "SUCCESSOR_CONTROL_SHA",
+        "SUCCESSOR_ACTIVATION_MAIN",
+        "OLD_RECOVERY_CONTROL_SHA",
+        "NEW_RECOVERY_CONTROL_SHA",
+    ):
+        _c5_require_sha(fields[name], f"C5_ATTEMPT_CLAIM_{name}")
+    generation = _positive_int(fields["ATTEMPT_GENERATION"], "C5_ATTEMPT_GENERATION")
+    _positive_int(fields["FRESH_REVIEW_COMMENT_ID"], "C5_ATTEMPT_FRESH_REVIEW_COMMENT_ID")
+    _positive_int(
+        fields["OWNER_APPLY_AUTHORITY_COMMENT_ID"],
+        "C5_ATTEMPT_OWNER_APPLY_AUTHORITY_COMMENT_ID",
+    )
+    if fields["AUTHORITY_CONSUMPTION"] != "CONSUMED_ON_POST":
+        raise RecoveryError("C5_ATTEMPT_AUTHORITY_CONSUMPTION_INVALID")
+    expected_series = c5_attempt_series_id_sha256(
+        fields["SUCCESSOR_CONTROL_SHA"],
+        fields["SUCCESSOR_ACTIVATION_MAIN"],
+        fields["OLD_RECOVERY_CONTROL_SHA"],
+        fields["NEW_RECOVERY_CONTROL_SHA"],
+    )
+    if fields["ATTEMPT_SERIES_ID_SHA256"] != expected_series:
+        raise RecoveryError("C5_ATTEMPT_SERIES_ID_MISMATCH")
+    return {
+        "comment_id": int(comment["id"]),
+        "created_at": created,
+        "body_sha256": body_sha,
+        "generation": generation,
+        "fields": fields,
+    }
+
+
+def validate_c5_attempt_history(
+    comments: list[dict[str, Any]],
+    successor_control_sha: str,
+    successor_activation_main: str,
+    old_recovery_control_sha: str,
+    new_recovery_control_sha: str,
+) -> dict[str, Any]:
+    expected_series = c5_attempt_series_id_sha256(
+        successor_control_sha,
+        successor_activation_main,
+        old_recovery_control_sha,
+        new_recovery_control_sha,
+    )
+    claims: list[dict[str, Any]] = []
+    for comment in comments:
+        if not _owner_issue_comment(comment, GOVERNING_ISSUE):
+            continue
+        body = canonical_comment_text(comment.get("body"))
+        if not body.startswith("WIF_REPIN_ATTEMPT_CLAIM_V1\n"):
+            continue
+        parsed = _c5_parse_attempt_claim(comment)
+        fields = parsed["fields"]
+        same_tuple = (
+            fields["SUCCESSOR_CONTROL_SHA"] == successor_control_sha
+            and fields["SUCCESSOR_ACTIVATION_MAIN"] == successor_activation_main
+            and fields["OLD_RECOVERY_CONTROL_SHA"] == old_recovery_control_sha
+            and fields["NEW_RECOVERY_CONTROL_SHA"] == new_recovery_control_sha
+        )
+        if same_tuple and fields["ATTEMPT_SERIES_ID_SHA256"] != expected_series:
+            raise RecoveryError("C5_ATTEMPT_SERIES_CONFLICT")
+        if fields["ATTEMPT_SERIES_ID_SHA256"] == expected_series:
+            if not same_tuple:
+                raise RecoveryError("C5_ATTEMPT_SERIES_ID_COLLISION")
+            claims.append(parsed)
+    generations = [item["generation"] for item in claims]
+    if len(generations) != len(set(generations)):
+        raise RecoveryError("C5_ATTEMPT_GENERATION_DUPLICATE")
+    ordered = sorted(generations)
+    if ordered and ordered != list(range(1, max(ordered) + 1)):
+        raise RecoveryError("C5_ATTEMPT_GENERATION_GAP")
+    return {
+        "attempt_series_id_sha256": expected_series,
+        "claims": sorted(claims, key=lambda item: item["generation"]),
+        "next_generation": 1 if not ordered else max(ordered) + 1,
+    }
+
+
+def validate_c5_posted_attempt_claim(
+    comment: dict[str, Any],
+    authority_created_at: datetime,
+    expected_body: str,
+) -> dict[str, Any]:
+    parsed = _c5_parse_attempt_claim(comment)
+    if canonical_comment_text(comment.get("body")) != expected_body:
+        raise RecoveryError("C5_ATTEMPT_CLAIM_BODY_MISMATCH")
+    if parsed["body_sha256"] != sha256(str(comment.get("body") or "").encode("utf-8")):
+        raise RecoveryError("C5_ATTEMPT_CLAIM_RAW_HASH_MISMATCH")
+    if parsed["created_at"] <= authority_created_at:
+        raise RecoveryError("C5_ATTEMPT_CLAIM_PRECEDES_AUTHORITY")
+    return parsed
+
+
+def c5_wif_repin_review_body(
+    successor_control_sha: str,
+    successor_activation_main: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    state_lineage: str,
+    state_serial: int,
+) -> str:
+    _c5_require_sha(successor_control_sha, "C5_REVIEW_SUCCESSOR_CONTROL_SHA")
+    _c5_require_sha(successor_activation_main, "C5_REVIEW_SUCCESSOR_ACTIVATION_MAIN")
+    if successor_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        successor_control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+    ):
+        raise RecoveryError("C5_REVIEW_SUCCESSOR_CONTROL_FORBIDDEN")
+    _c5_require_hash(saved_plan_sha256, "C5_REVIEW_SAVED_PLAN_SHA256")
+    _c5_require_hash(structural_manifest_sha256, "C5_REVIEW_STRUCTURAL_MANIFEST_SHA256")
+    _c5_require_lineage(state_lineage, "C5_REVIEW_STATE_LINEAGE")
+    _c5_nonnegative(state_serial, "C5_REVIEW_STATE_SERIAL")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_WIF_REPIN_PLAN_FRESH_REVIEW_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"OLD_RECOVERY_CONTROL_SHA={C5_OLD_RECOVERY_CONTROL_SHA}",
+            f"NEW_RECOVERY_CONTROL_SHA={successor_control_sha}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha256}",
+            f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
+            f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+            f"BOOTSTRAP_STATE_SERIAL={state_serial}",
+            "TERRAFORM_VERSION=1.15.8",
+            "PLAN_FORMAT_VERSION=1.2",
+            "PLAN_APPLYABLE=true",
+            "PLAN_COMPLETE=true",
+            "PLAN_ERRORED=false",
+            "PLAN_EFFECTS=EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_OLD_TO_NEW",
+            "OUTPUT_CHANGES=0",
+            "REVIEW_DISPOSITION=APPROVED",
+            "MATERIAL_BLOCKERS=NONE",
+            "APPLY_AUTHORITY=NOT_GRANTED",
+        )
+    )
+
+
+def c5_wif_repin_authority_body(
+    successor_control_sha: str,
+    successor_activation_main: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    state_lineage: str,
+    state_serial: int,
+    fresh_review_comment_id: int,
+    fresh_review_body_sha256: str,
+) -> str:
+    c5_wif_repin_review_body(
+        successor_control_sha,
+        successor_activation_main,
+        saved_plan_sha256,
+        structural_manifest_sha256,
+        state_lineage,
+        state_serial,
+    )
+    _c5_positive(fresh_review_comment_id, "C5_AUTHORITY_FRESH_REVIEW_COMMENT_ID")
+    _c5_require_hash(
+        fresh_review_body_sha256, "C5_AUTHORITY_FRESH_REVIEW_BODY_SHA256"
+    )
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_WIF_REPIN_APPLY_AUTHORITY_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"OLD_RECOVERY_CONTROL_SHA={C5_OLD_RECOVERY_CONTROL_SHA}",
+            f"NEW_RECOVERY_CONTROL_SHA={successor_control_sha}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha256}",
+            f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
+            f"BOOTSTRAP_STATE_LINEAGE={state_lineage}",
+            f"BOOTSTRAP_STATE_SERIAL={state_serial}",
+            f"FRESH_REVIEW_COMMENT_ID={fresh_review_comment_id}",
+            f"FRESH_REVIEW_BODY_SHA256={fresh_review_body_sha256}",
+            "AUTHORITY=APPLY_EXACT_REVIEWED_WIF_REPIN_PLAN_ONCE",
+            "REPLAN=NOT_AUTHORISED",
+            "PLAN_REPLACEMENT=NOT_AUTHORISED",
+            "SAME_GENERATION_RETRY=NOT_AUTHORISED",
+            "C4_DISPATCH=PERMANENTLY_FORBIDDEN",
+        )
+    )
+
+
+def c5_classify_wif_repin_outcome(
+    *,
+    observation_complete: bool,
+    old_wif_count: int,
+    new_wif_count: int,
+    forbidden_wif_counts: tuple[int, int, int],
+    lineage_before: str,
+    lineage_after: str,
+    serial_before: int,
+    serial_after: int,
+    claim_result_states: tuple[str, str, str, str],
+    bootstrap_lock_absent: bool,
+    exact_no_change: bool,
+    exact_pending_effect: bool,
+    getmetadata_unchanged: bool,
+    normal_identities_unchanged: bool,
+    observation_1_sha256: str | None = None,
+    observation_2_sha256: str | None = None,
+    observation_separation_seconds: int = 0,
+) -> str:
+    if not isinstance(observation_complete, bool):
+        raise RecoveryError("C5_OUTCOME_OBSERVATION_COMPLETE_INVALID")
+    for value, label in (
+        (old_wif_count, "C5_OUTCOME_OLD_WIF_COUNT"),
+        (new_wif_count, "C5_OUTCOME_NEW_WIF_COUNT"),
+        (serial_before, "C5_OUTCOME_SERIAL_BEFORE"),
+        (serial_after, "C5_OUTCOME_SERIAL_AFTER"),
+        (observation_separation_seconds, "C5_OUTCOME_OBSERVATION_SEPARATION"),
+    ):
+        _c5_nonnegative(value, label)
+    if len(forbidden_wif_counts) != 3:
+        raise RecoveryError("C5_OUTCOME_FORBIDDEN_WIF_COUNTS_INVALID")
+    for value in forbidden_wif_counts:
+        _c5_nonnegative(value, "C5_OUTCOME_FORBIDDEN_WIF_COUNT")
+    _c5_require_lineage(lineage_before, "C5_OUTCOME_LINEAGE_BEFORE")
+    _c5_require_lineage(lineage_after, "C5_OUTCOME_LINEAGE_AFTER")
+    if len(claim_result_states) != 4:
+        raise RecoveryError("C5_OUTCOME_CLAIM_RESULT_STATES_INVALID")
+    allowed_states = {"ABSENT", "PRESENT", "UNKNOWN"}
+    for value in claim_result_states:
+        _c5_require_enum(value, allowed_states, "C5_OUTCOME_CLAIM_RESULT_STATE")
+    if not observation_complete or "UNKNOWN" in claim_result_states:
+        return "PROCESS_OUTCOME_UNKNOWN"
+
+    clean_claim_results = all(value == "ABSENT" for value in claim_result_states)
+    common = (
+        all(value == 0 for value in forbidden_wif_counts)
+        and lineage_before == lineage_after
+        and clean_claim_results
+        and bootstrap_lock_absent
+        and getmetadata_unchanged
+        and normal_identities_unchanged
+    )
+    effect_succeeded = (
+        common
+        and old_wif_count == 0
+        and new_wif_count == 1
+        and serial_after >= serial_before
+        and exact_no_change
+    )
+    if effect_succeeded:
+        return "EFFECT_SUCCEEDED"
+
+    observation_hashes_valid = (
+        observation_1_sha256 is not None
+        and observation_2_sha256 is not None
+        and HEX64.fullmatch(observation_1_sha256) is not None
+        and HEX64.fullmatch(observation_2_sha256) is not None
+    )
+    no_effect_stable = (
+        common
+        and old_wif_count == 1
+        and new_wif_count == 0
+        and serial_after == serial_before
+        and exact_pending_effect
+        and observation_hashes_valid
+        and observation_separation_seconds >= 60
+    )
+    if no_effect_stable:
+        return "NO_EFFECT_STABLE"
+    return "INCONSISTENT_EFFECT"
+
+
+def c5_wif_repin_terminal_body(
+    *,
+    successor_control_sha: str,
+    successor_activation_main: str,
+    saved_plan_sha256: str,
+    structural_manifest_sha256: str,
+    fresh_review_comment_id: int,
+    fresh_review_body_sha256: str,
+    owner_apply_authority_comment_id: int,
+    owner_apply_authority_body_sha256: str,
+    attempt_claim_comment_id: int,
+    attempt_claim_body_sha256: str,
+    attempt_series_id_sha256: str,
+    attempt_generation: int,
+    precondition_digest_sha256: str,
+    lineage_before: str,
+    lineage_after: str,
+    serial_before: int,
+    serial_after: int,
+    old_wif_count: int,
+    new_wif_count: int,
+    forbidden_wif_counts: tuple[int, int, int],
+    claim_result_states: tuple[str, str, str, str],
+    bootstrap_lock_absent: bool,
+    exact_no_change: bool,
+    exact_pending_effect: bool,
+    getmetadata_unchanged: bool,
+    normal_identities_unchanged: bool,
+    observation_complete: bool,
+    observation_1_sha256: str | None = None,
+    observation_2_sha256: str | None = None,
+    observation_separation_seconds: int = 0,
+) -> str:
+    _c5_require_sha(successor_control_sha, "C5_TERMINAL_SUCCESSOR_CONTROL_SHA")
+    _c5_require_sha(successor_activation_main, "C5_TERMINAL_SUCCESSOR_ACTIVATION_MAIN")
+    if successor_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        successor_control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+    ):
+        raise RecoveryError("C5_TERMINAL_SUCCESSOR_CONTROL_FORBIDDEN")
+    for value, label in (
+        (saved_plan_sha256, "C5_TERMINAL_SAVED_PLAN_SHA256"),
+        (structural_manifest_sha256, "C5_TERMINAL_STRUCTURAL_MANIFEST_SHA256"),
+        (fresh_review_body_sha256, "C5_TERMINAL_FRESH_REVIEW_BODY_SHA256"),
+        (owner_apply_authority_body_sha256, "C5_TERMINAL_OWNER_AUTHORITY_BODY_SHA256"),
+        (attempt_claim_body_sha256, "C5_TERMINAL_ATTEMPT_CLAIM_BODY_SHA256"),
+        (attempt_series_id_sha256, "C5_TERMINAL_ATTEMPT_SERIES_ID_SHA256"),
+        (precondition_digest_sha256, "C5_TERMINAL_PRECONDITION_DIGEST_SHA256"),
+    ):
+        _c5_require_hash(value, label)
+    for value, label in (
+        (fresh_review_comment_id, "C5_TERMINAL_FRESH_REVIEW_COMMENT_ID"),
+        (owner_apply_authority_comment_id, "C5_TERMINAL_OWNER_AUTHORITY_COMMENT_ID"),
+        (attempt_claim_comment_id, "C5_TERMINAL_ATTEMPT_CLAIM_COMMENT_ID"),
+        (attempt_generation, "C5_TERMINAL_ATTEMPT_GENERATION"),
+    ):
+        _c5_positive(value, label)
+    expected_series = c5_attempt_series_id_sha256(
+        successor_control_sha,
+        successor_activation_main,
+        C5_OLD_RECOVERY_CONTROL_SHA,
+        successor_control_sha,
+    )
+    if attempt_series_id_sha256 != expected_series:
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_SERIES_MISMATCH")
+    outcome = c5_classify_wif_repin_outcome(
+        observation_complete=observation_complete,
+        old_wif_count=old_wif_count,
+        new_wif_count=new_wif_count,
+        forbidden_wif_counts=forbidden_wif_counts,
+        lineage_before=lineage_before,
+        lineage_after=lineage_after,
+        serial_before=serial_before,
+        serial_after=serial_after,
+        claim_result_states=claim_result_states,
+        bootstrap_lock_absent=bootstrap_lock_absent,
+        exact_no_change=exact_no_change,
+        exact_pending_effect=exact_pending_effect,
+        getmetadata_unchanged=getmetadata_unchanged,
+        normal_identities_unchanged=normal_identities_unchanged,
+        observation_1_sha256=observation_1_sha256,
+        observation_2_sha256=observation_2_sha256,
+        observation_separation_seconds=observation_separation_seconds,
+    )
+    if outcome == "PROCESS_OUTCOME_UNKNOWN":
+        raise RecoveryError("C5_PROCESS_OUTCOME_UNKNOWN_NOT_TERMINAL")
+    _c5_require_enum(outcome, C5_TERMINAL_OUTCOMES, "C5_TERMINAL_OUTCOME")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"OLD_RECOVERY_CONTROL_SHA={C5_OLD_RECOVERY_CONTROL_SHA}",
+            f"NEW_RECOVERY_CONTROL_SHA={successor_control_sha}",
+            f"SAVED_PLAN_SHA256={saved_plan_sha256}",
+            f"STRUCTURAL_MANIFEST_SHA256={structural_manifest_sha256}",
+            f"FRESH_REVIEW_COMMENT_ID={fresh_review_comment_id}",
+            f"FRESH_REVIEW_BODY_SHA256={fresh_review_body_sha256}",
+            f"OWNER_APPLY_AUTHORITY_COMMENT_ID={owner_apply_authority_comment_id}",
+            f"OWNER_APPLY_AUTHORITY_BODY_SHA256={owner_apply_authority_body_sha256}",
+            f"ATTEMPT_CLAIM_COMMENT_ID={attempt_claim_comment_id}",
+            f"ATTEMPT_CLAIM_BODY_SHA256={attempt_claim_body_sha256}",
+            f"ATTEMPT_SERIES_ID_SHA256={attempt_series_id_sha256}",
+            f"ATTEMPT_GENERATION={attempt_generation}",
+            f"PRECONDITION_DIGEST_SHA256={precondition_digest_sha256}",
+            f"BOOTSTRAP_STATE_LINEAGE_BEFORE={lineage_before}",
+            f"BOOTSTRAP_STATE_LINEAGE_AFTER={lineage_after}",
+            f"BOOTSTRAP_STATE_SERIAL_BEFORE={serial_before}",
+            f"BOOTSTRAP_STATE_SERIAL_AFTER={serial_after}",
+            f"OLD_RECOVERY_WIF_COUNT={old_wif_count}",
+            f"NEW_RECOVERY_WIF_COUNT={new_wif_count}",
+            f"FORBIDDEN_C1_RECOVERY_WIF_COUNT={forbidden_wif_counts[0]}",
+            f"SUPERSEDED_C2_RECOVERY_WIF_COUNT={forbidden_wif_counts[1]}",
+            f"SUPERSEDED_C3_RECOVERY_WIF_COUNT={forbidden_wif_counts[2]}",
+            f"C2_RECOVERY_CLAIM_RESULT={claim_result_states[0]}",
+            f"C3_RECOVERY_CLAIM_RESULT={claim_result_states[1]}",
+            f"OLD_CONTROL_RECOVERY_CLAIM_RESULT={claim_result_states[2]}",
+            f"NEW_CONTROL_RECOVERY_CLAIM_RESULT={claim_result_states[3]}",
+            f"BOOTSTRAP_LOCK={'ABSENT' if bootstrap_lock_absent else 'PRESENT'}",
+            f"BOOTSTRAP_RECONCILIATION={'EXACT_NO_CHANGE' if exact_no_change else 'NOT_EXACT_NO_CHANGE'}",
+            f"PENDING_REVIEWED_EFFECT={'EXACT' if exact_pending_effect else 'NOT_EXACT'}",
+            f"GETMETADATA={'UNCHANGED' if getmetadata_unchanged else 'CHANGED'}",
+            f"NORMAL_PHASE5_IDENTITIES={'UNCHANGED' if normal_identities_unchanged else 'CHANGED'}",
+            f"OBSERVATION_1_SHA256={observation_1_sha256 or 'NONE'}",
+            f"OBSERVATION_2_SHA256={observation_2_sha256 or 'NONE'}",
+            f"OBSERVATION_SEPARATION_SECONDS={observation_separation_seconds}",
+            f"OUTCOME={outcome}",
+        )
+    )
+
+
+def c5_terminal_record_summary(
+    comment_id: int, raw_body: str, outcome: str
+) -> dict[str, Any]:
+    _c5_positive(comment_id, "C5_TERMINAL_COMMENT_ID")
+    _c5_require_enum(outcome, C5_TERMINAL_OUTCOMES, "C5_TERMINAL_OUTCOME")
+    body_hash = sha256(str(raw_body).encode("utf-8"))
+    _c5_require_hash(body_hash, "C5_TERMINAL_BODY_SHA256")
+    return {
+        "comment_id": comment_id,
+        "body_sha256": body_hash,
+        "outcome": outcome,
+    }
+
+
+def c5_dispatch_authority_body(
+    successor_control_sha: str,
+    successor_activation_main: str,
+    terminal_record: dict[str, Any],
+) -> str:
+    _c5_require_sha(successor_control_sha, "C5_DISPATCH_SUCCESSOR_CONTROL_SHA")
+    _c5_require_sha(successor_activation_main, "C5_DISPATCH_SUCCESSOR_ACTIVATION_MAIN")
+    if successor_control_sha == C5_OLD_RECOVERY_CONTROL_SHA:
+        raise RecoveryError("C4_DISPATCH_PERMANENTLY_FORBIDDEN")
+    if successor_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS:
+        raise RecoveryError("C5_DISPATCH_CONTROL_FORBIDDEN")
+    if not isinstance(terminal_record, dict):
+        raise RecoveryError("C5_DISPATCH_TERMINAL_INVALID")
+    terminal_id = terminal_record.get("comment_id")
+    terminal_hash = terminal_record.get("body_sha256")
+    terminal_outcome = terminal_record.get("outcome")
+    _c5_positive(terminal_id, "C5_DISPATCH_TERMINAL_COMMENT_ID")
+    _c5_require_hash(terminal_hash, "C5_DISPATCH_TERMINAL_BODY_SHA256")
+    if terminal_outcome != "EFFECT_SUCCEEDED":
+        raise RecoveryError("C5_DISPATCH_REQUIRES_EFFECT_SUCCEEDED")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_DISPATCH_AUTHORITY_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE_COMMENT_ID={C5_ARCHITECTURE_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE_COMMENT_ID={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"SUCCESSOR_CONTROL_SHA={successor_control_sha}",
+            f"SUCCESSOR_ACTIVATION_MAIN={successor_activation_main}",
+            f"C5_WIF_REPIN_TERMINAL_COMMENT_ID={terminal_id}",
+            f"C5_WIF_REPIN_TERMINAL_BODY_SHA256={terminal_hash}",
+            "C5_WIF_REPIN_TERMINAL_OUTCOME=EFFECT_SUCCEEDED",
+            "C4_DISPATCH=PERMANENTLY_FORBIDDEN",
+            "AUTHORITY=DISPATCH_EXACTLY_ONE_C5_RECONCILIATION_ONLY_RECOVERY",
+        )
+    )
+
+
+C5_BOOTSTRAP_STATE_OBJECT = "bootstrap/default.tfstate"
+C5_BOOTSTRAP_LOCK_OBJECT = "bootstrap/default.tflock"
+C5_PRODUCT_PLANNER_SA = (
+    "github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com"
+)
+C5_REFERENCE_PROJECT = "resilio-reference-e882d4"
+C5_GETMETADATA_ROLES = (
+    "resilio_p5_product_reference_plan",
+    "resilio_p5_product_reference_apply",
+)
+C5_EXPECTED_BOOTSTRAP_RESOURCE_COUNT = 138
+C5_BASELINE_NORMAL_CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
+C5_EXPECTED_PHASE5_WIF_ROWS = {
+    "github_phase5_acceptance": (
+        "github-p5-acceptance@resilio-reference-e882d4.iam.gserviceaccount.com",
+        "phase5-acceptance-reusable.yml",
+        C5_BASELINE_NORMAL_CONTROL_SHA,
+    ),
+    "github_phase5_build": (
+        "github-p5-build@resilio-control-e882d4.iam.gserviceaccount.com",
+        "phase5-build-reusable.yml",
+        C5_BASELINE_NORMAL_CONTROL_SHA,
+    ),
+    "github_phase5_deployer": (
+        "github-p5-deployer@resilio-reference-e882d4.iam.gserviceaccount.com",
+        "phase5-deploy-reusable.yml",
+        C5_BASELINE_NORMAL_CONTROL_SHA,
+    ),
+    "github_phase5_evidence": (
+        "github-p5-evidence@resilio-control-e882d4.iam.gserviceaccount.com",
+        "phase5-evidence-reusable.yml",
+        C5_BASELINE_NORMAL_CONTROL_SHA,
+    ),
+    "github_phase5_product_applier": (
+        "github-p5-product-" + "applier@resilio-control-e882d4.iam.gserviceaccount.com",
+        "phase5-terraform-apply-reusable.yml",
+        C5_BASELINE_NORMAL_CONTROL_SHA,
+    ),
+    "github_phase5_product_planner": (
+        "github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com",
+        "phase5-terraform-plan-reusable.yml",
+        C5_BASELINE_NORMAL_CONTROL_SHA,
+    ),
+    "github_phase5_slice_c_recovery": (
+        C5_PRODUCT_PLANNER_SA,
+        "phase5-slice-c-recovery-reusable.yml",
+        C5_OLD_RECOVERY_CONTROL_SHA,
+    ),
+    "github_phase5_verifier": (
+        "github-p5-acceptance@resilio-reference-e882d4.iam.gserviceaccount.com",
+        "phase5-verify-reusable.yml",
+        C5_BASELINE_NORMAL_CONTROL_SHA,
+    ),
+}
+C5_EXPECTED_ROLE_PERMISSIONS = {
+    "resilio_p5_product_reference_plan": frozenset(
+        (
+            "datastore.databases.get",
+            "datastore.databases.getMetadata",
+            "datastore.databases.list",
+            "pubsub.subscriptions.get",
+            "pubsub.subscriptions.list",
+            "pubsub.topics.get",
+            "pubsub.topics.list",
+            "resourcemanager.projects.get",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+        )
+    ),
+    "resilio_p5_product_reference_apply": frozenset(
+        (
+            "datastore.databases.create",
+            "datastore.databases.get",
+            "datastore.databases.getMetadata",
+            "datastore.databases.list",
+            "datastore.databases.update",
+            "pubsub.subscriptions.create",
+            "pubsub.subscriptions.get",
+            "pubsub.subscriptions.list",
+            "pubsub.subscriptions.update",
+            "pubsub.topics.attachSubscription",
+            "pubsub.topics.create",
+            "pubsub.topics.get",
+            "pubsub.topics.list",
+            "pubsub.topics.update",
+            "resourcemanager.projects.get",
+            "serviceusage.services.enable",
+            "serviceusage.services.get",
+            "serviceusage.services.list",
+        )
+    ),
+}
+
+
+def _c5_fetch_repo_text(path: str, ref: str) -> str:
+    _c5_require_sha(ref, "C5_REPOSITORY_REF")
+    encoded = urllib.parse.quote(path, safe="/")
+    value = github(f"/repos/{REPOSITORY}/contents/{encoded}?ref={ref}")
+    if (
+        not isinstance(value, dict)
+        or value.get("type") != "file"
+        or value.get("path") != path
+        or value.get("encoding") != "base64"
+    ):
+        raise RecoveryError(f"C5_REPOSITORY_FILE_INVALID:{path}")
+    try:
+        raw = decode_github_base64(value.get("content"))
+        return raw.decode("utf-8")
+    except (UnicodeDecodeError, ValueError, TypeError) as exc:
+        raise RecoveryError(f"C5_REPOSITORY_FILE_DECODE_INVALID:{path}") from exc
+
+
+def _c5_iam_policy(service_account_email: str) -> dict[str, Any]:
+    if (
+        not service_account_email
+        or "/" in service_account_email
+        or "@" not in service_account_email
+    ):
+        raise RecoveryError("C5_SERVICE_ACCOUNT_EMAIL_INVALID")
+    resource = "projects/-/serviceAccounts/" + urllib.parse.quote(
+        service_account_email, safe="@.-"
+    )
+    value = request_json(
+        f"https://iam.googleapis.com/v1/{resource}:getIamPolicy",
+        google_token(),
+        method="POST",
+        data=b"{}",
+        content_type="application/json",
+    )
+    if not isinstance(value, dict):
+        raise RecoveryError("C5_IAM_POLICY_INVALID")
+    return value
+
+
+def _c5_role(role_id: str) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Za-z0-9_.]+", role_id):
+        raise RecoveryError("C5_ROLE_ID_INVALID")
+    value = request_json(
+        f"https://iam.googleapis.com/v1/projects/{C5_REFERENCE_PROJECT}/roles/{role_id}",
+        google_token(),
+    )
+    if not isinstance(value, dict):
+        raise RecoveryError("C5_ROLE_INVALID")
+    return value
+
+
+def _c5_policy_members(policy: dict[str, Any], role: str) -> list[str]:
+    values: list[str] = []
+    bindings = policy.get("bindings")
+    if bindings is None:
+        return values
+    if not isinstance(bindings, list):
+        raise RecoveryError("C5_IAM_BINDINGS_INVALID")
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            raise RecoveryError("C5_IAM_BINDING_INVALID")
+        if binding.get("role") == role:
+            members = binding.get("members") or []
+            if not isinstance(members, list) or not all(
+                isinstance(item, str) for item in members
+            ):
+                raise RecoveryError("C5_IAM_MEMBERS_INVALID")
+            values.extend(members)
+    return values
+
+
+def _c5_bootstrap_wif_rows(state: Any) -> list[dict[str, str]]:
+    if not isinstance(state, dict):
+        raise RecoveryError("C5_BOOTSTRAP_STATE_INVALID")
+    rows: list[dict[str, str]] = []
+    resources = state.get("resources")
+    if not isinstance(resources, list):
+        raise RecoveryError("C5_BOOTSTRAP_RESOURCES_INVALID")
+    if len(resources) != C5_EXPECTED_BOOTSTRAP_RESOURCE_COUNT:
+        raise RecoveryError("C5_BOOTSTRAP_RESOURCE_COUNT_INVALID")
+    for resource in resources:
+        if (
+            not isinstance(resource, dict)
+            or resource.get("type") != "google_service_account_iam_member"
+            or not str(resource.get("name") or "").startswith("github_phase5")
+        ):
+            continue
+        instances = resource.get("instances")
+        if not isinstance(instances, list) or len(instances) != 1:
+            raise RecoveryError("C5_PHASE5_WIF_INSTANCE_CARDINALITY_INVALID")
+        attributes = instances[0].get("attributes") if isinstance(instances[0], dict) else None
+        if not isinstance(attributes, dict):
+            raise RecoveryError("C5_PHASE5_WIF_ATTRIBUTES_INVALID")
+        service_account_id = str(attributes.get("service_account_id") or "")
+        marker = "/serviceAccounts/"
+        if marker not in service_account_id:
+            raise RecoveryError("C5_PHASE5_WIF_SERVICE_ACCOUNT_INVALID")
+        rows.append(
+            {
+                "name": str(resource.get("name") or ""),
+                "service_account": service_account_id.split(marker, 1)[1],
+                "role": str(attributes.get("role") or ""),
+                "member": str(attributes.get("member") or ""),
+            }
+        )
+    if len(rows) != len(C5_EXPECTED_PHASE5_WIF_ROWS):
+        raise RecoveryError("C5_PHASE5_WIF_RESOURCE_COUNT_INVALID")
+    observed_names = {row["name"] for row in rows}
+    if observed_names != set(C5_EXPECTED_PHASE5_WIF_ROWS):
+        raise RecoveryError("C5_PHASE5_WIF_NAME_SET_INVALID")
+    prefix = (
+        "principalSet://iam.googleapis.com/projects/400271474382/locations/global/"
+        "workloadIdentityPools/github/attribute.job_workflow_ref/8ft0-ai/resilio/"
+        ".github/workflows/"
+    )
+    for row in rows:
+        expected_sa, expected_workflow, expected_sha = C5_EXPECTED_PHASE5_WIF_ROWS[
+            row["name"]
+        ]
+        if row["service_account"] != expected_sa:
+            raise RecoveryError(f"C5_PHASE5_WIF_STATE_SA_MISMATCH:{row['name']}")
+        if row["role"] != "roles/iam.workloadIdentityUser":
+            raise RecoveryError(f"C5_PHASE5_WIF_STATE_ROLE_MISMATCH:{row['name']}")
+        if row["member"] != prefix + expected_workflow + "@" + expected_sha:
+            raise RecoveryError(f"C5_PHASE5_WIF_STATE_MEMBER_MISMATCH:{row['name']}")
+    return rows
+
+
+def verify_c5_bootstrap_state_and_live_iam(
+    state: Any, new_recovery_control_sha: str
+) -> dict[str, Any]:
+    _c5_require_sha(new_recovery_control_sha, "C5_LIVE_NEW_CONTROL_SHA")
+    lineage = _c5_require_lineage(
+        str(state.get("lineage") or ""), "C5_LIVE_BOOTSTRAP_LINEAGE"
+    )
+    serial = state.get("serial")
+    _c5_nonnegative(serial, "C5_LIVE_BOOTSTRAP_SERIAL")
+    if lineage != C5_BOOTSTRAP_STATE_LINEAGE or serial != C5_BOOTSTRAP_STATE_SERIAL:
+        raise RecoveryError("C5_LIVE_BOOTSTRAP_STATE_IDENTITY_MISMATCH")
+    rows = _c5_bootstrap_wif_rows(state)
+    cache: dict[str, dict[str, Any]] = {}
+    expected_by_binding: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        key = (row["service_account"], row["role"])
+        expected_by_binding.setdefault(key, set()).add(row["member"])
+    for (service_account, role), expected_members in expected_by_binding.items():
+        if service_account not in cache:
+            cache[service_account] = _c5_iam_policy(service_account)
+        members = _c5_policy_members(cache[service_account], role)
+        if len(members) != len(expected_members) or set(members) != expected_members:
+            raise RecoveryError(f"C5_PHASE5_WIF_LIVE_SET_MISMATCH:{service_account}")
+
+    recovery_rows = [
+        row for row in rows if row["name"] == "github_phase5_slice_c_recovery"
+    ]
+    if len(recovery_rows) != 1:
+        raise RecoveryError("C5_RECOVERY_WIF_STATE_NOT_UNIQUE")
+    recovery = recovery_rows[0]
+    expected_old_suffix = (
+        "/.github/workflows/phase5-slice-c-recovery-reusable.yml@"
+        + C5_OLD_RECOVERY_CONTROL_SHA
+    )
+    if not recovery["member"].endswith(expected_old_suffix):
+        raise RecoveryError("C5_RECOVERY_WIF_STATE_NOT_C4")
+    recovery_policy = cache[recovery["service_account"]]
+    recovery_members = [
+        member
+        for member in _c5_policy_members(recovery_policy, recovery["role"])
+        if "/.github/workflows/phase5-slice-c-recovery-reusable.yml@" in member
+    ]
+    if recovery_members != [recovery["member"]]:
+        raise RecoveryError("C5_LIVE_RECOVERY_WIF_NOT_OLD_ONLY")
+    forbidden_suffixes = tuple(
+        "/.github/workflows/phase5-slice-c-recovery-reusable.yml@" + sha
+        for sha in (*C5_FORBIDDEN_RECOVERY_CONTROL_SHAS, new_recovery_control_sha)
+    )
+    if any(
+        member.endswith(suffix)
+        for member in recovery_members
+        for suffix in forbidden_suffixes
+    ):
+        raise RecoveryError("C5_LIVE_RECOVERY_WIF_FORBIDDEN_PRESENT")
+
+    for role_id in C5_GETMETADATA_ROLES:
+        role = _c5_role(role_id)
+        permissions = role.get("includedPermissions")
+        if not isinstance(permissions, list):
+            raise RecoveryError(f"C5_ROLE_PERMISSIONS_INVALID:{role_id}")
+        if frozenset(permissions) != C5_EXPECTED_ROLE_PERMISSIONS[role_id] or (
+            len(permissions) != len(C5_EXPECTED_ROLE_PERMISSIONS[role_id])
+        ):
+            raise RecoveryError(f"C5_ROLE_PERMISSIONS_CHANGED:{role_id}")
+
+    return {
+        "state_lineage": lineage,
+        "state_serial": serial,
+        "phase5_wif_state_resources": len(rows),
+        "all_phase5_wif_live_matches": True,
+        "live_recovery_wif": "OLD_ONLY",
+        "getmetadata_unchanged": True,
+        "normal_phase5_identities_unchanged": True,
+    }
+
+
+def verify_c5_repository_activation(
+    activation_main: str, successor_control_sha: str
+) -> dict[str, Any]:
+    _c5_require_sha(activation_main, "C5_ACTIVATION_MAIN")
+    _c5_require_sha(successor_control_sha, "C5_ACTIVATION_CONTROL_SHA")
+    if successor_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        successor_control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+    ):
+        raise RecoveryError("C5_ACTIVATION_CONTROL_FORBIDDEN")
+    caller = _c5_fetch_repo_text(
+        ".github/workflows/phase5-slice-c-recovery.yml", activation_main
+    )
+    authority = _c5_fetch_repo_text(
+        "infra/bootstrap/phase5_authority.tf", activation_main
+    )
+    caller_ref = (
+        "uses: 8ft0-ai/resilio/.github/workflows/"
+        f"phase5-slice-c-recovery-reusable.yml@{successor_control_sha}"
+    )
+    desired_ref = (
+        'phase5_slice_c_recovery_workflow_ref = '
+        '"8ft0-ai/resilio/.github/workflows/'
+        f'phase5-slice-c-recovery-reusable.yml@{successor_control_sha}"'
+    )
+    if caller.count(caller_ref) != 1:
+        raise RecoveryError("C5_ACTIVATION_CALLER_NOT_EXACT")
+    if authority.count(desired_ref) != 1:
+        raise RecoveryError("C5_ACTIVATION_DESIRED_WIF_NOT_EXACT")
+    return {
+        "activation_main": activation_main,
+        "successor_control_sha": successor_control_sha,
+        "repository_caller": "NEW_CONTROL",
+        "repository_desired_wif": "NEW_CONTROL",
+    }
+
+
+def c5_verify_wif_repin_plan(
+    plan: Any, old_recovery_control_sha: str, new_recovery_control_sha: str
+) -> dict[str, Any]:
+    _c5_require_sha(old_recovery_control_sha, "C5_PLAN_OLD_CONTROL_SHA")
+    _c5_require_sha(new_recovery_control_sha, "C5_PLAN_NEW_CONTROL_SHA")
+    if old_recovery_control_sha != C5_OLD_RECOVERY_CONTROL_SHA:
+        raise RecoveryError("C5_PLAN_OLD_CONTROL_MISMATCH")
+    if new_recovery_control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        new_recovery_control_sha == old_recovery_control_sha
+    ):
+        raise RecoveryError("C5_PLAN_NEW_CONTROL_FORBIDDEN")
+    if not isinstance(plan, dict):
+        raise RecoveryError("C5_PLAN_INVALID")
+    expected_scalars = {
+        "format_version": "1.2",
+        "terraform_version": "1.15.8",
+        "applyable": True,
+        "complete": True,
+        "errored": False,
+    }
+    for key, value in expected_scalars.items():
+        if plan.get(key) != value:
+            raise RecoveryError(f"C5_PLAN_FIELD_MISMATCH:{key}")
+    if plan.get("output_changes") not in ({}, None):
+        raise RecoveryError("C5_PLAN_OUTPUT_CHANGES_PRESENT")
+    for key in (
+        "resource_drift",
+        "deferred_changes",
+        "deferred_action_invocations",
+        "action_invocations",
+    ):
+        if plan.get(key) not in (None, []):
+            raise RecoveryError(f"C5_PLAN_UNEXPECTED:{key}")
+    changes = plan.get("resource_changes")
+    if not isinstance(changes, list):
+        raise RecoveryError("C5_PLAN_RESOURCE_CHANGES_INVALID")
+    effect_rows: list[dict[str, Any]] = []
+    for row in changes:
+        if not isinstance(row, dict):
+            raise RecoveryError("C5_PLAN_RESOURCE_CHANGE_INVALID")
+        actions = ((row.get("change") or {}).get("actions")) if isinstance(row.get("change"), dict) else None
+        if actions == ["no-op"]:
+            continue
+        effect_rows.append(row)
+    if len(effect_rows) != 1:
+        raise RecoveryError("C5_PLAN_EFFECT_CARDINALITY_INVALID")
+    effect = effect_rows[0]
+    if effect.get("address") != (
+        "google_service_account_iam_member.github_phase5_slice_c_recovery"
+    ):
+        raise RecoveryError("C5_PLAN_EFFECT_ADDRESS_INVALID")
+    change = effect.get("change")
+    if not isinstance(change, dict) or change.get("actions") not in (
+        ["delete", "create"],
+        ["create", "delete"],
+    ):
+        raise RecoveryError("C5_PLAN_EFFECT_ACTIONS_INVALID")
+    before = change.get("before")
+    after = change.get("after")
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise RecoveryError("C5_PLAN_EFFECT_VALUES_INVALID")
+    old_member = str(before.get("member") or "")
+    new_member = str(after.get("member") or "")
+    old_suffix = (
+        "/.github/workflows/phase5-slice-c-recovery-reusable.yml@"
+        + old_recovery_control_sha
+    )
+    new_suffix = (
+        "/.github/workflows/phase5-slice-c-recovery-reusable.yml@"
+        + new_recovery_control_sha
+    )
+    if not old_member.endswith(old_suffix) or not new_member.endswith(new_suffix):
+        raise RecoveryError("C5_PLAN_EFFECT_MEMBER_TRANSITION_INVALID")
+    before_copy = dict(before)
+    after_copy = dict(after)
+    before_copy["member"] = "<RECOVERY_MEMBER>"
+    after_copy["member"] = "<RECOVERY_MEMBER>"
+    for volatile in ("id",):
+        before_copy.pop(volatile, None)
+        after_copy.pop(volatile, None)
+    if before_copy != after_copy:
+        raise RecoveryError("C5_PLAN_EFFECT_UNRELATED_ATTRIBUTE_CHANGE")
+    return {
+        "effect_address": effect["address"],
+        "old_recovery_control_sha": old_recovery_control_sha,
+        "new_recovery_control_sha": new_recovery_control_sha,
+        "plan_effects": "EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_OLD_TO_NEW",
+        "output_changes": 0,
+    }
+
+
+def _c5_saved_plan_json(
+    saved_plan_path: str | Path, terraform_workdir: str | Path
+) -> dict[str, Any]:
+    plan_path = Path(saved_plan_path).resolve()
+    workdir = Path(terraform_workdir).resolve()
+    if not plan_path.is_file():
+        raise RecoveryError("C5_SAVED_PLAN_MISSING")
+    if not workdir.is_dir():
+        raise RecoveryError("C5_TERRAFORM_WORKDIR_MISSING")
+    result = subprocess.run(
+        [
+            "terraform",
+            f"-chdir={workdir}",
+            "show",
+            "-json",
+            str(plan_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RecoveryError("C5_SAVED_PLAN_SHOW_FAILED")
+    value = strict_json(result.stdout)
+    if not isinstance(value, dict):
+        raise RecoveryError("C5_SAVED_PLAN_JSON_INVALID")
+    return value
+
+
+def c5_verify_structural_manifest(
+    manifest: Any, old_recovery_control_sha: str, new_recovery_control_sha: str
+) -> dict[str, Any]:
+    _c5_require_sha(old_recovery_control_sha, "C5_MANIFEST_OLD_CONTROL_SHA")
+    _c5_require_sha(new_recovery_control_sha, "C5_MANIFEST_NEW_CONTROL_SHA")
+    if not isinstance(manifest, dict):
+        raise RecoveryError("C5_STRUCTURAL_MANIFEST_INVALID")
+    expected_keys = {
+        "applyable",
+        "complete",
+        "errored",
+        "output_change_count",
+        "plan_format_version",
+        "resource_change_count",
+        "resource_effects",
+        "schema",
+        "terraform_version",
+    }
+    if set(manifest) != expected_keys:
+        raise RecoveryError("C5_STRUCTURAL_MANIFEST_KEYS_INVALID")
+    expected_fixed = {
+        "schema": "resilio-bootstrap-wif-repin-structural-manifest/v1",
+        "terraform_version": "1.15.8",
+        "plan_format_version": "1.2",
+        "applyable": True,
+        "complete": True,
+        "errored": False,
+        "output_change_count": 0,
+        "resource_change_count": 1,
+    }
+    for key, value in expected_fixed.items():
+        if manifest.get(key) != value:
+            raise RecoveryError(f"C5_STRUCTURAL_MANIFEST_FIELD_MISMATCH:{key}")
+    effects = manifest.get("resource_effects")
+    if not isinstance(effects, list) or len(effects) != 1:
+        raise RecoveryError("C5_STRUCTURAL_MANIFEST_EFFECT_CARDINALITY_INVALID")
+    effect = effects[0]
+    if not isinstance(effect, dict):
+        raise RecoveryError("C5_STRUCTURAL_MANIFEST_EFFECT_INVALID")
+    prefix = (
+        "principalSet://iam.googleapis.com/projects/400271474382/locations/global/"
+        "workloadIdentityPools/github/attribute.job_workflow_ref/8ft0-ai/resilio/"
+        ".github/workflows/phase5-slice-c-recovery-reusable.yml@"
+    )
+    expected_effect = {
+        "action_reason": "replace_because_cannot_update",
+        "actions": ["delete", "create"],
+        "address": "google_service_account_iam_member.github_phase5_slice_c_recovery",
+        "after_member": prefix + new_recovery_control_sha,
+        "after_role": "roles/iam.workloadIdentityUser",
+        "after_service_account_id": (
+            "projects/resilio-control-e882d4/serviceAccounts/"
+            "github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com"
+        ),
+        "before_member": prefix + old_recovery_control_sha,
+        "before_role": "roles/iam.workloadIdentityUser",
+        "before_service_account_id": (
+            "projects/resilio-control-e882d4/serviceAccounts/"
+            "github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com"
+        ),
+        "mode": "managed",
+        "name": "github_phase5_slice_c_recovery",
+        "type": "google_service_account_iam_member",
+    }
+    if effect != expected_effect:
+        raise RecoveryError("C5_STRUCTURAL_MANIFEST_EFFECT_MISMATCH")
+    return {
+        "schema": expected_fixed["schema"],
+        "resource_change_count": 1,
+        "output_change_count": 0,
+        "effect_address": expected_effect["address"],
+    }
+
+
+def _c5_comment_by_id(
+    comments: list[dict[str, Any]], comment_id: int, label: str
+) -> dict[str, Any]:
+    matches = [row for row in comments if row.get("id") == comment_id]
+    if len(matches) != 1:
+        raise RecoveryError(f"{label}_NOT_UNIQUE")
+    return matches[0]
+
+
+def _c5_validate_plan_review_and_authority(
+    comments: list[dict[str, Any]],
+    successor_control_sha: str,
+    activation_main: str,
+    plan_sha256: str,
+    manifest_sha256: str,
+    state_lineage: str,
+    state_serial: int,
+    fresh_review_comment_id: int,
+    owner_apply_authority_comment_id: int,
+) -> dict[str, Any]:
+    review_comment = _c5_comment_by_id(
+        comments, fresh_review_comment_id, "C5_WIF_REPIN_REVIEW"
+    )
+    review_created, review_hash = _require_unedited_owner_comment(
+        review_comment, GOVERNING_ISSUE, "C5_WIF_REPIN_REVIEW"
+    )
+    expected_review = c5_wif_repin_review_body(
+        successor_control_sha,
+        activation_main,
+        plan_sha256,
+        manifest_sha256,
+        state_lineage,
+        state_serial,
+    )
+    if canonical_comment_text(review_comment.get("body")) != expected_review:
+        raise RecoveryError("C5_WIF_REPIN_REVIEW_BODY_MISMATCH")
+
+    authority_comment = _c5_comment_by_id(
+        comments,
+        owner_apply_authority_comment_id,
+        "C5_WIF_REPIN_AUTHORITY",
+    )
+    authority_created, authority_hash = _require_unedited_owner_comment(
+        authority_comment, GOVERNING_ISSUE, "C5_WIF_REPIN_AUTHORITY"
+    )
+    expected_authority = c5_wif_repin_authority_body(
+        successor_control_sha,
+        activation_main,
+        plan_sha256,
+        manifest_sha256,
+        state_lineage,
+        state_serial,
+        fresh_review_comment_id,
+        review_hash,
+    )
+    if canonical_comment_text(authority_comment.get("body")) != expected_authority:
+        raise RecoveryError("C5_WIF_REPIN_AUTHORITY_BODY_MISMATCH")
+    if review_created > authority_created:
+        raise RecoveryError("C5_WIF_REPIN_REVIEW_AUTHORITY_TIMELINE_INVALID")
+    return {
+        "review_comment_id": fresh_review_comment_id,
+        "review_body_sha256": review_hash,
+        "review_created_at": review_created,
+        "authority_comment_id": owner_apply_authority_comment_id,
+        "authority_body_sha256": authority_hash,
+        "authority_created_at": authority_created,
+    }
+
+
+def verify_c5_wif_repin_pre_effect(
+    *,
+    successor_control_sha: str,
+    activation_main: str,
+    saved_plan_path: str | Path,
+    terraform_workdir: str | Path,
+    structural_manifest_path: str | Path,
+    fresh_review_comment_id: int,
+    owner_apply_authority_comment_id: int,
+    posted_claim_comment_id: int | None = None,
+) -> dict[str, Any]:
+    _c5_require_sha(successor_control_sha, "C5_PRE_EFFECT_SUCCESSOR_CONTROL_SHA")
+    _c5_require_sha(activation_main, "C5_PRE_EFFECT_ACTIVATION_MAIN")
+    _c5_positive(fresh_review_comment_id, "C5_PRE_EFFECT_REVIEW_ID")
+    _c5_positive(owner_apply_authority_comment_id, "C5_PRE_EFFECT_AUTHORITY_ID")
+    if posted_claim_comment_id is not None:
+        _c5_positive(posted_claim_comment_id, "C5_PRE_EFFECT_CLAIM_ID")
+
+    branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if (
+        not isinstance(branch, dict)
+        or branch.get("commit", {}).get("sha") != activation_main
+    ):
+        raise RecoveryError("C5_PRE_EFFECT_MAIN_MISMATCH")
+    verify_c5_repository_activation(activation_main, successor_control_sha)
+
+    comments = github_issue_comments(GOVERNING_ISSUE)
+    governance = validate_c5_governance_history(comments)
+    activation_record = validate_c5_activation_record(
+        comments, successor_control_sha, activation_main
+    )
+
+    plan_bytes = Path(saved_plan_path).read_bytes()
+    manifest_bytes = Path(structural_manifest_path).read_bytes()
+    plan_sha = sha256(plan_bytes)
+    manifest_sha = sha256(manifest_bytes)
+    plan = _c5_saved_plan_json(saved_plan_path, terraform_workdir)
+    plan_result = c5_verify_wif_repin_plan(
+        plan, C5_OLD_RECOVERY_CONTROL_SHA, successor_control_sha
+    )
+    manifest = strict_json(manifest_bytes)
+    c5_verify_structural_manifest(
+        manifest, C5_OLD_RECOVERY_CONTROL_SHA, successor_control_sha
+    )
+
+    state = _successor_gcs_json(C5_BOOTSTRAP_STATE_OBJECT)
+    live = verify_c5_bootstrap_state_and_live_iam(state, successor_control_sha)
+    if _successor_gcs_metadata(C5_BOOTSTRAP_LOCK_OBJECT, True) is not None:
+        raise RecoveryError("C5_PRE_EFFECT_BOOTSTRAP_LOCK_PRESENT")
+
+    review_authority = _c5_validate_plan_review_and_authority(
+        comments,
+        successor_control_sha,
+        activation_main,
+        plan_sha,
+        manifest_sha,
+        live["state_lineage"],
+        live["state_serial"],
+        fresh_review_comment_id,
+        owner_apply_authority_comment_id,
+    )
+
+    controls = (
+        SUPERSEDED_CONTROL_SHA,
+        FAILED_C3_CONTROL_SHA,
+        C5_OLD_RECOVERY_CONTROL_SHA,
+        successor_control_sha,
+    )
+    for control in controls:
+        for kind in ("claim", "result"):
+            if _successor_gcs_metadata(evidence_object(kind, control), True) is not None:
+                raise RecoveryError(
+                    f"C5_PRE_EFFECT_RECOVERY_{kind.upper()}_UNEXPECTED:{control}"
+                )
+
+    runs = github(
+        f"/repos/{REPOSITORY}/actions/runs?status=in_progress&per_page=100"
+    )
+    if not isinstance(runs, dict) or runs.get("total_count") != 0:
+        raise RecoveryError("C5_PRE_EFFECT_ACTIVE_CONFLICTING_EXECUTIONS")
+
+    snapshot = c5_precondition_snapshot(
+        successor_control_sha,
+        activation_main,
+        plan_sha,
+        manifest_sha,
+        live["state_lineage"],
+        live["state_serial"],
+        fresh_review_comment_id,
+        review_authority["review_body_sha256"],
+        owner_apply_authority_comment_id,
+        review_authority["authority_body_sha256"],
+        C5_OLD_RECOVERY_CONTROL_SHA,
+        successor_control_sha,
+    )
+    precondition_digest = sha256(snapshot.encode("utf-8"))
+    history = validate_c5_attempt_history(
+        comments,
+        successor_control_sha,
+        activation_main,
+        C5_OLD_RECOVERY_CONTROL_SHA,
+        successor_control_sha,
+    )
+
+    if posted_claim_comment_id is None:
+        generation = history["next_generation"]
+        claim_body = c5_attempt_claim_body(
+            successor_control_sha,
+            activation_main,
+            C5_OLD_RECOVERY_CONTROL_SHA,
+            successor_control_sha,
+            generation,
+            plan_sha,
+            manifest_sha,
+            precondition_digest,
+            fresh_review_comment_id,
+            review_authority["review_body_sha256"],
+            owner_apply_authority_comment_id,
+            review_authority["authority_body_sha256"],
+        )
+        claim = None
+        phase = "CLAIM_READY"
+    else:
+        claim = _c5_comment_by_id(
+            comments, posted_claim_comment_id, "C5_POSTED_ATTEMPT_CLAIM"
+        )
+        parsed = _c5_parse_attempt_claim(claim)
+        generations = [item["generation"] for item in history["claims"]]
+        if not generations or parsed["generation"] != max(generations):
+            raise RecoveryError("C5_POSTED_ATTEMPT_CLAIM_NOT_CURRENT_GENERATION")
+        generation = parsed["generation"]
+        claim_body = c5_attempt_claim_body(
+            successor_control_sha,
+            activation_main,
+            C5_OLD_RECOVERY_CONTROL_SHA,
+            successor_control_sha,
+            generation,
+            plan_sha,
+            manifest_sha,
+            precondition_digest,
+            fresh_review_comment_id,
+            review_authority["review_body_sha256"],
+            owner_apply_authority_comment_id,
+            review_authority["authority_body_sha256"],
+        )
+        validate_c5_posted_attempt_claim(
+            claim,
+            review_authority["authority_created_at"],
+            claim_body,
+        )
+        phase = "EFFECT_READY"
+
+    return {
+        "contract": "resilio-phase5-slice-c-c5-wif-repin-pre-effect/v1",
+        "phase": phase,
+        "governing_issue": GOVERNING_ISSUE,
+        "c5_architecture_comment_id": governance["architecture"]["comment_id"],
+        "c5_architecture_review_comment_id": governance["architecture_review"][
+            "comment_id"
+        ],
+        "owner_disposition_comment_id": governance["disposition"]["comment_id"],
+        "retained_effect_baseline_comment_id": governance["retained_baseline"][
+            "comment_id"
+        ],
+        "c5_control_record_comment_id": activation_record[
+            "control_record_comment_id"
+        ],
+        "c5_control_record_body_sha256": activation_record[
+            "control_record_body_sha256"
+        ],
+        "c5_activation_record_comment_id": activation_record["comment_id"],
+        "c5_activation_record_body_sha256": activation_record["body_sha256"],
+        "successor_control_sha": successor_control_sha,
+        "activation_main": activation_main,
+        "saved_plan_sha256": plan_sha,
+        "structural_manifest_sha256": manifest_sha,
+        "bootstrap_state_lineage": live["state_lineage"],
+        "bootstrap_state_serial": live["state_serial"],
+        "phase5_wif_state_resources": live["phase5_wif_state_resources"],
+        "all_phase5_wif_live_matches": live["all_phase5_wif_live_matches"],
+        "getmetadata_unchanged": live["getmetadata_unchanged"],
+        "normal_phase5_identities_unchanged": live[
+            "normal_phase5_identities_unchanged"
+        ],
+        "bootstrap_lock": "ABSENT",
+        "active_conflicting_executions": 0,
+        "plan_effects": plan_result["plan_effects"],
+        "output_changes": plan_result["output_changes"],
+        "fresh_review_comment_id": fresh_review_comment_id,
+        "fresh_review_body_sha256": review_authority["review_body_sha256"],
+        "owner_apply_authority_comment_id": owner_apply_authority_comment_id,
+        "owner_apply_authority_body_sha256": review_authority[
+            "authority_body_sha256"
+        ],
+        "precondition_snapshot": snapshot,
+        "precondition_digest_sha256": precondition_digest,
+        "attempt_series_id_sha256": history["attempt_series_id_sha256"],
+        "attempt_generation": generation,
+        "attempt_claim_body": claim_body,
+        "posted_claim_comment_id": posted_claim_comment_id,
+        "ready_for_effect": posted_claim_comment_id is not None,
+    }
+
+
+C5_CONTROL_ALLOWED_FILES = (
+    "scripts/phase5_slice_c_recovery.py",
+    "scripts/validate_phase5_slice_c_recovery.py",
+    "tests/test_phase5_slice_c_recovery.py",
+)
+C5_ACTIVATION_ALLOWED_FILES = (
+    ".github/workflows/phase5-slice-c-recovery.yml",
+    "infra/bootstrap/phase5_authority.tf",
+)
+
+
+def _c5_review_field_map(
+    body: str, header: str, names: tuple[str, ...], label: str
+) -> dict[str, str]:
+    lines = canonical_comment_text(body).split("\n")
+    if not lines or lines[0] != header:
+        raise RecoveryError(f"{label}_HEADER_INVALID")
+    values: dict[str, list[str]] = {name: [] for name in names}
+    for line in lines[1:]:
+        for name in names:
+            prefix = name + "="
+            if line.startswith(prefix):
+                values[name].append(line[len(prefix) :].strip())
+    if any(len(values[name]) != 1 for name in names):
+        raise RecoveryError(f"{label}_FIELDS_NOT_EXACT")
+    return {name: values[name][0] for name in names}
+
+
+def c5_control_implementation_review_body(
+    pr_number: int, reviewed_head: str
+) -> str:
+    _c5_positive(pr_number, "C5_CONTROL_REVIEW_PR")
+    _c5_require_sha(reviewed_head, "C5_CONTROL_REVIEW_HEAD")
+    return "\n".join(
+        (
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
+            "DISPOSITION=APPROVED",
+            f"PR=8ft0-ai/resilio#{pr_number}",
+            f"EXACT_HEAD={reviewed_head}",
+            f"EXACT_BASE={C5_BASE_MAIN}",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+            "C5_CONTROL_SCOPE=RECOVERY_HELPER_VALIDATOR_TESTS_ONLY",
+            "CALLER_REMAINS=C4",
+            "DESIRED_WIF_REMAINS=C4",
+            "LIVE_WIF_REMAINS=C4",
+            "CLOUD_EFFECT=NONE",
+            "MATERIAL_BLOCKERS=NONE",
+        )
+    )
+
+
+def c5_control_merge_authority_body(
+    pr_number: int,
+    reviewed_head: str,
+    review_id: int,
+    review_body_sha256: str,
+) -> str:
+    c5_control_implementation_review_body(pr_number, reviewed_head)
+    _c5_positive(review_id, "C5_CONTROL_REVIEW_ID")
+    _c5_require_hash(review_body_sha256, "C5_CONTROL_REVIEW_BODY_SHA256")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_CONTROL_MERGE_AUTHORITY_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"C5_CONTROL_PR={pr_number}",
+            f"C5_CONTROL_REVIEWED_HEAD={reviewed_head}",
+            f"C5_CONTROL_BASE={C5_BASE_MAIN}",
+            f"C5_FRESH_REVIEW_ID={review_id}",
+            f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_INERT_CONTROL_ONLY",
+            "CALLER_PIN_CHANGE=FORBIDDEN",
+            "DESIRED_WIF_CHANGE=FORBIDDEN",
+            "CLOUD_EFFECT=FORBIDDEN",
+        )
+    )
+
+
+def _c5_validate_pr_files(
+    files: Any, expected: tuple[str, ...], label: str
+) -> None:
+    if not isinstance(files, list):
+        raise RecoveryError(f"{label}_FILES_INVALID")
+    observed = tuple(sorted(str(row.get("filename") or "") for row in files))
+    if observed != tuple(sorted(expected)):
+        raise RecoveryError(f"{label}_FILE_SET_MISMATCH")
+
+
+def verify_c5_control_premerge(
+    pr_number: int,
+    reviewed_head: str,
+    review_id: int,
+    review_body_sha256: str,
+    authority_id: int,
+) -> dict[str, Any]:
+    _c5_positive(pr_number, "C5_CONTROL_PREMERGE_PR")
+    _c5_require_sha(reviewed_head, "C5_CONTROL_PREMERGE_HEAD")
+    _c5_positive(review_id, "C5_CONTROL_PREMERGE_REVIEW_ID")
+    _c5_require_hash(
+        review_body_sha256, "C5_CONTROL_PREMERGE_REVIEW_BODY_SHA256"
+    )
+    _c5_positive(authority_id, "C5_CONTROL_PREMERGE_AUTHORITY_ID")
+
+    branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if (
+        not isinstance(branch, dict)
+        or branch.get("commit", {}).get("sha") != C5_BASE_MAIN
+    ):
+        raise RecoveryError("C5_CONTROL_PREMERGE_MAIN_MISMATCH")
+    pr = github(f"/repos/{REPOSITORY}/pulls/{pr_number}")
+    if (
+        not isinstance(pr, dict)
+        or pr.get("number") != pr_number
+        or pr.get("state") != "open"
+        or pr.get("merged_at") is not None
+        or pr.get("draft") is True
+    ):
+        raise RecoveryError("C5_CONTROL_PREMERGE_PR_INVALID")
+    if pr.get("head", {}).get("sha") != reviewed_head:
+        raise RecoveryError("C5_CONTROL_PREMERGE_HEAD_MISMATCH")
+    if (
+        pr.get("base", {}).get("ref") != DEFAULT_BRANCH
+        or pr.get("base", {}).get("sha") != C5_BASE_MAIN
+    ):
+        raise RecoveryError("C5_CONTROL_PREMERGE_BASE_MISMATCH")
+    head_repo = pr.get("head", {}).get("repo") or {}
+    if (
+        head_repo.get("id") != REPOSITORY_ID
+        or head_repo.get("full_name") != REPOSITORY
+    ):
+        raise RecoveryError("C5_CONTROL_PREMERGE_REPOSITORY_MISMATCH")
+    files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
+    _c5_validate_pr_files(files, C5_CONTROL_ALLOWED_FILES, "C5_CONTROL_PREMERGE")
+
+    review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
+    if (
+        not isinstance(review, dict)
+        or review.get("id") != review_id
+        or review.get("state") != "COMMENTED"
+        or review.get("commit_id") != reviewed_head
+    ):
+        raise RecoveryError("C5_CONTROL_PREMERGE_REVIEW_IDENTITY_MISMATCH")
+    review_user = review.get("user") or {}
+    if (
+        review_user.get("login") != OWNER_LOGIN
+        or review_user.get("id") != OWNER_ID
+    ):
+        raise RecoveryError("C5_CONTROL_PREMERGE_REVIEW_OWNER_MISMATCH")
+    expected_review = c5_control_implementation_review_body(
+        pr_number, reviewed_head
+    )
+    if canonical_comment_text(review.get("body")) != expected_review:
+        raise RecoveryError("C5_CONTROL_PREMERGE_REVIEW_BODY_MISMATCH")
+    actual_review_sha = sha256(str(review.get("body") or "").encode("utf-8"))
+    if actual_review_sha != review_body_sha256:
+        raise RecoveryError("C5_CONTROL_PREMERGE_REVIEW_HASH_MISMATCH")
+
+    authority = github(f"/repos/{REPOSITORY}/issues/comments/{authority_id}")
+    authority_created, authority_sha = _require_unedited_owner_comment(
+        authority, pr_number, "C5_CONTROL_PREMERGE_AUTHORITY"
+    )
+    expected_authority = c5_control_merge_authority_body(
+        pr_number, reviewed_head, review_id, review_body_sha256
+    )
+    if canonical_comment_text(authority.get("body")) != expected_authority:
+        raise RecoveryError("C5_CONTROL_PREMERGE_AUTHORITY_BODY_MISMATCH")
+    review_time = _timestamp(
+        review.get("submitted_at"), "C5_CONTROL_PREMERGE_REVIEW_SUBMITTED"
+    )
+    if review_time > authority_created:
+        raise RecoveryError("C5_CONTROL_PREMERGE_TIMELINE_INVALID")
+    return {
+        "contract": "resilio-phase5-slice-c-c5-control-premerge/v1",
+        "pr_number": pr_number,
+        "reviewed_head": reviewed_head,
+        "base": C5_BASE_MAIN,
+        "review_id": review_id,
+        "review_body_sha256": actual_review_sha,
+        "authority_id": authority_id,
+        "authority_body_sha256": authority_sha,
+        "authority_created_at": authority_created,
+        "verified": True,
+    }
+
+
+def c5_control_merge_record_body(
+    control_sha: str,
+    pr_number: int,
+    reviewed_head: str,
+    reviewed_tree: str,
+    review_id: int,
+    review_body_sha256: str,
+    authority_id: int,
+    authority_body_sha256: str,
+) -> str:
+    _c5_require_sha(control_sha, "C5_CONTROL_SHA")
+    _c5_positive(pr_number, "C5_CONTROL_RECORD_PR")
+    _c5_require_sha(reviewed_head, "C5_CONTROL_RECORD_REVIEWED_HEAD")
+    _c5_require_sha(reviewed_tree, "C5_CONTROL_RECORD_REVIEWED_TREE")
+    _c5_positive(review_id, "C5_CONTROL_RECORD_REVIEW_ID")
+    _c5_require_hash(
+        review_body_sha256, "C5_CONTROL_RECORD_REVIEW_BODY_SHA256"
+    )
+    _c5_positive(authority_id, "C5_CONTROL_RECORD_AUTHORITY_ID")
+    _c5_require_hash(
+        authority_body_sha256, "C5_CONTROL_RECORD_AUTHORITY_BODY_SHA256"
+    )
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
+            f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"C5_CONTROL_PR={pr_number}",
+            f"C5_CONTROL_REVIEWED_HEAD={reviewed_head}",
+            f"C5_CONTROL_REVIEWED_TREE={reviewed_tree}",
+            f"C5_CONTROL_BASE={C5_BASE_MAIN}",
+            f"C5_CONTROL_MERGE={control_sha}",
+            f"C5_FRESH_REVIEW_ID={review_id}",
+            f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            f"C5_OWNER_MERGE_AUTHORITY_COMMENT_ID={authority_id}",
+            f"C5_OWNER_MERGE_AUTHORITY_BODY_SHA256={authority_body_sha256}",
+            "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
+            "CALLER_REMAINS=C4",
+            "DESIRED_WIF_REMAINS=C4",
+            "LIVE_WIF_REMAINS=C4",
+            "CLOUD_EFFECT=NONE",
+            "STATUS=C5_INERT_CONTROL_MERGED_EXACT",
+        )
+    )
+
+
+C5_CONTROL_RECORD_FIELDS = (
+    "GOVERNING_ISSUE",
+    "C5_ARCHITECTURE",
+    "OWNER_DISPOSITION",
+    "RETAINED_EFFECT_BASELINE",
+    "C5_CONTROL_PR",
+    "C5_CONTROL_REVIEWED_HEAD",
+    "C5_CONTROL_REVIEWED_TREE",
+    "C5_CONTROL_BASE",
+    "C5_CONTROL_MERGE",
+    "C5_FRESH_REVIEW_ID",
+    "C5_FRESH_REVIEW_BODY_SHA256",
+    "C5_OWNER_MERGE_AUTHORITY_COMMENT_ID",
+    "C5_OWNER_MERGE_AUTHORITY_BODY_SHA256",
+    "MERGED_TREE_EQUALS_REVIEWED_TREE",
+    "CALLER_REMAINS",
+    "DESIRED_WIF_REMAINS",
+    "LIVE_WIF_REMAINS",
+    "CLOUD_EFFECT",
+    "STATUS",
+)
+
+
+def validate_c5_control_merge_record(
+    comments: list[dict[str, Any]], control_sha: str
+) -> dict[str, Any]:
+    _c5_require_sha(control_sha, "C5_CONTROL_RECORD_CONTROL_SHA")
+    candidates = [
+        comment
+        for comment in comments
+        if _owner_issue_comment(comment, GOVERNING_ISSUE)
+        and canonical_comment_text(comment.get("body")).startswith(
+            "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1\n"
+        )
+        and f"C5_CONTROL_MERGE={control_sha}" in canonical_comment_text(
+            comment.get("body")
+        )
+    ]
+    if len(candidates) != 1:
+        raise RecoveryError("C5_CONTROL_RECORD_NOT_UNIQUE")
+    comment = candidates[0]
+    created, body_sha = _require_unedited_owner_comment(
+        comment, GOVERNING_ISSUE, "C5_CONTROL_RECORD"
+    )
+    fields = _record_fields(
+        str(comment.get("body") or ""),
+        "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
+        C5_CONTROL_RECORD_FIELDS,
+    )
+    expected = {
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_ARCHITECTURE": str(C5_ARCHITECTURE_COMMENT_ID),
+        "OWNER_DISPOSITION": str(C5_OWNER_DISPOSITION_COMMENT_ID),
+        "RETAINED_EFFECT_BASELINE": str(C5_RETAINED_BASELINE_COMMENT_ID),
+        "C5_CONTROL_BASE": C5_BASE_MAIN,
+        "C5_CONTROL_MERGE": control_sha,
+        "MERGED_TREE_EQUALS_REVIEWED_TREE": "TRUE",
+        "CALLER_REMAINS": "C4",
+        "DESIRED_WIF_REMAINS": "C4",
+        "LIVE_WIF_REMAINS": "C4",
+        "CLOUD_EFFECT": "NONE",
+        "STATUS": "C5_INERT_CONTROL_MERGED_EXACT",
+    }
+    for key, value in expected.items():
+        if fields[key] != value:
+            raise RecoveryError(f"C5_CONTROL_RECORD_FIELD_MISMATCH:{key}")
+    pr_number = _positive_int(fields["C5_CONTROL_PR"], "C5_CONTROL_RECORD_PR")
+    review_id = _positive_int(
+        fields["C5_FRESH_REVIEW_ID"], "C5_CONTROL_RECORD_REVIEW_ID"
+    )
+    authority_id = _positive_int(
+        fields["C5_OWNER_MERGE_AUTHORITY_COMMENT_ID"],
+        "C5_CONTROL_RECORD_AUTHORITY_ID",
+    )
+    reviewed_head = _c5_require_sha(
+        fields["C5_CONTROL_REVIEWED_HEAD"], "C5_CONTROL_RECORD_REVIEWED_HEAD"
+    )
+    reviewed_tree = _c5_require_sha(
+        fields["C5_CONTROL_REVIEWED_TREE"], "C5_CONTROL_RECORD_REVIEWED_TREE"
+    )
+    review_hash = _c5_require_hash(
+        fields["C5_FRESH_REVIEW_BODY_SHA256"],
+        "C5_CONTROL_RECORD_REVIEW_BODY_SHA256",
+    )
+    authority_hash = _c5_require_hash(
+        fields["C5_OWNER_MERGE_AUTHORITY_BODY_SHA256"],
+        "C5_CONTROL_RECORD_AUTHORITY_BODY_SHA256",
+    )
+
+    pr = github(f"/repos/{REPOSITORY}/pulls/{pr_number}")
+    if (
+        not isinstance(pr, dict)
+        or pr.get("state") != "closed"
+        or pr.get("merged_at") is None
+        or pr.get("merge_commit_sha") != control_sha
+        or pr.get("head", {}).get("sha") != reviewed_head
+        or pr.get("base", {}).get("sha") != C5_BASE_MAIN
+        or pr.get("base", {}).get("ref") != DEFAULT_BRANCH
+    ):
+        raise RecoveryError("C5_CONTROL_RECORD_PR_MISMATCH")
+    files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
+    _c5_validate_pr_files(files, C5_CONTROL_ALLOWED_FILES, "C5_CONTROL_RECORD")
+    reviewed_commit = github(f"/repos/{REPOSITORY}/commits/{reviewed_head}")
+    merge_commit = github(f"/repos/{REPOSITORY}/commits/{control_sha}")
+    if (
+        (reviewed_commit.get("commit") or {}).get("tree", {}).get("sha")
+        != reviewed_tree
+        or (merge_commit.get("commit") or {}).get("tree", {}).get("sha")
+        != reviewed_tree
+    ):
+        raise RecoveryError("C5_CONTROL_RECORD_TREE_MISMATCH")
+    review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
+    expected_review = c5_control_implementation_review_body(
+        pr_number, reviewed_head
+    )
+    if (
+        not isinstance(review, dict)
+        or review.get("id") != review_id
+        or review.get("state") != "COMMENTED"
+        or review.get("commit_id") != reviewed_head
+        or canonical_comment_text(review.get("body")) != expected_review
+        or sha256(str(review.get("body") or "").encode("utf-8")) != review_hash
+    ):
+        raise RecoveryError("C5_CONTROL_RECORD_REVIEW_MISMATCH")
+    review_user = review.get("user") or {}
+    if (
+        review_user.get("login") != OWNER_LOGIN
+        or review_user.get("id") != OWNER_ID
+    ):
+        raise RecoveryError("C5_CONTROL_RECORD_REVIEW_OWNER_MISMATCH")
+    authority = github(f"/repos/{REPOSITORY}/issues/comments/{authority_id}")
+    authority_created, observed_authority_hash = _require_unedited_owner_comment(
+        authority, pr_number, "C5_CONTROL_RECORD_AUTHORITY"
+    )
+    if observed_authority_hash != authority_hash:
+        raise RecoveryError("C5_CONTROL_RECORD_AUTHORITY_HASH_MISMATCH")
+    if canonical_comment_text(authority.get("body")) != c5_control_merge_authority_body(
+        pr_number, reviewed_head, review_id, review_hash
+    ):
+        raise RecoveryError("C5_CONTROL_RECORD_AUTHORITY_BODY_MISMATCH")
+    review_time = _timestamp(
+        review.get("submitted_at"), "C5_CONTROL_RECORD_REVIEW_SUBMITTED"
+    )
+    merge_time = _timestamp(pr.get("merged_at"), "C5_CONTROL_RECORD_MERGED")
+    if not (review_time <= authority_created < merge_time <= created):
+        raise RecoveryError("C5_CONTROL_RECORD_TIMELINE_INVALID")
+    return {
+        "comment_id": int(comment["id"]),
+        "created_at": created,
+        "body_sha256": body_sha,
+        "control_sha": control_sha,
+        "pr_number": pr_number,
+        "reviewed_head": reviewed_head,
+        "reviewed_tree": reviewed_tree,
+        "review_id": review_id,
+        "review_body_sha256": review_hash,
+        "authority_id": authority_id,
+        "authority_body_sha256": authority_hash,
+    }
+
+
+def c5_activation_review_body(
+    control_sha: str, pr_number: int, reviewed_head: str
+) -> str:
+    _c5_require_sha(control_sha, "C5_ACTIVATION_REVIEW_CONTROL_SHA")
+    if control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+    ):
+        raise RecoveryError("C5_ACTIVATION_REVIEW_CONTROL_FORBIDDEN")
+    _c5_positive(pr_number, "C5_ACTIVATION_REVIEW_PR")
+    _c5_require_sha(reviewed_head, "C5_ACTIVATION_REVIEW_HEAD")
+    return "\n".join(
+        (
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5_ACTIVATION_SECURITY_AUTHORITY_REVIEW",
+            "DISPOSITION=APPROVED",
+            f"PR=8ft0-ai/resilio#{pr_number}",
+            f"EXACT_HEAD={reviewed_head}",
+            f"EXACT_BASE={control_sha}",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5_CONTROL_SHA={control_sha}",
+            "ACTIVATION_EFFECT=REPOSITORY_CALLER_AND_DESIRED_WIF_C4_TO_C5_ONLY",
+            "LIVE_WIF_EFFECT=NONE",
+            "CLOUD_EFFECT=NONE",
+            "MATERIAL_BLOCKERS=NONE",
+        )
+    )
+
+
+def c5_activation_merge_authority_body(
+    control_sha: str,
+    pr_number: int,
+    reviewed_head: str,
+    review_id: int,
+    review_body_sha256: str,
+) -> str:
+    c5_activation_review_body(control_sha, pr_number, reviewed_head)
+    _c5_positive(review_id, "C5_ACTIVATION_REVIEW_ID")
+    _c5_require_hash(review_body_sha256, "C5_ACTIVATION_REVIEW_BODY_SHA256")
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_ACTIVATION_MERGE_AUTHORITY_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5_CONTROL_SHA={control_sha}",
+            f"C5_ACTIVATION_PR={pr_number}",
+            f"C5_ACTIVATION_REVIEWED_HEAD={reviewed_head}",
+            f"C5_ACTIVATION_BASE={control_sha}",
+            f"C5_FRESH_REVIEW_ID={review_id}",
+            f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_REPOSITORY_ACTIVATION_ONLY",
+            "LIVE_WIF_EFFECT=FORBIDDEN",
+            "CLOUD_EFFECT=FORBIDDEN",
+        )
+    )
+
+
+def _c5_verify_activation_file_transform(
+    control_sha: str, reviewed_head: str
+) -> None:
+    for path in C5_ACTIVATION_ALLOWED_FILES:
+        before = _c5_fetch_repo_text(path, control_sha)
+        after = _c5_fetch_repo_text(path, reviewed_head)
+        count = before.count(C5_OLD_RECOVERY_CONTROL_SHA)
+        if count != 1:
+            raise RecoveryError(f"C5_ACTIVATION_BASE_PIN_COUNT_INVALID:{path}")
+        expected = before.replace(
+            C5_OLD_RECOVERY_CONTROL_SHA, control_sha, 1
+        )
+        if after != expected:
+            raise RecoveryError(f"C5_ACTIVATION_FILE_TRANSFORM_INVALID:{path}")
+
+
+def verify_c5_activation_premerge(
+    control_sha: str,
+    pr_number: int,
+    reviewed_head: str,
+    review_id: int,
+    review_body_sha256: str,
+    authority_id: int,
+) -> dict[str, Any]:
+    _c5_require_sha(control_sha, "C5_ACTIVATION_PREMERGE_CONTROL_SHA")
+    _c5_positive(pr_number, "C5_ACTIVATION_PREMERGE_PR")
+    _c5_require_sha(reviewed_head, "C5_ACTIVATION_PREMERGE_HEAD")
+    _c5_positive(review_id, "C5_ACTIVATION_PREMERGE_REVIEW_ID")
+    _c5_require_hash(
+        review_body_sha256, "C5_ACTIVATION_PREMERGE_REVIEW_BODY_SHA256"
+    )
+    _c5_positive(authority_id, "C5_ACTIVATION_PREMERGE_AUTHORITY_ID")
+    if control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
+        control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+    ):
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_CONTROL_FORBIDDEN")
+
+    comments = github_issue_comments(GOVERNING_ISSUE)
+    validate_c5_control_merge_record(comments, control_sha)
+    branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
+    if (
+        not isinstance(branch, dict)
+        or branch.get("commit", {}).get("sha") != control_sha
+    ):
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_MAIN_MISMATCH")
+    pr = github(f"/repos/{REPOSITORY}/pulls/{pr_number}")
+    if (
+        not isinstance(pr, dict)
+        or pr.get("number") != pr_number
+        or pr.get("state") != "open"
+        or pr.get("merged_at") is not None
+        or pr.get("draft") is True
+        or pr.get("head", {}).get("sha") != reviewed_head
+        or pr.get("base", {}).get("sha") != control_sha
+        or pr.get("base", {}).get("ref") != DEFAULT_BRANCH
+    ):
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_PR_INVALID")
+    files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
+    _c5_validate_pr_files(files, C5_ACTIVATION_ALLOWED_FILES, "C5_ACTIVATION")
+    _c5_verify_activation_file_transform(control_sha, reviewed_head)
+
+    review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
+    expected_review = c5_activation_review_body(
+        control_sha, pr_number, reviewed_head
+    )
+    if (
+        not isinstance(review, dict)
+        or review.get("id") != review_id
+        or review.get("state") != "COMMENTED"
+        or review.get("commit_id") != reviewed_head
+        or canonical_comment_text(review.get("body")) != expected_review
+    ):
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_REVIEW_MISMATCH")
+    review_user = review.get("user") or {}
+    if (
+        review_user.get("login") != OWNER_LOGIN
+        or review_user.get("id") != OWNER_ID
+    ):
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_REVIEW_OWNER_MISMATCH")
+    actual_review_sha = sha256(str(review.get("body") or "").encode("utf-8"))
+    if actual_review_sha != review_body_sha256:
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_REVIEW_HASH_MISMATCH")
+    authority = github(f"/repos/{REPOSITORY}/issues/comments/{authority_id}")
+    authority_created, authority_hash = _require_unedited_owner_comment(
+        authority, pr_number, "C5_ACTIVATION_PREMERGE_AUTHORITY"
+    )
+    if canonical_comment_text(authority.get("body")) != c5_activation_merge_authority_body(
+        control_sha, pr_number, reviewed_head, review_id, review_body_sha256
+    ):
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_AUTHORITY_BODY_MISMATCH")
+    review_time = _timestamp(
+        review.get("submitted_at"), "C5_ACTIVATION_PREMERGE_REVIEW_SUBMITTED"
+    )
+    if review_time > authority_created:
+        raise RecoveryError("C5_ACTIVATION_PREMERGE_TIMELINE_INVALID")
+    return {
+        "contract": "resilio-phase5-slice-c-c5-activation-premerge/v1",
+        "control_sha": control_sha,
+        "pr_number": pr_number,
+        "reviewed_head": reviewed_head,
+        "review_id": review_id,
+        "review_body_sha256": actual_review_sha,
+        "authority_id": authority_id,
+        "authority_body_sha256": authority_hash,
+        "verified": True,
+    }
+
+
+def c5_activation_record_body(
+    control_sha: str,
+    activation_main: str,
+    pr_number: int,
+    reviewed_head: str,
+    reviewed_tree: str,
+    review_id: int,
+    review_body_sha256: str,
+    authority_id: int,
+    authority_body_sha256: str,
+) -> str:
+    _c5_require_sha(control_sha, "C5_ACTIVATION_RECORD_CONTROL_SHA")
+    _c5_require_sha(activation_main, "C5_ACTIVATION_RECORD_MAIN")
+    _c5_positive(pr_number, "C5_ACTIVATION_RECORD_PR")
+    _c5_require_sha(reviewed_head, "C5_ACTIVATION_RECORD_HEAD")
+    _c5_require_sha(reviewed_tree, "C5_ACTIVATION_RECORD_TREE")
+    _c5_positive(review_id, "C5_ACTIVATION_RECORD_REVIEW_ID")
+    _c5_require_hash(
+        review_body_sha256, "C5_ACTIVATION_RECORD_REVIEW_BODY_SHA256"
+    )
+    _c5_positive(authority_id, "C5_ACTIVATION_RECORD_AUTHORITY_ID")
+    _c5_require_hash(
+        authority_body_sha256, "C5_ACTIVATION_RECORD_AUTHORITY_BODY_SHA256"
+    )
+    return "\n".join(
+        (
+            "PHASE5_SLICE_C_C5_ACTIVATION_V1",
+            "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5_CONTROL_SHA={control_sha}",
+            f"C5_ACTIVATION_PR={pr_number}",
+            f"C5_ACTIVATION_REVIEWED_HEAD={reviewed_head}",
+            f"C5_ACTIVATION_REVIEWED_TREE={reviewed_tree}",
+            f"C5_ACTIVATION_BASE={control_sha}",
+            f"C5_ACTIVATION_MAIN={activation_main}",
+            f"C5_FRESH_REVIEW_ID={review_id}",
+            f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+            f"C5_OWNER_MERGE_AUTHORITY_COMMENT_ID={authority_id}",
+            f"C5_OWNER_MERGE_AUTHORITY_BODY_SHA256={authority_body_sha256}",
+            "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
+            "REPOSITORY_CALLER=C5",
+            "REPOSITORY_DESIRED_WIF=C5",
+            "LIVE_WIF=C4_ONLY",
+            "CLOUD_EFFECT=NONE",
+            "STATUS=C5_REPOSITORY_ACTIVATION_MERGED_EXACT",
+        )
+    )
+
+
+C5_ACTIVATION_RECORD_FIELDS = (
+    "GOVERNING_ISSUE",
+    "C5_ARCHITECTURE",
+    "C5_CONTROL_SHA",
+    "C5_ACTIVATION_PR",
+    "C5_ACTIVATION_REVIEWED_HEAD",
+    "C5_ACTIVATION_REVIEWED_TREE",
+    "C5_ACTIVATION_BASE",
+    "C5_ACTIVATION_MAIN",
+    "C5_FRESH_REVIEW_ID",
+    "C5_FRESH_REVIEW_BODY_SHA256",
+    "C5_OWNER_MERGE_AUTHORITY_COMMENT_ID",
+    "C5_OWNER_MERGE_AUTHORITY_BODY_SHA256",
+    "MERGED_TREE_EQUALS_REVIEWED_TREE",
+    "REPOSITORY_CALLER",
+    "REPOSITORY_DESIRED_WIF",
+    "LIVE_WIF",
+    "CLOUD_EFFECT",
+    "STATUS",
+)
+
+
+def validate_c5_activation_record(
+    comments: list[dict[str, Any]],
+    control_sha: str,
+    activation_main: str,
+) -> dict[str, Any]:
+    control_record = validate_c5_control_merge_record(comments, control_sha)
+    candidates = [
+        comment
+        for comment in comments
+        if _owner_issue_comment(comment, GOVERNING_ISSUE)
+        and canonical_comment_text(comment.get("body")).startswith(
+            "PHASE5_SLICE_C_C5_ACTIVATION_V1\n"
+        )
+        and f"C5_CONTROL_SHA={control_sha}" in canonical_comment_text(
+            comment.get("body")
+        )
+        and f"C5_ACTIVATION_MAIN={activation_main}" in canonical_comment_text(
+            comment.get("body")
+        )
+    ]
+    if len(candidates) != 1:
+        raise RecoveryError("C5_ACTIVATION_RECORD_NOT_UNIQUE")
+    comment = candidates[0]
+    created, body_sha = _require_unedited_owner_comment(
+        comment, GOVERNING_ISSUE, "C5_ACTIVATION_RECORD"
+    )
+    fields = _record_fields(
+        str(comment.get("body") or ""),
+        "PHASE5_SLICE_C_C5_ACTIVATION_V1",
+        C5_ACTIVATION_RECORD_FIELDS,
+    )
+    expected = {
+        "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
+        "C5_ARCHITECTURE": str(C5_ARCHITECTURE_COMMENT_ID),
+        "C5_CONTROL_SHA": control_sha,
+        "C5_ACTIVATION_BASE": control_sha,
+        "C5_ACTIVATION_MAIN": activation_main,
+        "MERGED_TREE_EQUALS_REVIEWED_TREE": "TRUE",
+        "REPOSITORY_CALLER": "C5",
+        "REPOSITORY_DESIRED_WIF": "C5",
+        "LIVE_WIF": "C4_ONLY",
+        "CLOUD_EFFECT": "NONE",
+        "STATUS": "C5_REPOSITORY_ACTIVATION_MERGED_EXACT",
+    }
+    for key, value in expected.items():
+        if fields[key] != value:
+            raise RecoveryError(f"C5_ACTIVATION_RECORD_FIELD_MISMATCH:{key}")
+    pr_number = _positive_int(
+        fields["C5_ACTIVATION_PR"], "C5_ACTIVATION_RECORD_PR"
+    )
+    reviewed_head = _c5_require_sha(
+        fields["C5_ACTIVATION_REVIEWED_HEAD"],
+        "C5_ACTIVATION_RECORD_REVIEWED_HEAD",
+    )
+    reviewed_tree = _c5_require_sha(
+        fields["C5_ACTIVATION_REVIEWED_TREE"],
+        "C5_ACTIVATION_RECORD_REVIEWED_TREE",
+    )
+    review_id = _positive_int(
+        fields["C5_FRESH_REVIEW_ID"], "C5_ACTIVATION_RECORD_REVIEW_ID"
+    )
+    review_hash = _c5_require_hash(
+        fields["C5_FRESH_REVIEW_BODY_SHA256"],
+        "C5_ACTIVATION_RECORD_REVIEW_BODY_SHA256",
+    )
+    authority_id = _positive_int(
+        fields["C5_OWNER_MERGE_AUTHORITY_COMMENT_ID"],
+        "C5_ACTIVATION_RECORD_AUTHORITY_ID",
+    )
+    authority_hash = _c5_require_hash(
+        fields["C5_OWNER_MERGE_AUTHORITY_BODY_SHA256"],
+        "C5_ACTIVATION_RECORD_AUTHORITY_BODY_SHA256",
+    )
+    pr = github(f"/repos/{REPOSITORY}/pulls/{pr_number}")
+    if (
+        not isinstance(pr, dict)
+        or pr.get("state") != "closed"
+        or pr.get("merged_at") is None
+        or pr.get("merge_commit_sha") != activation_main
+        or pr.get("head", {}).get("sha") != reviewed_head
+        or pr.get("base", {}).get("sha") != control_sha
+        or pr.get("base", {}).get("ref") != DEFAULT_BRANCH
+    ):
+        raise RecoveryError("C5_ACTIVATION_RECORD_PR_MISMATCH")
+    files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
+    _c5_validate_pr_files(files, C5_ACTIVATION_ALLOWED_FILES, "C5_ACTIVATION_RECORD")
+    _c5_verify_activation_file_transform(control_sha, reviewed_head)
+    reviewed_commit = github(f"/repos/{REPOSITORY}/commits/{reviewed_head}")
+    merge_commit = github(f"/repos/{REPOSITORY}/commits/{activation_main}")
+    if (
+        (reviewed_commit.get("commit") or {}).get("tree", {}).get("sha")
+        != reviewed_tree
+        or (merge_commit.get("commit") or {}).get("tree", {}).get("sha")
+        != reviewed_tree
+    ):
+        raise RecoveryError("C5_ACTIVATION_RECORD_TREE_MISMATCH")
+    review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
+    expected_review = c5_activation_review_body(
+        control_sha, pr_number, reviewed_head
+    )
+    if (
+        not isinstance(review, dict)
+        or review.get("id") != review_id
+        or review.get("state") != "COMMENTED"
+        or review.get("commit_id") != reviewed_head
+        or canonical_comment_text(review.get("body")) != expected_review
+        or sha256(str(review.get("body") or "").encode("utf-8")) != review_hash
+    ):
+        raise RecoveryError("C5_ACTIVATION_RECORD_REVIEW_MISMATCH")
+    review_user = review.get("user") or {}
+    if (
+        review_user.get("login") != OWNER_LOGIN
+        or review_user.get("id") != OWNER_ID
+    ):
+        raise RecoveryError("C5_ACTIVATION_RECORD_REVIEW_OWNER_MISMATCH")
+    authority = github(f"/repos/{REPOSITORY}/issues/comments/{authority_id}")
+    authority_created, observed_authority_hash = _require_unedited_owner_comment(
+        authority, pr_number, "C5_ACTIVATION_RECORD_AUTHORITY"
+    )
+    if observed_authority_hash != authority_hash:
+        raise RecoveryError("C5_ACTIVATION_RECORD_AUTHORITY_HASH_MISMATCH")
+    if canonical_comment_text(authority.get("body")) != c5_activation_merge_authority_body(
+        control_sha, pr_number, reviewed_head, review_id, review_hash
+    ):
+        raise RecoveryError("C5_ACTIVATION_RECORD_AUTHORITY_BODY_MISMATCH")
+    review_time = _timestamp(
+        review.get("submitted_at"), "C5_ACTIVATION_RECORD_REVIEW_SUBMITTED"
+    )
+    merge_time = _timestamp(pr.get("merged_at"), "C5_ACTIVATION_RECORD_MERGED")
+    if not (
+        control_record["created_at"] <= review_time
+        <= authority_created
+        < merge_time
+        <= created
+    ):
+        raise RecoveryError("C5_ACTIVATION_RECORD_TIMELINE_INVALID")
+    return {
+        "comment_id": int(comment["id"]),
+        "created_at": created,
+        "body_sha256": body_sha,
+        "control_record_comment_id": control_record["comment_id"],
+        "control_record_body_sha256": control_record["body_sha256"],
+        "control_sha": control_sha,
+        "activation_main": activation_main,
+        "pr_number": pr_number,
+        "reviewed_head": reviewed_head,
+        "reviewed_tree": reviewed_tree,
+        "review_id": review_id,
+        "review_body_sha256": review_hash,
+        "authority_id": authority_id,
+        "authority_body_sha256": authority_hash,
+    }
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -2537,6 +5157,93 @@ def main() -> int:
     p = commands.add_parser("upload-successor-result")
     p.add_argument("--control-sha", required=True)
     p.add_argument("--file", required=True)
+
+    p = commands.add_parser("emit-c5-control-review")
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+
+    p = commands.add_parser("emit-c5-control-merge-authority")
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+
+    p = commands.add_parser("verify-c5-control-premerge")
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+    p.add_argument("--authority-id", required=True, type=int)
+
+    p = commands.add_parser("emit-c5-control-merge-record")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--reviewed-tree", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+    p.add_argument("--authority-id", required=True, type=int)
+    p.add_argument("--authority-body-sha256", required=True)
+
+    p = commands.add_parser("emit-c5-activation-review")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+
+    p = commands.add_parser("emit-c5-activation-merge-authority")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+
+    p = commands.add_parser("verify-c5-activation-premerge")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+    p.add_argument("--authority-id", required=True, type=int)
+
+    p = commands.add_parser("emit-c5-activation-record")
+    p.add_argument("--control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--pr-number", required=True, type=int)
+    p.add_argument("--reviewed-head", required=True)
+    p.add_argument("--reviewed-tree", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+    p.add_argument("--authority-id", required=True, type=int)
+    p.add_argument("--authority-body-sha256", required=True)
+
+    p = commands.add_parser("emit-c5-wif-repin-review")
+    p.add_argument("--successor-control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--saved-plan-sha256", required=True)
+    p.add_argument("--structural-manifest-sha256", required=True)
+    p.add_argument("--state-lineage", required=True)
+    p.add_argument("--state-serial", required=True, type=int)
+
+    p = commands.add_parser("emit-c5-wif-repin-authority")
+    p.add_argument("--successor-control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--saved-plan-sha256", required=True)
+    p.add_argument("--structural-manifest-sha256", required=True)
+    p.add_argument("--state-lineage", required=True)
+    p.add_argument("--state-serial", required=True, type=int)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--review-body-sha256", required=True)
+
+    p = commands.add_parser("verify-c5-wif-repin-pre-effect")
+    p.add_argument("--successor-control-sha", required=True)
+    p.add_argument("--activation-main", required=True)
+    p.add_argument("--saved-plan", required=True)
+    p.add_argument("--terraform-workdir", required=True)
+    p.add_argument("--structural-manifest", required=True)
+    p.add_argument("--review-id", required=True, type=int)
+    p.add_argument("--authority-id", required=True, type=int)
+    p.add_argument("--posted-claim-id", type=int)
+    p.add_argument("--claim-output")
 
     p = commands.add_parser("verify-state")
     p.add_argument("--file", required=True)
@@ -2638,6 +5345,82 @@ def main() -> int:
             if value.get("control_sha") != args.control_sha: raise RecoveryError("SUCCESSOR_RESULT_CONTROL_MISMATCH")
             result = gcs_upload_once(evidence_object("result", args.control_sha), value)
             print(json.dumps({key: result.get(key) for key in ("bucket", "name", "generation", "metageneration")}, sort_keys=True, separators=(",", ":")))
+        elif args.command == "emit-c5-control-review":
+            print(c5_control_implementation_review_body(
+                args.pr_number, args.reviewed_head
+            ))
+        elif args.command == "emit-c5-control-merge-authority":
+            print(c5_control_merge_authority_body(
+                args.pr_number, args.reviewed_head, args.review_id,
+                args.review_body_sha256,
+            ))
+        elif args.command == "verify-c5-control-premerge":
+            result = verify_c5_control_premerge(
+                args.pr_number, args.reviewed_head, args.review_id,
+                args.review_body_sha256, args.authority_id,
+            )
+            result.pop("authority_created_at", None)
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif args.command == "emit-c5-control-merge-record":
+            print(c5_control_merge_record_body(
+                args.control_sha, args.pr_number, args.reviewed_head,
+                args.reviewed_tree, args.review_id, args.review_body_sha256,
+                args.authority_id, args.authority_body_sha256,
+            ))
+        elif args.command == "emit-c5-activation-review":
+            print(c5_activation_review_body(
+                args.control_sha, args.pr_number, args.reviewed_head
+            ))
+        elif args.command == "emit-c5-activation-merge-authority":
+            print(c5_activation_merge_authority_body(
+                args.control_sha, args.pr_number, args.reviewed_head,
+                args.review_id, args.review_body_sha256,
+            ))
+        elif args.command == "verify-c5-activation-premerge":
+            result = verify_c5_activation_premerge(
+                args.control_sha, args.pr_number, args.reviewed_head,
+                args.review_id, args.review_body_sha256, args.authority_id,
+            )
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        elif args.command == "emit-c5-activation-record":
+            print(c5_activation_record_body(
+                args.control_sha, args.activation_main, args.pr_number,
+                args.reviewed_head, args.reviewed_tree, args.review_id,
+                args.review_body_sha256, args.authority_id,
+                args.authority_body_sha256,
+            ))
+        elif args.command == "emit-c5-wif-repin-review":
+            print(c5_wif_repin_review_body(
+                args.successor_control_sha, args.activation_main,
+                args.saved_plan_sha256, args.structural_manifest_sha256,
+                args.state_lineage, args.state_serial,
+            ))
+        elif args.command == "emit-c5-wif-repin-authority":
+            print(c5_wif_repin_authority_body(
+                args.successor_control_sha, args.activation_main,
+                args.saved_plan_sha256, args.structural_manifest_sha256,
+                args.state_lineage, args.state_serial, args.review_id,
+                args.review_body_sha256,
+            ))
+        elif args.command == "verify-c5-wif-repin-pre-effect":
+            result = verify_c5_wif_repin_pre_effect(
+                successor_control_sha=args.successor_control_sha,
+                activation_main=args.activation_main,
+                saved_plan_path=args.saved_plan,
+                terraform_workdir=args.terraform_workdir,
+                structural_manifest_path=args.structural_manifest,
+                fresh_review_comment_id=args.review_id,
+                owner_apply_authority_comment_id=args.authority_id,
+                posted_claim_comment_id=args.posted_claim_id,
+            )
+            claim_body = result.pop("attempt_claim_body")
+            snapshot = result.pop("precondition_snapshot")
+            if args.claim_output:
+                Path(args.claim_output).write_text(claim_body, encoding="utf-8")
+                result["attempt_claim_output"] = args.claim_output
+            result["attempt_claim_body_sha256"] = sha256(claim_body.encode("utf-8"))
+            result["precondition_snapshot_sha256"] = sha256(snapshot.encode("utf-8"))
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         elif args.command == "verify-state":
             value = strict_json(Path(args.file).read_bytes())
             verify_state_identity(value)

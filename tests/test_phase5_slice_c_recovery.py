@@ -1439,5 +1439,1127 @@ jobs:
             with self.assertRaises(RecoveryError): recovery.verify_successor_cloud_boundary(control)
 
 
+class C5RetainedEffectProtocolTests(unittest.TestCase):
+    def _precondition(self):
+        control = "d" * 40
+        return {
+            "successor_control_sha": control,
+            "successor_activation_main": "e" * 40,
+            "saved_plan_sha256": "a" * 64,
+            "structural_manifest_sha256": "b" * 64,
+            "state_lineage": recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            "state_serial": recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            "fresh_review_comment_id": 701,
+            "fresh_review_body_sha256": "c" * 64,
+            "owner_apply_authority_comment_id": 702,
+            "owner_apply_authority_body_sha256": "d" * 64,
+            "old_recovery_control_sha": recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            "new_recovery_control_sha": control,
+        }
+
+    def _classify_outcome(self, **changes):
+        values = {
+            "observation_complete": True,
+            "old_wif_count": 0,
+            "new_wif_count": 1,
+            "forbidden_wif_counts": (0, 0, 0),
+            "lineage_before": recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            "lineage_after": recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            "serial_before": 71,
+            "serial_after": 72,
+            "claim_result_states": ("ABSENT", "ABSENT", "ABSENT", "ABSENT"),
+            "bootstrap_lock_absent": True,
+            "exact_no_change": True,
+            "exact_pending_effect": False,
+            "getmetadata_unchanged": True,
+            "normal_identities_unchanged": True,
+            "observation_1_sha256": None,
+            "observation_2_sha256": None,
+            "observation_separation_seconds": 0,
+        }
+        values.update(changes)
+        return recovery.c5_classify_wif_repin_outcome(**values)
+
+    def test_c5_use_time_currentness_is_exact_and_stale_facts_fail(self):
+        body = recovery.c5_use_time_currentness_body(
+            recovery.C5_BASE_MAIN,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            "C4_ONLY",
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            "ABSENT",
+            "ABSENT",
+            "ABSENT",
+            "EXACT_NO_CHANGE",
+            "PRESENT",
+            "PRESENT",
+            "UNCHANGED",
+            "ABSENT",
+            0,
+        )
+        self.assertTrue(body.startswith("PHASE5_SLICE_C_C5_USE_TIME_CURRENTNESS_V1\n"))
+        self.assertTrue(body.endswith("CURRENTNESS=PASS"))
+        with self.assertRaises(RecoveryError):
+            recovery.c5_use_time_currentness_body(
+                recovery.C5_BASE_MAIN,
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                "C4_ONLY",
+                recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+                72,
+                "ABSENT",
+                "ABSENT",
+                "ABSENT",
+                "EXACT_NO_CHANGE",
+                "PRESENT",
+                "PRESENT",
+                "UNCHANGED",
+                "ABSENT",
+                0,
+            )
+
+    def test_c5_precondition_snapshot_exact_order_no_trailing_lf_and_digest(self):
+        kwargs = self._precondition()
+        snapshot = recovery.c5_precondition_snapshot(**kwargs)
+        self.assertFalse(snapshot.endswith("\n"))
+        self.assertEqual(
+            snapshot.splitlines()[0],
+            "PHASE5_SLICE_C_WIF_REPIN_PRECONDITION_SNAPSHOT_V1",
+        )
+        self.assertEqual(
+            snapshot.splitlines()[-1],
+            "OUTPUT_CHANGES=0",
+        )
+        self.assertEqual(
+            recovery.c5_precondition_digest_sha256(**kwargs),
+            recovery.sha256(snapshot.encode("utf-8")),
+        )
+        self.assertIn(
+            "PLAN_EFFECTS=EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_OLD_TO_NEW",
+            snapshot,
+        )
+
+    def test_c5_precondition_constructor_rejects_hostile_identity_inputs(self):
+        cases = (
+            ("successor_control_sha", "a" * 39),
+            ("successor_control_sha", "A" * 40),
+            ("saved_plan_sha256", "b" * 63),
+            ("saved_plan_sha256", "B" * 64),
+            ("fresh_review_comment_id", 0),
+            ("owner_apply_authority_comment_id", -1),
+            ("state_lineage", ""),
+            ("state_serial", -1),
+        )
+        for key, value in cases:
+            kwargs = self._precondition()
+            kwargs[key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(RecoveryError):
+                recovery.c5_precondition_snapshot(**kwargs)
+        kwargs = self._precondition()
+        kwargs["new_recovery_control_sha"] = recovery.C5_OLD_RECOVERY_CONTROL_SHA
+        kwargs["successor_control_sha"] = recovery.C5_OLD_RECOVERY_CONTROL_SHA
+        with self.assertRaises(RecoveryError):
+            recovery.c5_precondition_snapshot(**kwargs)
+        kwargs = self._precondition()
+        kwargs["new_recovery_control_sha"] = recovery.FAILED_C3_CONTROL_SHA
+        kwargs["successor_control_sha"] = recovery.FAILED_C3_CONTROL_SHA
+        with self.assertRaises(RecoveryError):
+            recovery.c5_precondition_snapshot(**kwargs)
+
+    def test_c5_review_and_authority_reject_one_nibble_or_uppercase_hashes(self):
+        control = "d" * 40
+        review = recovery.c5_wif_repin_review_body(
+            control,
+            "e" * 40,
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            71,
+        )
+        self.assertIn("REVIEW_DISPOSITION=APPROVED", review)
+        with self.assertRaises(RecoveryError):
+            recovery.c5_wif_repin_authority_body(
+                control,
+                "e" * 40,
+                "a" * 64,
+                "b" * 64,
+                recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+                71,
+                701,
+                "c" * 63,
+            )
+        with self.assertRaises(RecoveryError):
+            recovery.c5_wif_repin_authority_body(
+                control,
+                "e" * 40,
+                "a" * 64,
+                "b" * 64,
+                recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+                71,
+                701,
+                "C" * 64,
+            )
+
+    def test_c5_attempt_series_is_exact_deterministic_and_acyclic(self):
+        control = "d" * 40
+        args = (
+            control,
+            "e" * 40,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            control,
+        )
+        body = recovery.c5_attempt_series_body(*args)
+        series = recovery.c5_attempt_series_id_sha256(*args)
+        self.assertEqual(series, recovery.sha256(body.encode("utf-8")))
+        self.assertFalse(body.endswith("\n"))
+        self.assertEqual(len(series), 64)
+        with self.assertRaises(RecoveryError):
+            recovery.c5_attempt_series_body(
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                "e" * 40,
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            )
+
+    def test_c5_attempt_history_requires_unique_contiguous_generations(self):
+        control = "d" * 40
+        activation = "e" * 40
+        old = recovery.C5_OLD_RECOVERY_CONTROL_SHA
+        series = recovery.c5_attempt_series_id_sha256(control, activation, old, control)
+        claim1 = recovery.c5_attempt_claim_body(
+            control, activation, old, control, 1,
+            "a" * 64, "b" * 64, "c" * 64, 701, "d" * 64, 702, "e" * 64,
+        )
+        claim2 = recovery.c5_attempt_claim_body(
+            control, activation, old, control, 2,
+            "a" * 64, "b" * 64, "c" * 64, 703, "f" * 64, 704, "1" * 64,
+        )
+        comments = [
+            owner_comment(801, claim1, "2026-10-05T02:30:00Z"),
+            owner_comment(802, claim2, "2026-10-05T02:31:00Z"),
+        ]
+        result = recovery.validate_c5_attempt_history(
+            comments, control, activation, old, control
+        )
+        self.assertEqual(result["attempt_series_id_sha256"], series)
+        self.assertEqual(result["next_generation"], 3)
+
+        duplicate = copy.deepcopy(comments)
+        duplicate.append(owner_comment(803, claim2, "2026-10-05T02:32:00Z"))
+        with self.assertRaises(RecoveryError):
+            recovery.validate_c5_attempt_history(
+                duplicate, control, activation, old, control
+            )
+
+        gap = [comments[1]]
+        with self.assertRaises(RecoveryError):
+            recovery.validate_c5_attempt_history(
+                gap, control, activation, old, control
+            )
+
+        edited = copy.deepcopy(comments)
+        edited[0]["updated_at"] = "2026-10-05T02:30:01Z"
+        with self.assertRaises(RecoveryError):
+            recovery.validate_c5_attempt_history(
+                edited, control, activation, old, control
+            )
+
+    def test_c5_posted_claim_revalidation_binds_raw_body_and_chronology(self):
+        control = "d" * 40
+        activation = "e" * 40
+        body = recovery.c5_attempt_claim_body(
+            control,
+            activation,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            control,
+            1,
+            "a" * 64,
+            "b" * 64,
+            "c" * 64,
+            701,
+            "d" * 64,
+            702,
+            "e" * 64,
+        )
+        row = owner_comment(801, body, "2026-10-05T02:31:00Z")
+        authority_time = recovery._timestamp(
+            "2026-10-05T02:30:00Z", "authority"
+        )
+        result = recovery.validate_c5_posted_attempt_claim(
+            row, authority_time, body
+        )
+        self.assertEqual(result["generation"], 1)
+        with self.assertRaises(RecoveryError):
+            recovery.validate_c5_posted_attempt_claim(
+                row,
+                recovery._timestamp("2026-10-05T02:32:00Z", "authority"),
+                body,
+            )
+
+    def test_c5_outcome_algebra_effect_success(self):
+        self.assertEqual(self._classify_outcome(), "EFFECT_SUCCEEDED")
+
+    def test_c5_outcome_algebra_no_effect_requires_two_observations_60_seconds(self):
+        common = {
+            "old_wif_count": 1,
+            "new_wif_count": 0,
+            "serial_after": 71,
+            "exact_no_change": False,
+            "exact_pending_effect": True,
+            "observation_1_sha256": "a" * 64,
+            "observation_2_sha256": "b" * 64,
+        }
+        self.assertEqual(
+            self._classify_outcome(**common, observation_separation_seconds=60),
+            "NO_EFFECT_STABLE",
+        )
+        self.assertEqual(
+            self._classify_outcome(**common, observation_separation_seconds=59),
+            "INCONSISTENT_EFFECT",
+        )
+
+    def test_c5_outcome_algebra_unknown_is_nonterminal_and_presence_is_inconsistent(self):
+        self.assertEqual(
+            self._classify_outcome(observation_complete=False),
+            "PROCESS_OUTCOME_UNKNOWN",
+        )
+        self.assertEqual(
+            self._classify_outcome(
+                claim_result_states=("ABSENT", "PRESENT", "ABSENT", "ABSENT")
+            ),
+            "INCONSISTENT_EFFECT",
+        )
+
+    def _effect_terminal_body(self):
+        control = "d" * 40
+        activation = "e" * 40
+        series = recovery.c5_attempt_series_id_sha256(
+            control,
+            activation,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            control,
+        )
+        body = recovery.c5_wif_repin_terminal_body(
+            successor_control_sha=control,
+            successor_activation_main=activation,
+            saved_plan_sha256="a" * 64,
+            structural_manifest_sha256="b" * 64,
+            fresh_review_comment_id=701,
+            fresh_review_body_sha256="c" * 64,
+            owner_apply_authority_comment_id=702,
+            owner_apply_authority_body_sha256="d" * 64,
+            attempt_claim_comment_id=703,
+            attempt_claim_body_sha256="e" * 64,
+            attempt_series_id_sha256=series,
+            attempt_generation=1,
+            precondition_digest_sha256="f" * 64,
+            lineage_before=recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            lineage_after=recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            serial_before=71,
+            serial_after=72,
+            old_wif_count=0,
+            new_wif_count=1,
+            forbidden_wif_counts=(0, 0, 0),
+            claim_result_states=("ABSENT", "ABSENT", "ABSENT", "ABSENT"),
+            bootstrap_lock_absent=True,
+            exact_no_change=True,
+            exact_pending_effect=False,
+            getmetadata_unchanged=True,
+            normal_identities_unchanged=True,
+            observation_complete=True,
+        )
+        return control, activation, body
+
+    def test_c5_terminal_binds_total_effect_evidence_and_enables_only_effect_dispatch(self):
+        control, activation, body = self._effect_terminal_body()
+        self.assertIn("OUTCOME=EFFECT_SUCCEEDED", body)
+        terminal = recovery.c5_terminal_record_summary(
+            901, body, "EFFECT_SUCCEEDED"
+        )
+        authority = recovery.c5_dispatch_authority_body(
+            control, activation, terminal
+        )
+        self.assertIn(
+            "AUTHORITY=DISPATCH_EXACTLY_ONE_C5_RECONCILIATION_ONLY_RECOVERY",
+            authority,
+        )
+
+        no_effect = dict(terminal)
+        no_effect["outcome"] = "NO_EFFECT_STABLE"
+        with self.assertRaises(RecoveryError):
+            recovery.c5_dispatch_authority_body(control, activation, no_effect)
+
+        with self.assertRaises(RecoveryError):
+            recovery.c5_dispatch_authority_body(
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA, activation, terminal
+            )
+
+    def test_c5_process_unknown_cannot_be_emitted_as_terminal(self):
+        control = "d" * 40
+        activation = "e" * 40
+        series = recovery.c5_attempt_series_id_sha256(
+            control,
+            activation,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            control,
+        )
+        with self.assertRaises(RecoveryError):
+            recovery.c5_wif_repin_terminal_body(
+                successor_control_sha=control,
+                successor_activation_main=activation,
+                saved_plan_sha256="a" * 64,
+                structural_manifest_sha256="b" * 64,
+                fresh_review_comment_id=701,
+                fresh_review_body_sha256="c" * 64,
+                owner_apply_authority_comment_id=702,
+                owner_apply_authority_body_sha256="d" * 64,
+                attempt_claim_comment_id=703,
+                attempt_claim_body_sha256="e" * 64,
+                attempt_series_id_sha256=series,
+                attempt_generation=1,
+                precondition_digest_sha256="f" * 64,
+                lineage_before=recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+                lineage_after=recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+                serial_before=71,
+                serial_after=71,
+                old_wif_count=1,
+                new_wif_count=0,
+                forbidden_wif_counts=(0, 0, 0),
+                claim_result_states=("ABSENT", "ABSENT", "ABSENT", "UNKNOWN"),
+                bootstrap_lock_absent=True,
+                exact_no_change=False,
+                exact_pending_effect=True,
+                getmetadata_unchanged=True,
+                normal_identities_unchanged=True,
+                observation_complete=False,
+            )
+
+    def test_c5_governance_history_closes_architecture_review_disposition_baseline(self):
+        arch_body = "\n".join(
+            (
+                "PHASE5_SLICE_C_C5_EFFECT_SUCCEEDED_INVALID_AUTHORITY_RECOVERY_ARCHITECTURE_V4",
+                "STATUS=C5_ARCHITECTURE_REVISION_4_COMPLETE_PENDING_FRESH_REVIEW",
+                f"CURRENT_MAIN={recovery.C5_BASE_MAIN}",
+                "CURRENT_REPOSITORY_CALLER=C4",
+                "CURRENT_REPOSITORY_DESIRED_WIF=C4",
+                "CURRENT_LIVE_RECOVERY_WIF=C4_ONLY",
+                f"CURRENT_BOOTSTRAP_STATE_LINEAGE={recovery.C5_BOOTSTRAP_STATE_LINEAGE}",
+                f"CURRENT_BOOTSTRAP_STATE_SERIAL={recovery.C5_BOOTSTRAP_STATE_SERIAL}",
+                "C4_DISPATCH=PERMANENTLY_FORBIDDEN",
+                "C5_IMPLEMENTATION=NOT_AUTHORISED",
+            )
+        )
+        review_body = "\n".join(
+            (
+                "COMPLETELY_FRESH_SUBSTANTIVE_C5_ARCHITECTURE_SECURITY_AUTHORITY_REVIEW_V4",
+                f"REVIEW_TARGET={recovery.C5_ARCHITECTURE_COMMENT_ID}",
+                "DISPOSITION=APPROVED",
+                "MATERIAL_BLOCKERS=NONE",
+                "INCIDENT_TRUTH_AND_NON_RETROACTIVITY=PASS",
+                "OWNER_DISPOSITION_AUTHORITY_CLOSURE=PASS",
+                "USE_TIME_CURRENTNESS=PASS",
+                "RETAINED_EFFECT_BASELINE=PASS",
+                "TERMINAL_AND_DISPATCH_GATING=PASS",
+                "RETAIN_POSITIVE_REACHABILITY=PASS",
+                "REVERT_REACHABILITY=PASS",
+            )
+        )
+        disposition_body = "\n".join(
+            (
+                "PHASE5_SLICE_C_C4_WIF_INCIDENT_DISPOSITION_V1",
+                "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+                f"C5_ARCHITECTURE_COMMENT_ID={recovery.C5_ARCHITECTURE_COMMENT_ID}",
+                f"C5_ARCHITECTURE_BODY_SHA256={recovery.C5_ARCHITECTURE_BODY_SHA256}",
+                f"C5_ARCHITECTURE_REVIEW_COMMENT_ID={recovery.C5_ARCHITECTURE_REVIEW_COMMENT_ID}",
+                f"C5_ARCHITECTURE_REVIEW_BODY_SHA256={recovery.C5_ARCHITECTURE_REVIEW_BODY_SHA256}",
+                f"INCIDENT_ID={recovery.C5_C4_INCIDENT_ID}",
+                f"INCIDENT_BODY_SHA256={recovery.C5_C4_INCIDENT_BODY_SHA256}",
+                f"MALFORMED_AUTHORITY_ID={recovery.C5_C4_MALFORMED_AUTHORITY_ID}",
+                f"MALFORMED_AUTHORITY_BODY_SHA256={recovery.C5_C4_MALFORMED_AUTHORITY_BODY_SHA256}",
+                f"INVALID_TERMINAL_ID={recovery.C5_C4_INVALID_TERMINAL_ID}",
+                f"INVALID_TERMINAL_BODY_SHA256={recovery.C5_C4_INVALID_TERMINAL_BODY_SHA256}",
+                f"SAVED_PLAN_SHA256={recovery.C5_C4_SAVED_PLAN_SHA256}",
+                f"STRUCTURAL_MANIFEST_SHA256={recovery.C5_C4_STRUCTURAL_MANIFEST_SHA256}",
+                f"CURRENT_MAIN={recovery.C5_BASE_MAIN}",
+                f"BOOTSTRAP_STATE_LINEAGE={recovery.C5_BOOTSTRAP_STATE_LINEAGE}",
+                f"BOOTSTRAP_STATE_SERIAL={recovery.C5_BOOTSTRAP_STATE_SERIAL}",
+                "LIVE_RECOVERY_WIF=C4_ONLY",
+                "POST_APPLY_RECONCILIATION=EXACT_NO_CHANGE",
+                "NON_RETROACTIVE_ACK=TRUE",
+                "DISPOSITION=RETAIN_EXACT_EFFECT",
+                "AUTHORITY_SCOPE=C5_INERT_CONTROL_IMPLEMENTATION_ONLY",
+            )
+        )
+        baseline_body = "\n".join(
+            (
+                "RETAINED_C4_EFFECT_BASELINE_V1",
+                "STATUS=C5_RETAINED_EFFECT_BASELINE_ESTABLISHED",
+                "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+                f"OWNER_DISPOSITION_COMMENT_ID={recovery.C5_OWNER_DISPOSITION_COMMENT_ID}",
+                f"OWNER_DISPOSITION_BODY_SHA256={recovery.C5_OWNER_DISPOSITION_BODY_SHA256}",
+                "DISPOSITION=RETAIN_EXACT_EFFECT",
+                "AUTHORITY_SCOPE=C5_INERT_CONTROL_IMPLEMENTATION_ONLY",
+                f"C5_ARCHITECTURE_COMMENT_ID={recovery.C5_ARCHITECTURE_COMMENT_ID}",
+                f"C5_ARCHITECTURE_BODY_SHA256={recovery.C5_ARCHITECTURE_BODY_SHA256}",
+                f"C5_ARCHITECTURE_REVIEW_COMMENT_ID={recovery.C5_ARCHITECTURE_REVIEW_COMMENT_ID}",
+                f"C5_ARCHITECTURE_REVIEW_BODY_SHA256={recovery.C5_ARCHITECTURE_REVIEW_BODY_SHA256}",
+                f"INCIDENT_ID={recovery.C5_C4_INCIDENT_ID}",
+                f"MALFORMED_C4_AUTHORITY_ID={recovery.C5_C4_MALFORMED_AUTHORITY_ID}",
+                f"INVALID_C4_TERMINAL_ID={recovery.C5_C4_INVALID_TERMINAL_ID}",
+                f"CURRENT_MAIN={recovery.C5_BASE_MAIN}",
+                "REPOSITORY_CALLER=C4",
+                "REPOSITORY_DESIRED_WIF=C4",
+                "LIVE_RECOVERY_WIF=C4_ONLY",
+                f"BOOTSTRAP_STATE_LINEAGE={recovery.C5_BOOTSTRAP_STATE_LINEAGE}",
+                f"BOOTSTRAP_STATE_SERIAL={recovery.C5_BOOTSTRAP_STATE_SERIAL}",
+                "BOOTSTRAP_STATE_RESOURCE_COUNT=138",
+                "C2_RECOVERY_CLAIM_RESULT=ABSENT",
+                "C3_RECOVERY_CLAIM_RESULT=ABSENT",
+                "C4_RECOVERY_CLAIM_RESULT=ABSENT",
+                "BOOTSTRAP_LOCK=ABSENT",
+                "ACTIVE_GITHUB_ACTIONS_RUNS=0",
+                "PHASE5_WIF_STATE_RESOURCES=8",
+                "ALL_PHASE5_WIF_LIVE_MATCHES=PASS",
+                "GETMETADATA_PLAN_ROLE=PRESENT",
+                "GETMETADATA_APPLY_ROLE=PRESENT",
+                "BOOTSTRAP_RECONCILIATION=EXACT_NO_CHANGE",
+                "TERRAFORM_PLAN_EXIT=0",
+                "NON_RETROACTIVE_ACK=TRUE",
+                "C4_DISPATCH=PERMANENTLY_FORBIDDEN",
+                "CLOUD_MUTATION=NOT_AUTHORISED",
+                "NEXT_AUTHORISED_SCOPE=C5_INERT_CONTROL_IMPLEMENTATION_ONLY",
+            )
+        )
+        comments = [
+            owner_comment(
+                recovery.C5_ARCHITECTURE_COMMENT_ID,
+                arch_body,
+                "2026-10-04T04:16:28Z",
+            ),
+            owner_comment(
+                recovery.C5_ARCHITECTURE_REVIEW_COMMENT_ID,
+                review_body,
+                "2026-10-04T04:17:21Z",
+            ),
+            owner_comment(
+                recovery.C5_OWNER_DISPOSITION_COMMENT_ID,
+                disposition_body,
+                "2026-10-05T00:10:02Z",
+            ),
+            owner_comment(
+                recovery.C5_RETAINED_BASELINE_COMMENT_ID,
+                baseline_body,
+                "2026-10-05T02:25:00Z",
+            ),
+        ]
+        self.assertEqual(
+            recovery.sha256(disposition_body.encode()),
+            recovery.C5_OWNER_DISPOSITION_BODY_SHA256,
+        )
+        self.assertEqual(
+            recovery.sha256(baseline_body.encode()),
+            recovery.C5_RETAINED_BASELINE_BODY_SHA256,
+        )
+        original_fixed = recovery._successor_fixed_comment
+
+        def synthetic_fixed(rows, comment_id, body_sha256, label):
+            if label in {"C5_ARCHITECTURE", "C5_ARCHITECTURE_REVIEW"}:
+                row = next(item for item in rows if item["id"] == comment_id)
+                created, observed = recovery._require_unedited_owner_comment(
+                    row, recovery.GOVERNING_ISSUE, label
+                )
+                return {
+                    "comment_id": comment_id,
+                    "created_at": created,
+                    "body_sha256": observed,
+                    "body": row["body"],
+                }
+            return original_fixed(rows, comment_id, body_sha256, label)
+
+        with patch.object(
+            recovery, "_successor_fixed_comment", side_effect=synthetic_fixed
+        ):
+            result = recovery.validate_c5_governance_history(comments)
+        self.assertEqual(
+            result["retained_baseline"]["comment_id"],
+            recovery.C5_RETAINED_BASELINE_COMMENT_ID,
+        )
+
+
+    def _c5_wif_plan(self, old_control=None, new_control=None):
+        old_control = old_control or recovery.C5_OLD_RECOVERY_CONTROL_SHA
+        new_control = new_control or ("d" * 40)
+        prefix = (
+            "principalSet://iam.googleapis.com/projects/400271474382/"
+            "locations/global/workloadIdentityPools/github/"
+            "attribute.job_workflow_ref/8ft0-ai/resilio/"
+            ".github/workflows/phase5-slice-c-recovery-reusable.yml@"
+        )
+        before = {
+            "id": "old-id",
+            "member": prefix + old_control,
+            "role": "roles/iam.workloadIdentityUser",
+            "service_account_id": (
+                "projects/resilio-control-e882d4/serviceAccounts/"
+                "github-p5-product-planner@resilio-control-e882d4."
+                "iam.gserviceaccount.com"
+            ),
+        }
+        after = dict(before)
+        after["id"] = None
+        after["member"] = prefix + new_control
+        return {
+            "format_version": "1.2",
+            "terraform_version": "1.15.8",
+            "applyable": True,
+            "complete": True,
+            "errored": False,
+            "resource_changes": [
+                {
+                    "address": (
+                        "google_service_account_iam_member."
+                        "github_phase5_slice_c_recovery"
+                    ),
+                    "mode": "managed",
+                    "type": "google_service_account_iam_member",
+                    "name": "github_phase5_slice_c_recovery",
+                    "change": {
+                        "actions": ["delete", "create"],
+                        "before": before,
+                        "after": after,
+                    },
+                }
+            ],
+            "resource_drift": [],
+            "deferred_changes": [],
+            "deferred_action_invocations": [],
+            "action_invocations": [],
+            "output_changes": {},
+        }
+
+    def _c5_structural_manifest(self, new_control=None):
+        new_control = new_control or ("d" * 40)
+        prefix = (
+            "principalSet://iam.googleapis.com/projects/400271474382/"
+            "locations/global/workloadIdentityPools/github/"
+            "attribute.job_workflow_ref/8ft0-ai/resilio/"
+            ".github/workflows/phase5-slice-c-recovery-reusable.yml@"
+        )
+        service_account = (
+            "projects/resilio-control-e882d4/serviceAccounts/"
+            "github-p5-product-planner@resilio-control-e882d4.iam.gserviceaccount.com"
+        )
+        return {
+            "applyable": True,
+            "complete": True,
+            "errored": False,
+            "output_change_count": 0,
+            "plan_format_version": "1.2",
+            "resource_change_count": 1,
+            "resource_effects": [
+                {
+                    "action_reason": "replace_because_cannot_update",
+                    "actions": ["delete", "create"],
+                    "address": (
+                        "google_service_account_iam_member."
+                        "github_phase5_slice_c_recovery"
+                    ),
+                    "after_member": prefix + new_control,
+                    "after_role": "roles/iam.workloadIdentityUser",
+                    "after_service_account_id": service_account,
+                    "before_member": (
+                        prefix + recovery.C5_OLD_RECOVERY_CONTROL_SHA
+                    ),
+                    "before_role": "roles/iam.workloadIdentityUser",
+                    "before_service_account_id": service_account,
+                    "mode": "managed",
+                    "name": "github_phase5_slice_c_recovery",
+                    "type": "google_service_account_iam_member",
+                }
+            ],
+            "schema": "resilio-bootstrap-wif-repin-structural-manifest/v1",
+            "terraform_version": "1.15.8",
+        }
+
+    def _c5_bootstrap_state(self):
+        prefix = (
+            "principalSet://iam.googleapis.com/projects/400271474382/"
+            "locations/global/workloadIdentityPools/github/"
+            "attribute.job_workflow_ref/8ft0-ai/resilio/.github/workflows/"
+        )
+        resources = [
+            {
+                "mode": "managed",
+                "type": "null_resource",
+                "name": f"baseline_{index}",
+                "instances": [{"attributes": {}}],
+            }
+            for index in range(
+                recovery.C5_EXPECTED_BOOTSTRAP_RESOURCE_COUNT
+                - len(recovery.C5_EXPECTED_PHASE5_WIF_ROWS)
+            )
+        ]
+        for name, (email, workflow, sha) in (
+            recovery.C5_EXPECTED_PHASE5_WIF_ROWS.items()
+        ):
+            resources.append(
+                {
+                    "mode": "managed",
+                    "type": "google_service_account_iam_member",
+                    "name": name,
+                    "instances": [
+                        {
+                            "attributes": {
+                                "service_account_id": (
+                                    "projects/resilio-control-e882d4/"
+                                    "serviceAccounts/" + email
+                                ),
+                                "role": "roles/iam.workloadIdentityUser",
+                                "member": prefix + workflow + "@" + sha,
+                            }
+                        }
+                    ],
+                }
+            )
+        return {
+            "lineage": recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            "serial": recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            "resources": resources,
+        }
+
+    def test_c5_wif_plan_requires_exact_one_old_to_new_replacement(self):
+        control = "d" * 40
+        plan = self._c5_wif_plan(new_control=control)
+        result = recovery.c5_verify_wif_repin_plan(
+            plan, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+        )
+        self.assertEqual(
+            result["plan_effects"],
+            "EXACT_ONE_RECOVERY_WIF_SUBJECT_REPIN_OLD_TO_NEW",
+        )
+        hostile = copy.deepcopy(plan)
+        hostile["output_changes"] = {"x": {"actions": ["update"]}}
+        with self.assertRaises(RecoveryError):
+            recovery.c5_verify_wif_repin_plan(
+                hostile, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+            )
+        hostile = copy.deepcopy(plan)
+        hostile["resource_changes"].append(copy.deepcopy(plan["resource_changes"][0]))
+        with self.assertRaises(RecoveryError):
+            recovery.c5_verify_wif_repin_plan(
+                hostile, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+            )
+        hostile = copy.deepcopy(plan)
+        hostile["resource_changes"][0]["change"]["after"]["role"] = "roles/editor"
+        with self.assertRaises(RecoveryError):
+            recovery.c5_verify_wif_repin_plan(
+                hostile, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+            )
+        hostile = copy.deepcopy(plan)
+        hostile["applyable"] = False
+        with self.assertRaises(RecoveryError):
+            recovery.c5_verify_wif_repin_plan(
+                hostile, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+            )
+
+    def test_c5_structural_manifest_exactly_matches_old_to_new_effect(self):
+        control = "d" * 40
+        manifest = self._c5_structural_manifest(control)
+        result = recovery.c5_verify_structural_manifest(
+            manifest, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+        )
+        self.assertEqual(result["resource_change_count"], 1)
+        hostile = copy.deepcopy(manifest)
+        hostile["resource_effects"][0]["after_role"] = "roles/editor"
+        with self.assertRaises(RecoveryError):
+            recovery.c5_verify_structural_manifest(
+                hostile, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+            )
+        hostile = copy.deepcopy(manifest)
+        hostile["unexpected"] = True
+        with self.assertRaises(RecoveryError):
+            recovery.c5_verify_structural_manifest(
+                hostile, recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+            )
+
+    def test_c5_bootstrap_live_iam_requires_all_eight_and_c4_only(self):
+        state = self._c5_bootstrap_state()
+        policies = {}
+        for resource in state["resources"]:
+            if resource.get("type") != "google_service_account_iam_member":
+                continue
+            attrs = resource["instances"][0]["attributes"]
+            email = attrs["service_account_id"].split("/serviceAccounts/", 1)[1]
+            policy = policies.setdefault(email, {"bindings": []})
+            binding = next(
+                (
+                    item
+                    for item in policy["bindings"]
+                    if item["role"] == attrs["role"]
+                ),
+                None,
+            )
+            if binding is None:
+                binding = {"role": attrs["role"], "members": []}
+                policy["bindings"].append(binding)
+            binding["members"].append(attrs["member"])
+
+        with (
+            patch.object(
+                recovery,
+                "_c5_iam_policy",
+                side_effect=lambda email: copy.deepcopy(policies[email]),
+            ),
+            patch.object(
+                recovery,
+                "_c5_role",
+                side_effect=lambda role_id: {
+                    "includedPermissions": list(
+                        recovery.C5_EXPECTED_ROLE_PERMISSIONS[role_id]
+                    )
+                },
+            ),
+        ):
+            result = recovery.verify_c5_bootstrap_state_and_live_iam(
+                state, "d" * 40
+            )
+        self.assertEqual(result["phase5_wif_state_resources"], 8)
+        self.assertEqual(result["live_recovery_wif"], "OLD_ONLY")
+
+        bad = copy.deepcopy(policies)
+        recovery_member = next(
+            resource["instances"][0]["attributes"]
+            for resource in state["resources"]
+            if resource["name"] == "github_phase5_slice_c_recovery"
+        )
+        email = recovery_member["service_account_id"].split(
+            "/serviceAccounts/", 1
+        )[1]
+        bad[email]["bindings"][0]["members"].append(
+            recovery_member["member"].rsplit("@", 1)[0] + "@" + ("d" * 40)
+        )
+        with (
+            patch.object(
+                recovery,
+                "_c5_iam_policy",
+                side_effect=lambda value: copy.deepcopy(bad[value]),
+            ),
+            patch.object(
+                recovery,
+                "_c5_role",
+                side_effect=lambda role_id: {
+                    "includedPermissions": list(
+                        recovery.C5_EXPECTED_ROLE_PERMISSIONS[role_id]
+                    )
+                },
+            ),
+            self.assertRaises(RecoveryError),
+        ):
+            recovery.verify_c5_bootstrap_state_and_live_iam(state, "d" * 40)
+
+    def test_c5_repository_activation_requires_exact_caller_and_desired_pin(self):
+        control = "d" * 40
+        activation = "e" * 40
+        values = {
+            ".github/workflows/phase5-slice-c-recovery.yml": (
+                "uses: 8ft0-ai/resilio/.github/workflows/"
+                "phase5-slice-c-recovery-reusable.yml@" + control
+            ),
+            "infra/bootstrap/phase5_authority.tf": (
+                'phase5_slice_c_recovery_workflow_ref = '
+                '"8ft0-ai/resilio/.github/workflows/'
+                "phase5-slice-c-recovery-reusable.yml@" + control + '"'
+            ),
+        }
+        with patch.object(
+            recovery,
+            "_c5_fetch_repo_text",
+            side_effect=lambda path, ref: values[path],
+        ):
+            result = recovery.verify_c5_repository_activation(
+                activation, control
+            )
+        self.assertEqual(result["repository_caller"], "NEW_CONTROL")
+
+        hostile = dict(values)
+        hostile[".github/workflows/phase5-slice-c-recovery.yml"] = hostile[
+            ".github/workflows/phase5-slice-c-recovery.yml"
+        ].replace(control, recovery.C5_OLD_RECOVERY_CONTROL_SHA)
+        with (
+            patch.object(
+                recovery,
+                "_c5_fetch_repo_text",
+                side_effect=lambda path, ref: hostile[path],
+            ),
+            self.assertRaises(RecoveryError),
+        ):
+            recovery.verify_c5_repository_activation(activation, control)
+
+    def test_c5_activation_file_transform_is_exact_two_file_sha_repin(self):
+        control = "d" * 40
+        reviewed = "e" * 40
+        base_values = {
+            ".github/workflows/phase5-slice-c-recovery.yml": (
+                "jobs:\n  recover:\n    uses: repo/reusable.yml@"
+                + recovery.C5_OLD_RECOVERY_CONTROL_SHA
+                + "\n"
+            ),
+            "infra/bootstrap/phase5_authority.tf": (
+                'x = "workflow@'
+                + recovery.C5_OLD_RECOVERY_CONTROL_SHA
+                + '"\n'
+            ),
+        }
+
+        def fetch(path, ref):
+            value = base_values[path]
+            if ref == reviewed:
+                return value.replace(
+                    recovery.C5_OLD_RECOVERY_CONTROL_SHA, control
+                )
+            return value
+
+        with patch.object(
+            recovery, "_c5_fetch_repo_text", side_effect=fetch
+        ):
+            recovery._c5_verify_activation_file_transform(control, reviewed)
+
+        def hostile(path, ref):
+            value = fetch(path, ref)
+            if ref == reviewed and path.endswith("phase5_authority.tf"):
+                return value + "unrelated = true\n"
+            return value
+
+        with (
+            patch.object(
+                recovery, "_c5_fetch_repo_text", side_effect=hostile
+            ),
+            self.assertRaises(RecoveryError),
+        ):
+            recovery._c5_verify_activation_file_transform(control, reviewed)
+
+    def test_c5_control_and_activation_authority_constructors_are_strict(self):
+        head = "d" * 40
+        review = recovery.c5_control_implementation_review_body(140, head)
+        review_sha = recovery.sha256(review.encode())
+        authority = recovery.c5_control_merge_authority_body(
+            140, head, 901, review_sha
+        )
+        self.assertIn(
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_INERT_CONTROL_ONLY",
+            authority,
+        )
+        with self.assertRaises(RecoveryError):
+            recovery.c5_control_merge_authority_body(
+                140, head, 901, review_sha[:-1]
+            )
+
+        control = "e" * 40
+        activation_review = recovery.c5_activation_review_body(
+            control, 141, "f" * 40
+        )
+        activation_review_sha = recovery.sha256(activation_review.encode())
+        activation_authority = recovery.c5_activation_merge_authority_body(
+            control, 141, "f" * 40, 902, activation_review_sha
+        )
+        self.assertIn(
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_REPOSITORY_ACTIVATION_ONLY",
+            activation_authority,
+        )
+        with self.assertRaises(RecoveryError):
+            recovery.c5_activation_review_body(
+                recovery.C5_OLD_RECOVERY_CONTROL_SHA, 141, "f" * 40
+            )
+
+    def test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready(self):
+        control = "d" * 40
+        activation = "e" * 40
+        plan = self._c5_wif_plan(new_control=control)
+        state_live = {
+            "state_lineage": recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            "state_serial": recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            "phase5_wif_state_resources": 8,
+            "all_phase5_wif_live_matches": True,
+            "live_recovery_wif": "OLD_ONLY",
+            "getmetadata_unchanged": True,
+            "normal_phase5_identities_unchanged": True,
+        }
+        review_hash = "a" * 64
+        authority_hash = "b" * 64
+        authority_time = recovery._timestamp(
+            "2026-10-05T03:00:00Z", "authority"
+        )
+        governance = {
+            "architecture": {"comment_id": recovery.C5_ARCHITECTURE_COMMENT_ID},
+            "architecture_review": {
+                "comment_id": recovery.C5_ARCHITECTURE_REVIEW_COMMENT_ID
+            },
+            "disposition": {
+                "comment_id": recovery.C5_OWNER_DISPOSITION_COMMENT_ID
+            },
+            "retained_baseline": {
+                "comment_id": recovery.C5_RETAINED_BASELINE_COMMENT_ID
+            },
+        }
+        activation_record = {
+            "comment_id": 950,
+            "body_sha256": "c" * 64,
+            "control_record_comment_id": 949,
+            "control_record_body_sha256": "d" * 64,
+        }
+        comments = []
+
+        def fake_github(path):
+            if path == f"/repos/{recovery.REPOSITORY}/branches/{recovery.DEFAULT_BRANCH}":
+                return {"commit": {"sha": activation}}
+            if path.startswith(
+                f"/repos/{recovery.REPOSITORY}/actions/runs?"
+            ):
+                return {"total_count": 0}
+            raise AssertionError(path)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            saved = root / "plan.tfplan"
+            manifest = root / "manifest.json"
+            saved.write_bytes(b"frozen-plan")
+            manifest.write_bytes(
+                recovery.canonical(self._c5_structural_manifest(control))
+            )
+
+            def common_patches():
+                return (
+                    patch.object(recovery, "github", side_effect=fake_github),
+                    patch.object(
+                        recovery,
+                        "github_issue_comments",
+                        side_effect=lambda issue: copy.deepcopy(comments),
+                    ),
+                    patch.object(
+                        recovery,
+                        "verify_c5_repository_activation",
+                        return_value={"verified": True},
+                    ),
+                    patch.object(
+                        recovery,
+                        "_c5_saved_plan_json",
+                        return_value=copy.deepcopy(plan),
+                    ),
+                    patch.object(
+                        recovery,
+                        "validate_c5_governance_history",
+                        return_value=governance,
+                    ),
+                    patch.object(
+                        recovery,
+                        "validate_c5_activation_record",
+                        return_value=activation_record,
+                    ),
+                    patch.object(
+                        recovery, "_successor_gcs_json", return_value={}
+                    ),
+                    patch.object(
+                        recovery,
+                        "verify_c5_bootstrap_state_and_live_iam",
+                        return_value=state_live,
+                    ),
+                    patch.object(
+                        recovery,
+                        "_successor_gcs_metadata",
+                        return_value=None,
+                    ),
+                    patch.object(
+                        recovery,
+                        "_c5_validate_plan_review_and_authority",
+                        return_value={
+                            "review_comment_id": 901,
+                            "review_body_sha256": review_hash,
+                            "review_created_at": recovery._timestamp(
+                                "2026-10-05T02:59:00Z", "review"
+                            ),
+                            "authority_comment_id": 902,
+                            "authority_body_sha256": authority_hash,
+                            "authority_created_at": authority_time,
+                        },
+                    ),
+                )
+
+            patches = common_patches()
+            for item in patches:
+                item.start()
+            try:
+                first = recovery.verify_c5_wif_repin_pre_effect(
+                    successor_control_sha=control,
+                    activation_main=activation,
+                    saved_plan_path=saved,
+                    terraform_workdir=root,
+                    structural_manifest_path=manifest,
+                    fresh_review_comment_id=901,
+                    owner_apply_authority_comment_id=902,
+                )
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+            self.assertEqual(first["phase"], "CLAIM_READY")
+            self.assertFalse(first["ready_for_effect"])
+            self.assertEqual(first["attempt_generation"], 1)
+
+            comments.append(
+                owner_comment(
+                    903,
+                    first["attempt_claim_body"],
+                    "2026-10-05T03:01:00Z",
+                )
+            )
+            patches = common_patches()
+            for item in patches:
+                item.start()
+            try:
+                second = recovery.verify_c5_wif_repin_pre_effect(
+                    successor_control_sha=control,
+                    activation_main=activation,
+                    saved_plan_path=saved,
+                    terraform_workdir=root,
+                    structural_manifest_path=manifest,
+                    fresh_review_comment_id=901,
+                    owner_apply_authority_comment_id=902,
+                    posted_claim_comment_id=903,
+                )
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+            self.assertEqual(second["phase"], "EFFECT_READY")
+            self.assertTrue(second["ready_for_effect"])
+            self.assertEqual(second["attempt_generation"], 1)
+
+            stale = copy.deepcopy(comments)
+            stale[0]["body"] = stale[0]["body"].replace(
+                "PRECONDITION_DIGEST_SHA256=",
+                "PRECONDITION_DIGEST_SHA256=0",
+                1,
+            )
+            comments[:] = stale
+            patches = common_patches()
+            for item in patches:
+                item.start()
+            try:
+                with self.assertRaises(RecoveryError):
+                    recovery.verify_c5_wif_repin_pre_effect(
+                        successor_control_sha=control,
+                        activation_main=activation,
+                        saved_plan_path=saved,
+                        terraform_workdir=root,
+                        structural_manifest_path=manifest,
+                        fresh_review_comment_id=901,
+                        owner_apply_authority_comment_id=902,
+                        posted_claim_comment_id=903,
+                    )
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+
+
 if __name__ == "__main__":
     unittest.main()
