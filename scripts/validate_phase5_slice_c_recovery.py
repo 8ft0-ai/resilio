@@ -780,7 +780,7 @@ def main() -> int:
             'commands.add_parser("emit-c5-wif-repin-authority")',
             'commands.add_parser("verify-c5-wif-repin-pre-effect")',
             'commands.add_parser("apply-c5-wif-repin-effect")',
-            'commands.add_parser("emit-c5-wif-observation")',
+            'commands.add_parser("post-c5-wif-observation")',
             'commands.add_parser("emit-c5-wif-terminal-v2")',
             'commands.add_parser("emit-c5-dispatch-authority-v2")',
         ),
