@@ -3140,6 +3140,10 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                     "2026-10-05T00:59:00Z", "activation"
                 )
             },
+        ), patch.object(
+            recovery,
+            "_c5_validate_observation_execution",
+            return_value=c5_test_run(8001, chain["activation"]),
         ):
             result = recovery.validate_c5_attempt_generation_transition(
                 comments,
@@ -3174,6 +3178,10 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                     "2026-10-05T00:59:00Z", "activation"
                 )
             },
+        ), patch.object(
+            recovery,
+            "_c5_validate_observation_execution",
+            return_value=c5_test_run(8001, success["activation"]),
         ):
             with self.assertRaisesRegex(
                 RecoveryError, "C5_TRANSITION_PREDECESSOR_NOT_NO_EFFECT_STABLE"
