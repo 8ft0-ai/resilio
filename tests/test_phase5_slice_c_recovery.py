@@ -2673,12 +2673,17 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
         # but the durable GitHub record was actually created only one second later.
         forged_comment["created_at"] = "2026-10-05T01:03:01Z"
         forged_comment["updated_at"] = forged_comment["created_at"]
-        forged = recovery.validate_c5_wif_repin_observation(
-            forged_comment,
-            chain["control"],
-            chain["activation"],
-            chain["claim"],
-        )
+        with patch.object(
+            recovery,
+            "_c5_validate_observation_execution",
+            return_value=c5_test_run(8001, chain["activation"]),
+        ):
+            forged = recovery.validate_c5_wif_repin_observation(
+                forged_comment,
+                chain["control"],
+                chain["activation"],
+                chain["claim"],
+            )
         self.assertEqual(
             (forged["observed_at"] - chain["obs1"]["observed_at"]).total_seconds(),
             60,
@@ -2925,6 +2930,8 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             recovery, "verify_c5_wif_repin_observation", return_value=verified
         ), patch.object(
             recovery, "request_json", return_value=posted
+        ), patch.object(
+            recovery, "github_token", return_value="test-token"
         ):
             result = recovery.post_c5_wif_repin_observation(
                 successor_control_sha=chain["control"],
@@ -2940,6 +2947,8 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             recovery, "verify_c5_wif_repin_observation", return_value=verified
         ), patch.object(
             recovery, "request_json", return_value=forged
+        ), patch.object(
+            recovery, "github_token", return_value="test-token"
         ):
             with self.assertRaisesRegex(
                 RecoveryError, "C5_OBSERVATION_DURABLE_POST_PROVENANCE_INVALID"
