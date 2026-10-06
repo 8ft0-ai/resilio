@@ -5448,6 +5448,10 @@ def validate_c5_activation_record(
 # interpreters; the public successor runtime entrypoint is rebound to C5.
 _legacy_verify_successor_github_boundary = verify_successor_github_boundary
 
+C5_OBSERVATION_BOT_LOGIN = "github-actions[bot]"
+C5_OBSERVATION_BOT_ID = 41898282
+C5_OBSERVATION_WORKFLOW_PATH = ".github/workflows/phase5-slice-c-recovery-reusable.yml"
+
 C5_OBSERVATION_FIELDS = (
     "GOVERNING_ISSUE",
     "C5_PROTOCOL_EPOCH_SHA256",
@@ -5458,6 +5462,10 @@ C5_OBSERVATION_FIELDS = (
     "ATTEMPT_SERIES_ID_SHA256",
     "ATTEMPT_GENERATION",
     "PRECONDITION_DIGEST_SHA256",
+    "VERIFIER_RUN_ID",
+    "VERIFIER_RUN_ATTEMPT",
+    "VERIFIER_HEAD_SHA",
+    "VERIFIER_WORKFLOW_REF",
     "OBSERVED_AT",
     "BOOTSTRAP_STATE_LINEAGE",
     "BOOTSTRAP_STATE_SERIAL",
@@ -5500,6 +5508,10 @@ def c5_wif_repin_observation_body(
     attempt_series_id_sha256: str,
     attempt_generation: int,
     precondition_digest_sha256: str,
+    verifier_run_id: int,
+    verifier_run_attempt: int,
+    verifier_head_sha: str,
+    verifier_workflow_ref: str,
     observed_at: str,
     state_lineage: str,
     state_serial: int,
@@ -5536,6 +5548,15 @@ def c5_wif_repin_observation_body(
         (reconciliation_plan_sha256, "RECONCILIATION_PLAN"),
     ):
         _c5_require_hash(value, f"C5_OBSERVATION_{label}_HASH")
+    _c5_positive(verifier_run_id, "C5_OBSERVATION_VERIFIER_RUN_ID")
+    _c5_positive(verifier_run_attempt, "C5_OBSERVATION_VERIFIER_RUN_ATTEMPT")
+    _c5_require_sha(verifier_head_sha, "C5_OBSERVATION_VERIFIER_HEAD")
+    expected_workflow_prefix = REPOSITORY + "/" + C5_OBSERVATION_WORKFLOW_PATH + "@"
+    if (
+        verifier_head_sha != successor_activation_main
+        or not verifier_workflow_ref.startswith(expected_workflow_prefix)
+    ):
+        raise RecoveryError("C5_OBSERVATION_VERIFIER_EXECUTION_IDENTITY_INVALID")
     _timestamp(observed_at, "C5_OBSERVATION_OBSERVED_AT")
     _c5_require_lineage(state_lineage, "C5_OBSERVATION_LINEAGE")
     _c5_nonnegative(state_serial, "C5_OBSERVATION_SERIAL")
@@ -5565,6 +5586,10 @@ def c5_wif_repin_observation_body(
         "ATTEMPT_SERIES_ID_SHA256": attempt_series_id_sha256,
         "ATTEMPT_GENERATION": str(attempt_generation),
         "PRECONDITION_DIGEST_SHA256": precondition_digest_sha256,
+        "VERIFIER_RUN_ID": str(verifier_run_id),
+        "VERIFIER_RUN_ATTEMPT": str(verifier_run_attempt),
+        "VERIFIER_HEAD_SHA": verifier_head_sha,
+        "VERIFIER_WORKFLOW_REF": verifier_workflow_ref,
         "OBSERVED_AT": observed_at,
         "BOOTSTRAP_STATE_LINEAGE": state_lineage,
         "BOOTSTRAP_STATE_SERIAL": str(state_serial),
@@ -5596,15 +5621,77 @@ def c5_wif_repin_observation_body(
     )
 
 
+def _c5_observation_execution_identity(
+    successor_activation_main: str,
+) -> dict[str, Any]:
+    run_id = _positive_int(os.environ.get("GITHUB_RUN_ID", ""), "C5_OBSERVATION_RUN_ID")
+    run_attempt = _positive_int(
+        os.environ.get("GITHUB_RUN_ATTEMPT", ""), "C5_OBSERVATION_RUN_ATTEMPT"
+    )
+    head_sha = os.environ.get("GITHUB_SHA", "")
+    workflow_ref = os.environ.get("GITHUB_WORKFLOW_REF", "")
+    _c5_require_sha(head_sha, "C5_OBSERVATION_RUN_HEAD")
+    expected_prefix = REPOSITORY + "/" + C5_OBSERVATION_WORKFLOW_PATH + "@"
+    if head_sha != successor_activation_main or not workflow_ref.startswith(expected_prefix):
+        raise RecoveryError("C5_OBSERVATION_VERIFIER_CONTEXT_INVALID")
+    return {
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "head_sha": head_sha,
+        "workflow_ref": workflow_ref,
+    }
+
+
+def _c5_validate_observation_execution(fields: dict[str, str]) -> dict[str, Any]:
+    run_id = _positive_int(fields["VERIFIER_RUN_ID"], "C5_OBSERVATION_RUN_ID")
+    run_attempt = _positive_int(
+        fields["VERIFIER_RUN_ATTEMPT"], "C5_OBSERVATION_RUN_ATTEMPT"
+    )
+    _c5_require_sha(fields["VERIFIER_HEAD_SHA"], "C5_OBSERVATION_RUN_HEAD")
+    expected_prefix = REPOSITORY + "/" + C5_OBSERVATION_WORKFLOW_PATH + "@"
+    if not fields["VERIFIER_WORKFLOW_REF"].startswith(expected_prefix):
+        raise RecoveryError("C5_OBSERVATION_WORKFLOW_REF_INVALID")
+    run = github(f"/repos/{REPOSITORY}/actions/runs/{run_id}")
+    if (
+        not isinstance(run, dict)
+        or run.get("id") != run_id
+        or run.get("run_attempt") != run_attempt
+        or run.get("head_sha") != fields["VERIFIER_HEAD_SHA"]
+        or run.get("path") != C5_OBSERVATION_WORKFLOW_PATH
+        or (run.get("repository") or {}).get("full_name") != REPOSITORY
+    ):
+        raise RecoveryError("C5_OBSERVATION_VERIFIER_RUN_MISMATCH")
+    return run
+
+
+def _require_unedited_c5_observation_comment(
+    comment: Any,
+) -> tuple[datetime, str]:
+    if not isinstance(comment, dict):
+        raise RecoveryError("C5_OBSERVATION_COMMENT_INVALID")
+    user = comment.get("user") or {}
+    if (
+        user.get("login") != C5_OBSERVATION_BOT_LOGIN
+        or user.get("id") != C5_OBSERVATION_BOT_ID
+        or not str(comment.get("issue_url") or "").endswith(
+            f"/issues/{GOVERNING_ISSUE}"
+        )
+    ):
+        raise RecoveryError("C5_OBSERVATION_VERIFIER_COMMENT_INVALID")
+    created = _timestamp(comment.get("created_at"), "C5_OBSERVATION_CREATED")
+    updated = _timestamp(comment.get("updated_at"), "C5_OBSERVATION_UPDATED")
+    if created != updated:
+        raise RecoveryError("C5_OBSERVATION_COMMENT_EDITED")
+    return created, _comment_body_sha256(comment, "C5_OBSERVATION")
+
+
 def validate_c5_wif_repin_observation(
     comment: dict[str, Any],
     successor_control_sha: str,
     activation_main: str,
     expected_claim: dict[str, Any],
 ) -> dict[str, Any]:
-    created, raw_hash = _require_unedited_owner_comment(
-        comment, GOVERNING_ISSUE, "C5_OBSERVATION"
-    )
+    created, raw_hash = _require_unedited_c5_observation_comment(comment)
     fields = _record_fields(
         str(comment.get("body") or ""),
         "PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",
@@ -5618,6 +5705,7 @@ def validate_c5_wif_repin_observation(
     if (
         fields["SUCCESSOR_CONTROL_SHA"] != successor_control_sha
         or fields["SUCCESSOR_ACTIVATION_MAIN"] != activation_main
+        or fields["VERIFIER_HEAD_SHA"] != activation_main
     ):
         raise RecoveryError("C5_OBSERVATION_TARGET_MISMATCH")
     if fields["OBSERVATION_COMPLETE"] != "TRUE":
@@ -5646,7 +5734,10 @@ def validate_c5_wif_repin_observation(
         "FACT_DIGEST_SHA256",
     ):
         _c5_require_hash(fields[name], f"C5_OBSERVATION_{name}")
-    _c5_nonnegative(int(fields["UNEXPECTED_RECOVERY_WIF_COUNT"]), "C5_OBSERVATION_UNEXPECTED_WIF_COUNT")
+    _c5_nonnegative(
+        int(fields["UNEXPECTED_RECOVERY_WIF_COUNT"]),
+        "C5_OBSERVATION_UNEXPECTED_WIF_COUNT",
+    )
     if fields["BOOTSTRAP_STATE_LINEAGE"] != expected_claim["fields"]["BOOTSTRAP_STATE_LINEAGE_BEFORE"]:
         raise RecoveryError("C5_OBSERVATION_LINEAGE_MISMATCH")
     if (
@@ -5659,6 +5750,7 @@ def validate_c5_wif_repin_observation(
         != expected_claim["fields"]["PRECONDITION_DIGEST_SHA256"]
     ):
         raise RecoveryError("C5_OBSERVATION_CLAIM_BINDING_MISMATCH")
+    run = _c5_validate_observation_execution(fields)
     if created <= expected_claim["created_at"]:
         raise RecoveryError("C5_OBSERVATION_PRECEDES_ATTEMPT")
     return {
@@ -5667,6 +5759,8 @@ def validate_c5_wif_repin_observation(
         "observed_at": observed_at,
         "body_sha256": raw_hash,
         "fact_digest_sha256": digest,
+        "verifier_run_id": run["id"],
+        "verifier_run_attempt": run["run_attempt"],
         "fields": fields,
     }
 
@@ -5911,6 +6005,7 @@ def verify_c5_wif_repin_observation(
     _c5_require_sha(successor_control_sha, "C5_OBSERVE_CONTROL")
     _c5_require_sha(activation_main, "C5_OBSERVE_ACTIVATION")
     _c5_positive(attempt_claim_comment_id, "C5_OBSERVE_CLAIM_ID")
+    execution = _c5_observation_execution_identity(activation_main)
     observed_at = datetime.now(timezone.utc).isoformat(
         timespec="seconds"
     ).replace("+00:00", "Z")
@@ -5960,6 +6055,10 @@ def verify_c5_wif_repin_observation(
         attempt_series_id_sha256=claim["fields"]["ATTEMPT_SERIES_ID_SHA256"],
         attempt_generation=claim["generation"],
         precondition_digest_sha256=claim["fields"]["PRECONDITION_DIGEST_SHA256"],
+        verifier_run_id=execution["run_id"],
+        verifier_run_attempt=execution["run_attempt"],
+        verifier_head_sha=execution["head_sha"],
+        verifier_workflow_ref=execution["workflow_ref"],
         observed_at=observed_at,
         state_lineage=live["state_lineage"],
         state_serial=live["state_serial"],
@@ -5983,6 +6082,40 @@ def verify_c5_wif_repin_observation(
         "attempt_claim_comment_id": attempt_claim_comment_id,
         "reconciliation": reconciliation["reconciliation"],
         "verified_live": True,
+    }
+
+
+def post_c5_wif_repin_observation(
+    *,
+    successor_control_sha: str,
+    activation_main: str,
+    attempt_claim_comment_id: int,
+    terraform_workdir: str | Path,
+) -> dict[str, Any]:
+    result = verify_c5_wif_repin_observation(
+        successor_control_sha=successor_control_sha,
+        activation_main=activation_main,
+        attempt_claim_comment_id=attempt_claim_comment_id,
+        terraform_workdir=terraform_workdir,
+    )
+    posted = request_json(
+        f"https://api.github.com/repos/{REPOSITORY}/issues/{GOVERNING_ISSUE}/comments",
+        github_token(),
+        method="POST",
+        data=json.dumps({"body": result["body"]}, separators=(",", ":")).encode("utf-8"),
+        content_type="application/json",
+    )
+    if (
+        not isinstance(posted, dict)
+        or str(posted.get("body") or "") != result["body"]
+        or (posted.get("user") or {}).get("login") != C5_OBSERVATION_BOT_LOGIN
+        or (posted.get("user") or {}).get("id") != C5_OBSERVATION_BOT_ID
+    ):
+        raise RecoveryError("C5_OBSERVATION_DURABLE_POST_PROVENANCE_INVALID")
+    return {
+        **result,
+        "comment_id": _positive_int(str(posted.get("id") or ""), "C5_OBSERVATION_COMMENT_ID"),
+        "durably_posted": True,
     }
 
 
@@ -6625,7 +6758,7 @@ def main() -> int:
     p.add_argument("--authority-id", required=True, type=int)
     p.add_argument("--posted-claim-id", required=True, type=int)
 
-    p = commands.add_parser("emit-c5-wif-observation")
+    p = commands.add_parser("post-c5-wif-observation")
     p.add_argument("--successor-control-sha", required=True)
     p.add_argument("--activation-main", required=True)
     p.add_argument("--attempt-claim-comment-id", required=True, type=int)
@@ -6834,14 +6967,22 @@ def main() -> int:
                 posted_claim_comment_id=args.posted_claim_id,
             )
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
-        elif args.command == "emit-c5-wif-observation":
-            result = verify_c5_wif_repin_observation(
+        elif args.command == "post-c5-wif-observation":
+            result = post_c5_wif_repin_observation(
                 successor_control_sha=args.successor_control_sha,
                 activation_main=args.activation_main,
                 attempt_claim_comment_id=args.attempt_claim_comment_id,
                 terraform_workdir=args.terraform_workdir,
             )
-            print(result["body"])
+            print(json.dumps({
+                "comment_id": result["comment_id"],
+                "fact_digest_sha256": _record_fields(
+                    result["body"],
+                    "PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",
+                    C5_OBSERVATION_FIELDS,
+                )["FACT_DIGEST_SHA256"],
+                "durably_posted": True,
+            }, sort_keys=True, separators=(",", ":")))
         elif args.command == "emit-c5-wif-terminal-v2":
             print(c5_terminal_body_from_observation_comments(
                 args.successor_control_sha,

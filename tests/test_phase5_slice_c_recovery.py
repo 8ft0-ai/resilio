@@ -99,6 +99,30 @@ def owner_comment(comment_id, body, when, issue=109):
     }
 
 
+def actions_comment(comment_id, body, when, issue=109):
+    return {
+        "id": comment_id,
+        "body": body,
+        "created_at": when,
+        "updated_at": when,
+        "issue_url": f"https://api.github.com/repos/{recovery.REPOSITORY}/issues/{issue}",
+        "user": {
+            "login": recovery.C5_OBSERVATION_BOT_LOGIN,
+            "id": recovery.C5_OBSERVATION_BOT_ID,
+        },
+    }
+
+
+def c5_test_run(run_id, activation):
+    return {
+        "id": run_id,
+        "run_attempt": 1,
+        "head_sha": activation,
+        "path": recovery.C5_OBSERVATION_WORKFLOW_PATH,
+        "repository": {"full_name": recovery.REPOSITORY},
+    }
+
+
 def fresh_review_body(pr_number, head, control):
     return "\n".join(
         (
@@ -2441,6 +2465,13 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             attempt_series_id_sha256=claim["fields"]["ATTEMPT_SERIES_ID_SHA256"],
             attempt_generation=1,
             precondition_digest_sha256=precondition_digest,
+            verifier_run_id=8001,
+            verifier_run_attempt=1,
+            verifier_head_sha=activation,
+            verifier_workflow_ref=(
+                recovery.REPOSITORY + "/" + recovery.C5_OBSERVATION_WORKFLOW_PATH
+                + "@refs/heads/main"
+            ),
             state_lineage=recovery.C5_BOOTSTRAP_STATE_LINEAGE,
             state_serial=recovery.C5_BOOTSTRAP_STATE_SERIAL,
             state_canonical_sha256="1" * 64,
@@ -2468,10 +2499,14 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
         obs1_body = recovery.c5_wif_repin_observation_body(
             **common, observed_at="2026-10-05T01:03:00Z"
         )
-        obs1_comment = owner_comment(704, obs1_body, "2026-10-05T01:03:00Z")
-        obs1 = recovery.validate_c5_wif_repin_observation(
-            obs1_comment, control, activation, claim
-        )
+        obs1_comment = actions_comment(704, obs1_body, "2026-10-05T01:03:00Z")
+        with patch.object(
+            recovery, "_c5_validate_observation_execution",
+            return_value=c5_test_run(8001, activation),
+        ):
+            obs1 = recovery.validate_c5_wif_repin_observation(
+                obs1_comment, control, activation, claim
+            )
         obs2_comment = None
         obs2 = None
         if no_effect:
@@ -2483,10 +2518,14 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             obs2_body = recovery.c5_wif_repin_observation_body(
                 **common, observed_at=timestamp
             )
-            obs2_comment = owner_comment(705, obs2_body, timestamp)
-            obs2 = recovery.validate_c5_wif_repin_observation(
-                obs2_comment, control, activation, claim
-            )
+            obs2_comment = actions_comment(705, obs2_body, timestamp)
+            with patch.object(
+                recovery, "_c5_validate_observation_execution",
+                return_value=c5_test_run(8001, activation),
+            ):
+                obs2 = recovery.validate_c5_wif_repin_observation(
+                    obs2_comment, control, activation, claim
+                )
         terminal_body = recovery.c5_wif_repin_terminal_v2_body(
             control, activation, claim, obs1, obs2
         )
@@ -2578,6 +2617,10 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                     "2026-10-05T00:59:00Z", "activation"
                 )
             },
+        ), patch.object(
+            recovery,
+            "_c5_validate_observation_execution",
+            return_value=c5_test_run(8001, chain["activation"]),
         ):
             with self.assertRaises(RecoveryError):
                 recovery.validate_c5_wif_repin_terminal(
@@ -2786,7 +2829,19 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             if path == f"/repos/{recovery.REPOSITORY}/branches/{recovery.DEFAULT_BRANCH}":
                 return {"commit": {"sha": activation}}
             raise AssertionError(path)
-        with patch.object(recovery, "github", side_effect=fake_github), patch.object(
+        with patch.dict(
+            recovery.os.environ,
+            {
+                "GITHUB_RUN_ID": "8001",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "GITHUB_SHA": activation,
+                "GITHUB_WORKFLOW_REF": (
+                    recovery.REPOSITORY + "/" + recovery.C5_OBSERVATION_WORKFLOW_PATH
+                    + "@refs/heads/main"
+                ),
+            },
+            clear=False,
+        ), patch.object(recovery, "github", side_effect=fake_github), patch.object(
             recovery, "verify_c5_repository_activation", return_value={"verified": True}
         ), patch.object(
             recovery, "github_issue_comments", return_value=comments
@@ -2811,8 +2866,90 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                 terraform_workdir="ignored",
             )
         self.assertTrue(result["verified_live"])
+        self.assertIn("VERIFIER_RUN_ID=8001", result["body"])
+        self.assertIn("VERIFIER_HEAD_SHA=" + activation, result["body"])
         self.assertIn("RECONCILIATION=EXACT_NO_CHANGE", result["body"])
         self.assertNotIn("OUTCOME=", result["body"])
+
+    def test_c5_handcrafted_owner_observation_is_rejected_even_with_valid_digest(self):
+        chain = self._c5_v2_chain()
+        authentic = next(row for row in chain["comments"] if row["id"] == 704)
+        forged = owner_comment(9001, authentic["body"], "2026-10-05T01:03:00Z")
+        with self.assertRaisesRegex(
+            RecoveryError, "C5_OBSERVATION_VERIFIER_COMMENT_INVALID"
+        ):
+            recovery.validate_c5_wif_repin_observation(
+                forged, chain["control"], chain["activation"], chain["claim"]
+            )
+
+    def test_c5_observation_execution_witness_rejects_substitution(self):
+        chain = self._c5_v2_chain()
+        authentic = copy.deepcopy(
+            next(row for row in chain["comments"] if row["id"] == 704)
+        )
+        authentic["body"] = authentic["body"].replace(
+            "VERIFIER_RUN_ID=8001", "VERIFIER_RUN_ID=8002", 1
+        )
+        fields = recovery._record_fields(
+            authentic["body"],
+            "PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",
+            recovery.C5_OBSERVATION_FIELDS,
+        )
+        fields["FACT_DIGEST_SHA256"] = recovery.sha256(
+            "\n".join(recovery._c5_observation_fact_lines(fields)).encode()
+        )
+        authentic["body"] = "\n".join(
+            ("PHASE5_SLICE_C_C5_WIF_REPIN_OBSERVATION_V1",)
+            + tuple(
+                f"{name}={fields[name]}" for name in recovery.C5_OBSERVATION_FIELDS
+            )
+        )
+        with patch.object(
+            recovery, "github", return_value=c5_test_run(8001, chain["activation"])
+        ):
+            with self.assertRaisesRegex(
+                RecoveryError, "C5_OBSERVATION_VERIFIER_RUN_MISMATCH"
+            ):
+                recovery.validate_c5_wif_repin_observation(
+                    authentic, chain["control"], chain["activation"], chain["claim"]
+                )
+
+    def test_c5_observation_poster_requires_actions_bot_durable_comment(self):
+        chain = self._c5_v2_chain()
+        verified = {
+            "body": next(row for row in chain["comments"] if row["id"] == 704)["body"],
+            "verified_live": True,
+        }
+        posted = actions_comment(9002, verified["body"], "2026-10-05T01:03:00Z")
+        with patch.object(
+            recovery, "verify_c5_wif_repin_observation", return_value=verified
+        ), patch.object(
+            recovery, "request_json", return_value=posted
+        ):
+            result = recovery.post_c5_wif_repin_observation(
+                successor_control_sha=chain["control"],
+                activation_main=chain["activation"],
+                attempt_claim_comment_id=703,
+                terraform_workdir="ignored",
+            )
+        self.assertTrue(result["durably_posted"])
+        self.assertEqual(result["comment_id"], 9002)
+
+        forged = owner_comment(9003, verified["body"], "2026-10-05T01:03:00Z")
+        with patch.object(
+            recovery, "verify_c5_wif_repin_observation", return_value=verified
+        ), patch.object(
+            recovery, "request_json", return_value=forged
+        ):
+            with self.assertRaisesRegex(
+                RecoveryError, "C5_OBSERVATION_DURABLE_POST_PROVENANCE_INVALID"
+            ):
+                recovery.post_c5_wif_repin_observation(
+                    successor_control_sha=chain["control"],
+                    activation_main=chain["activation"],
+                    attempt_claim_comment_id=703,
+                    terraform_workdir="ignored",
+                )
 
     def test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses(self):
         statuses = ("queued", "waiting", "requested", "pending", "in_progress")

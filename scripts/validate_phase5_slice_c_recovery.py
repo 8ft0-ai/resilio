@@ -167,6 +167,25 @@ def c5_semantic_errors(helper: str) -> list[str]:
                 f"RECOVERY_C5_TERMINAL_CLAIM_PROVENANCE_MISSING:{required}"
             )
 
+    observation_validator = latest("validate_c5_wif_repin_observation")
+    observation_validator_calls = calls(observation_validator)
+    for required in (
+        "_require_unedited_c5_observation_comment",
+        "_c5_validate_observation_execution",
+    ):
+        if required not in observation_validator_calls:
+            errors.append(
+                f"RECOVERY_C5_OBSERVATION_PROVENANCE_MISSING:{required}"
+            )
+
+    observation_poster = latest("post_c5_wif_repin_observation")
+    observation_poster_calls = calls(observation_poster)
+    for required in ("verify_c5_wif_repin_observation", "request_json"):
+        if required not in observation_poster_calls:
+            errors.append(
+                f"RECOVERY_C5_OBSERVATION_DURABLE_POST_MISSING:{required}"
+            )
+
     outcome = latest("_c5_observation_outcome")
     outcome_source = (
         ast.get_source_segment(helper, outcome) or "" if outcome is not None else ""
@@ -187,6 +206,7 @@ def c5_semantic_errors(helper: str) -> list[str]:
         "_c5_fresh_reconciliation",
         "_successor_gcs_json",
         "_successor_gcs_metadata",
+        "_c5_observation_execution_identity",
     ):
         if required not in observation_calls:
             errors.append(f"RECOVERY_C5_OBSERVATION_NOT_VERIFIER_OWNED:{required}")
@@ -689,6 +709,9 @@ def main() -> int:
             "test_c5_attempt_claim_binds_protocol_epoch",
             "test_c5_terminal_claim_provenance_rejects_substituted_plan_precondition_and_generation",
             "test_c5_observation_is_emitted_from_live_verifier_not_caller_outcome",
+            "test_c5_handcrafted_owner_observation_is_rejected_even_with_valid_digest",
+            "test_c5_observation_execution_witness_rejects_substitution",
+            "test_c5_observation_poster_requires_actions_bot_durable_comment",
         ),
         "RECOVERY_C5_TESTS",
         errors,
