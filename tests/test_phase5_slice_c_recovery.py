@@ -3308,7 +3308,7 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             add_authority=False,
         )
         self._assert_c5_terminal_rejects(
-            chain, comments, row["terminal_id"], "C5_REVIEW_AUTHORITY_BODY_MISMATCH"
+            chain, comments, row["terminal_id"], "C5_WIF_REPIN_AUTHORITY_BODY_MISMATCH"
         )
 
     def test_c5_terminal_path_rejects_authority_predating_predecessor_terminal(self):
