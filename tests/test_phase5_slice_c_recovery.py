@@ -3146,6 +3146,232 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
         )
         return comments, review_authority, review_hash, authority_hash
 
+    def _c5_append_manual_generation_claim(
+        self,
+        chain,
+        comments,
+        *,
+        generation,
+        review_id,
+        authority_id,
+        review_time,
+        authority_time,
+        claim_id,
+        claim_time,
+        terminal_id,
+        terminal_time,
+        add_review=True,
+        add_authority=True,
+    ):
+        review_body = recovery.c5_wif_repin_review_body(
+            chain["control"],
+            chain["activation"],
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+        )
+        review_hash = recovery.sha256(review_body.encode())
+        authority_body = recovery.c5_wif_repin_authority_body(
+            chain["control"],
+            chain["activation"],
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            review_id,
+            review_hash,
+        )
+        authority_hash = recovery.sha256(authority_body.encode())
+        if add_review:
+            comments.append(owner_comment(review_id, review_body, review_time))
+        if add_authority:
+            comments.append(owner_comment(authority_id, authority_body, authority_time))
+        precondition = recovery.c5_precondition_digest_sha256(
+            chain["control"],
+            chain["activation"],
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            review_id,
+            review_hash,
+            authority_id,
+            authority_hash,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            chain["control"],
+            0,
+            recovery.sha256(recovery.canonical([])),
+        )
+        claim_body = recovery.c5_attempt_claim_body(
+            chain["control"],
+            chain["activation"],
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            chain["control"],
+            generation,
+            "a" * 64,
+            "b" * 64,
+            precondition,
+            review_id,
+            review_hash,
+            authority_id,
+            authority_hash,
+        )
+        claim_comment = owner_comment(claim_id, claim_body, claim_time)
+        comments.append(claim_comment)
+        claim = recovery._c5_parse_attempt_claim(claim_comment)
+        replacements = {
+            "ATTEMPT_CLAIM_COMMENT_ID=": str(claim_id),
+            "ATTEMPT_CLAIM_BODY_SHA256=": claim["body_sha256"],
+            "ATTEMPT_SERIES_ID_SHA256=": claim["fields"]["ATTEMPT_SERIES_ID_SHA256"],
+            "ATTEMPT_GENERATION=": str(generation),
+            "PRECONDITION_DIGEST_SHA256=": precondition,
+        }
+        terminal_lines = []
+        for line in chain["terminal_comment"]["body"].splitlines():
+            replaced = False
+            for prefix, value in replacements.items():
+                if line.startswith(prefix):
+                    terminal_lines.append(prefix + value)
+                    replaced = True
+                    break
+            if not replaced:
+                terminal_lines.append(line)
+        comments.append(
+            owner_comment(terminal_id, "\n".join(terminal_lines), terminal_time)
+        )
+        return {
+            "claim": claim,
+            "terminal_id": terminal_id,
+            "review_hash": review_hash,
+            "authority_hash": authority_hash,
+        }
+
+    def _assert_c5_terminal_rejects(self, chain, comments, terminal_id, pattern):
+        with patch.object(
+            recovery,
+            "validate_c5_activation_record",
+            return_value={
+                "created_at": recovery._timestamp(
+                    "2026-10-05T00:59:00Z", "activation"
+                )
+            },
+        ), patch.object(
+            recovery,
+            "_c5_validate_observation_execution",
+            return_value=c5_test_run(8001, chain["activation"]),
+        ):
+            with self.assertRaisesRegex(RecoveryError, pattern):
+                recovery.validate_c5_wif_repin_terminal(
+                    comments,
+                    chain["control"],
+                    chain["activation"],
+                    terminal_id,
+                )
+
+    def test_c5_terminal_path_rejects_manual_n_plus_1_reused_review_authority(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        comments = copy.deepcopy(chain["comments"])
+        row = self._c5_append_manual_generation_claim(
+            chain,
+            comments,
+            generation=2,
+            review_id=701,
+            authority_id=708,
+            review_time="2026-10-05T01:00:00Z",
+            authority_time="2026-10-05T01:07:00Z",
+            claim_id=709,
+            claim_time="2026-10-05T01:08:00Z",
+            terminal_id=710,
+            terminal_time="2026-10-05T01:09:00Z",
+            add_review=False,
+        )
+        self._assert_c5_terminal_rejects(
+            chain, comments, row["terminal_id"], "C5_TRANSITION_FRESH_REVIEW_REUSED"
+        )
+
+    def test_c5_terminal_path_rejects_manual_n_plus_1_reused_apply_authority(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        comments = copy.deepcopy(chain["comments"])
+        row = self._c5_append_manual_generation_claim(
+            chain,
+            comments,
+            generation=2,
+            review_id=707,
+            authority_id=702,
+            review_time="2026-10-05T01:06:00Z",
+            authority_time="2026-10-05T01:01:00Z",
+            claim_id=709,
+            claim_time="2026-10-05T01:08:00Z",
+            terminal_id=710,
+            terminal_time="2026-10-05T01:09:00Z",
+            add_authority=False,
+        )
+        self._assert_c5_terminal_rejects(
+            chain, comments, row["terminal_id"], "C5_REVIEW_AUTHORITY_BODY_MISMATCH"
+        )
+
+    def test_c5_terminal_path_rejects_authority_predating_predecessor_terminal(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        comments = copy.deepcopy(chain["comments"])
+        row = self._c5_append_manual_generation_claim(
+            chain,
+            comments,
+            generation=2,
+            review_id=707,
+            authority_id=708,
+            review_time="2026-10-05T01:03:10Z",
+            authority_time="2026-10-05T01:04:10Z",
+            claim_id=709,
+            claim_time="2026-10-05T01:08:00Z",
+            terminal_id=710,
+            terminal_time="2026-10-05T01:09:00Z",
+        )
+        self._assert_c5_terminal_rejects(
+            chain,
+            comments,
+            row["terminal_id"],
+            "C5_TRANSITION_FRESH_AUTHORITY_ORDER_INVALID",
+        )
+
+    def test_c5_terminal_path_rejects_n_plus_2_predecessor_laundering(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        comments = copy.deepcopy(chain["comments"])
+        generation_two = self._c5_append_manual_generation_claim(
+            chain,
+            comments,
+            generation=2,
+            review_id=707,
+            authority_id=708,
+            review_time="2026-10-05T01:03:10Z",
+            authority_time="2026-10-05T01:04:10Z",
+            claim_id=709,
+            claim_time="2026-10-05T01:08:00Z",
+            terminal_id=710,
+            terminal_time="2026-10-05T01:09:00Z",
+        )
+        generation_three = self._c5_append_manual_generation_claim(
+            chain,
+            comments,
+            generation=3,
+            review_id=711,
+            authority_id=712,
+            review_time="2026-10-05T01:10:00Z",
+            authority_time="2026-10-05T01:11:00Z",
+            claim_id=713,
+            claim_time="2026-10-05T01:12:00Z",
+            terminal_id=714,
+            terminal_time="2026-10-05T01:13:00Z",
+        )
+        self.assertEqual(generation_two["claim"]["generation"], 2)
+        self.assertEqual(generation_three["claim"]["generation"], 3)
+        self._assert_c5_terminal_rejects(
+            chain,
+            comments,
+            generation_three["terminal_id"],
+            "C5_TRANSITION_FRESH_AUTHORITY_ORDER_INVALID",
+        )
+
     def test_c5_generation_transition_requires_no_effect_terminal_and_fresh_authority(self):
         chain = self._c5_v2_chain(no_effect=True)
         comments, review_authority, _, _ = self._c5_retry_review_authority(chain)
