@@ -233,6 +233,30 @@ def c5_semantic_errors(helper: str) -> list[str]:
     pre_effect_calls = calls(pre_effect)
     if "c5_nonterminal_actions_snapshot" not in pre_effect_calls:
         errors.append("RECOVERY_C5_PRE_EFFECT_INCOMPLETE_ACTIONS_CURRENTNESS")
+    if "validate_c5_attempt_generation_transition" not in pre_effect_calls:
+        errors.append("RECOVERY_C5_PRE_EFFECT_MISSING_GENERATION_TRANSITION_GATE")
+
+    transition = latest("validate_c5_attempt_generation_transition")
+    transition_calls = calls(transition)
+    if "validate_c5_wif_repin_terminal" not in transition_calls:
+        errors.append("RECOVERY_C5_GENERATION_TRANSITION_DOES_NOT_VALIDATE_TERMINAL")
+    transition_source = (
+        ast.get_source_segment(helper, transition) or ""
+        if transition is not None
+        else ""
+    )
+    for required_token in (
+        '"NO_EFFECT_STABLE"',
+        '"C5_TRANSITION_FRESH_REVIEW_REUSED"',
+        '"C5_TRANSITION_APPLY_AUTHORITY_REUSED"',
+        '"C5_TRANSITION_FRESH_AUTHORITY_ORDER_INVALID"',
+        "require_current_generation=False",
+    ):
+        if required_token not in transition_source:
+            errors.append(
+                "RECOVERY_C5_GENERATION_TRANSITION_CONTRACT_MISSING:"
+                + required_token
+            )
     if "status=in_progress" in helper:
         errors.append("RECOVERY_C5_IN_PROGRESS_ONLY_ACTIONS_FILTER_REACHABLE")
 
@@ -708,6 +732,9 @@ def main() -> int:
             "test_c5_nonterminal_actions_snapshot_is_paginated",
             "test_c5_attempt_claim_binds_protocol_epoch",
             "test_c5_terminal_claim_provenance_rejects_substituted_plan_precondition_and_generation",
+            "test_c5_generation_transition_requires_no_effect_terminal_and_fresh_authority",
+            "test_c5_generation_transition_rejects_effect_success_and_authority_reuse",
+            "test_c5_generation_transition_rejects_missing_terminal",
             "test_c5_observation_is_emitted_from_live_verifier_not_caller_outcome",
             "test_c5_handcrafted_owner_observation_is_rejected_even_with_valid_digest",
             "test_c5_observation_execution_witness_rejects_substitution",

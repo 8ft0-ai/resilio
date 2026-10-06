@@ -3081,6 +3081,190 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                 activation_created_at,
             )
 
+    def _c5_retry_review_authority(self, chain, review_id=707, authority_id=708):
+        review_body = recovery.c5_wif_repin_review_body(
+            chain["control"],
+            chain["activation"],
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+        )
+        review_hash = recovery.sha256(review_body.encode())
+        authority_body = recovery.c5_wif_repin_authority_body(
+            chain["control"],
+            chain["activation"],
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            review_id,
+            review_hash,
+        )
+        authority_hash = recovery.sha256(authority_body.encode())
+        comments = copy.deepcopy(chain["comments"])
+        comments.extend(
+            [
+                owner_comment(review_id, review_body, "2026-10-05T01:06:00Z"),
+                owner_comment(authority_id, authority_body, "2026-10-05T01:07:00Z"),
+            ]
+        )
+        review_authority = recovery._c5_validate_plan_review_and_authority(
+            comments,
+            chain["control"],
+            chain["activation"],
+            "a" * 64,
+            "b" * 64,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            review_id,
+            authority_id,
+        )
+        return comments, review_authority, review_hash, authority_hash
+
+    def test_c5_generation_transition_requires_no_effect_terminal_and_fresh_authority(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        comments, review_authority, _, _ = self._c5_retry_review_authority(chain)
+        history = recovery.validate_c5_attempt_history(
+            comments,
+            chain["control"],
+            chain["activation"],
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            chain["control"],
+        )
+        with patch.object(
+            recovery,
+            "validate_c5_activation_record",
+            return_value={
+                "created_at": recovery._timestamp(
+                    "2026-10-05T00:59:00Z", "activation"
+                )
+            },
+        ):
+            result = recovery.validate_c5_attempt_generation_transition(
+                comments,
+                chain["control"],
+                chain["activation"],
+                history,
+                2,
+                review_authority,
+            )
+        self.assertEqual(result["predecessor_terminal_outcome"], "NO_EFFECT_STABLE")
+        self.assertEqual(
+            result["predecessor_terminal_comment_id"], chain["terminal_id"]
+        )
+        self.assertEqual(result["fresh_review_comment_id"], 707)
+        self.assertEqual(result["fresh_authority_comment_id"], 708)
+
+    def test_c5_generation_transition_rejects_effect_success_and_authority_reuse(self):
+        success = self._c5_v2_chain()
+        comments, fresh, _, _ = self._c5_retry_review_authority(success)
+        history = recovery.validate_c5_attempt_history(
+            comments,
+            success["control"],
+            success["activation"],
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            success["control"],
+        )
+        with patch.object(
+            recovery,
+            "validate_c5_activation_record",
+            return_value={
+                "created_at": recovery._timestamp(
+                    "2026-10-05T00:59:00Z", "activation"
+                )
+            },
+        ):
+            with self.assertRaisesRegex(
+                RecoveryError, "C5_TRANSITION_PREDECESSOR_NOT_NO_EFFECT_STABLE"
+            ):
+                recovery.validate_c5_attempt_generation_transition(
+                    comments,
+                    success["control"],
+                    success["activation"],
+                    history,
+                    2,
+                    fresh,
+                )
+
+        no_effect = self._c5_v2_chain(no_effect=True)
+        comments = copy.deepcopy(no_effect["comments"])
+        history = recovery.validate_c5_attempt_history(
+            comments,
+            no_effect["control"],
+            no_effect["activation"],
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            no_effect["control"],
+        )
+        reused_review = {
+            "review_comment_id": 701,
+            "authority_comment_id": 708,
+            "review_created_at": recovery._timestamp(
+                "2026-10-05T01:06:00Z", "review"
+            ),
+            "authority_created_at": recovery._timestamp(
+                "2026-10-05T01:07:00Z", "authority"
+            ),
+        }
+        with self.assertRaisesRegex(
+            RecoveryError, "C5_TRANSITION_FRESH_REVIEW_REUSED"
+        ):
+            recovery.validate_c5_attempt_generation_transition(
+                comments,
+                no_effect["control"],
+                no_effect["activation"],
+                history,
+                2,
+                reused_review,
+            )
+
+        reused_authority = {
+            "review_comment_id": 707,
+            "authority_comment_id": 702,
+            "review_created_at": recovery._timestamp(
+                "2026-10-05T01:06:00Z", "review"
+            ),
+            "authority_created_at": recovery._timestamp(
+                "2026-10-05T01:07:00Z", "authority"
+            ),
+        }
+        with self.assertRaisesRegex(
+            RecoveryError, "C5_TRANSITION_APPLY_AUTHORITY_REUSED"
+        ):
+            recovery.validate_c5_attempt_generation_transition(
+                comments,
+                no_effect["control"],
+                no_effect["activation"],
+                history,
+                2,
+                reused_authority,
+            )
+
+    def test_c5_generation_transition_rejects_missing_terminal(self):
+        chain = self._c5_v2_chain(no_effect=True)
+        comments, review_authority, _, _ = self._c5_retry_review_authority(chain)
+        comments = [
+            row for row in comments if row["id"] != chain["terminal_id"]
+        ]
+        history = recovery.validate_c5_attempt_history(
+            comments,
+            chain["control"],
+            chain["activation"],
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            chain["control"],
+        )
+        with self.assertRaisesRegex(
+            RecoveryError, "C5_TRANSITION_PREDECESSOR_TERMINAL_NOT_UNIQUE"
+        ):
+            recovery.validate_c5_attempt_generation_transition(
+                comments,
+                chain["control"],
+                chain["activation"],
+                history,
+                2,
+                review_authority,
+            )
+
     def test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready(self):
         control = "d" * 40
         activation = "e" * 40

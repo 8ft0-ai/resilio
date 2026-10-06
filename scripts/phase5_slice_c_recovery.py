@@ -3186,6 +3186,8 @@ def validate_c5_terminal_attempt_claim_chain(
     activation_main: str,
     claim_comment: dict[str, Any],
     activation_created_at: datetime,
+    *,
+    require_current_generation: bool = True,
 ) -> dict[str, Any]:
     """Reconstruct the exact gated attempt claim before terminal authority can use it."""
     claim = _c5_parse_attempt_claim(claim_comment)
@@ -3216,9 +3218,11 @@ def validate_c5_terminal_attempt_claim_chain(
         or matching[0]["generation"] != claim["generation"]
     ):
         raise RecoveryError("C5_TERMINAL_ATTEMPT_HISTORY_MISMATCH")
+    if not history["claims"]:
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_HISTORY_EMPTY")
     if (
-        not history["claims"]
-        or claim["generation"] != history["claims"][-1]["generation"]
+        require_current_generation
+        and claim["generation"] != history["claims"][-1]["generation"]
     ):
         raise RecoveryError("C5_TERMINAL_ATTEMPT_NOT_CURRENT_GENERATION")
 
@@ -3300,6 +3304,122 @@ def validate_c5_terminal_attempt_claim_chain(
     if validated["body_sha256"] != claim["body_sha256"]:
         raise RecoveryError("C5_TERMINAL_ATTEMPT_CLAIM_HASH_MISMATCH")
     return claim
+
+
+def _c5_terminal_ids_for_attempt_claim(
+    comments: list[dict[str, Any]], claim_comment_id: int
+) -> list[int]:
+    _c5_positive(claim_comment_id, "C5_TRANSITION_PREDECESSOR_CLAIM_ID")
+    exact_line = f"ATTEMPT_CLAIM_COMMENT_ID={claim_comment_id}"
+    found: list[int] = []
+    for comment in comments:
+        if not _owner_issue_comment(comment, GOVERNING_ISSUE):
+            continue
+        body = canonical_comment_text(comment.get("body"))
+        if not body.startswith("PHASE5_SLICE_C_C5_WIF_REPIN_TERMINAL_V2\n"):
+            continue
+        if exact_line not in body.split("\n"):
+            continue
+        comment_id = comment.get("id")
+        if not isinstance(comment_id, int) or isinstance(comment_id, bool) or comment_id <= 0:
+            raise RecoveryError("C5_TRANSITION_TERMINAL_ID_INVALID")
+        found.append(comment_id)
+    return sorted(found)
+
+
+def validate_c5_attempt_generation_transition(
+    comments: list[dict[str, Any]],
+    successor_control_sha: str,
+    activation_main: str,
+    history: dict[str, Any],
+    target_generation: int,
+    review_authority: dict[str, Any],
+) -> dict[str, Any]:
+    """Gate generation N+1 on N=NO_EFFECT_STABLE and fresh later authority."""
+    _c5_positive(target_generation, "C5_TRANSITION_TARGET_GENERATION")
+    claims = history.get("claims")
+    if not isinstance(claims, list):
+        raise RecoveryError("C5_TRANSITION_HISTORY_INVALID")
+    if target_generation == 1:
+        if any(claim["generation"] != 1 for claim in claims) or len(claims) > 1:
+            raise RecoveryError("C5_TRANSITION_GENERATION_ONE_HISTORY_INVALID")
+        return {"target_generation": 1, "predecessor_terminal": None}
+
+    predecessors = [
+        claim for claim in claims if claim["generation"] == target_generation - 1
+    ]
+    if len(predecessors) != 1:
+        raise RecoveryError("C5_TRANSITION_PREDECESSOR_CLAIM_NOT_UNIQUE")
+    predecessor = predecessors[0]
+    earlier = [
+        claim for claim in claims if claim["generation"] < target_generation
+    ]
+    if [claim["generation"] for claim in earlier] != list(
+        range(1, target_generation)
+    ):
+        raise RecoveryError("C5_TRANSITION_PREDECESSOR_HISTORY_INCOMPLETE")
+
+    review_id = review_authority.get("review_comment_id")
+    authority_id = review_authority.get("authority_comment_id")
+    if not isinstance(review_id, int) or review_id <= 0:
+        raise RecoveryError("C5_TRANSITION_REVIEW_ID_INVALID")
+    if not isinstance(authority_id, int) or authority_id <= 0:
+        raise RecoveryError("C5_TRANSITION_AUTHORITY_ID_INVALID")
+    used_review_ids = {
+        _positive_int(
+            claim["fields"]["FRESH_REVIEW_COMMENT_ID"],
+            "C5_TRANSITION_USED_REVIEW_ID",
+        )
+        for claim in earlier
+    }
+    used_authority_ids = {
+        _positive_int(
+            claim["fields"]["OWNER_APPLY_AUTHORITY_COMMENT_ID"],
+            "C5_TRANSITION_USED_AUTHORITY_ID",
+        )
+        for claim in earlier
+    }
+    if review_id in used_review_ids:
+        raise RecoveryError("C5_TRANSITION_FRESH_REVIEW_REUSED")
+    if authority_id in used_authority_ids:
+        raise RecoveryError("C5_TRANSITION_APPLY_AUTHORITY_REUSED")
+
+    terminal_ids = _c5_terminal_ids_for_attempt_claim(
+        comments, predecessor["comment_id"]
+    )
+    if len(terminal_ids) != 1:
+        raise RecoveryError("C5_TRANSITION_PREDECESSOR_TERMINAL_NOT_UNIQUE")
+    terminal = validate_c5_wif_repin_terminal(
+        comments,
+        successor_control_sha,
+        activation_main,
+        terminal_ids[0],
+        require_current_generation=False,
+    )
+    if (
+        terminal["claim"]["comment_id"] != predecessor["comment_id"]
+        or terminal["claim"]["generation"] != target_generation - 1
+    ):
+        raise RecoveryError("C5_TRANSITION_PREDECESSOR_TERMINAL_CLAIM_MISMATCH")
+    if terminal["outcome"] != "NO_EFFECT_STABLE":
+        raise RecoveryError("C5_TRANSITION_PREDECESSOR_NOT_NO_EFFECT_STABLE")
+
+    review_created = review_authority.get("review_created_at")
+    authority_created = review_authority.get("authority_created_at")
+    if not isinstance(review_created, datetime) or not isinstance(
+        authority_created, datetime
+    ):
+        raise RecoveryError("C5_TRANSITION_AUTHORITY_TIME_INVALID")
+    if not terminal["created_at"] < review_created < authority_created:
+        raise RecoveryError("C5_TRANSITION_FRESH_AUTHORITY_ORDER_INVALID")
+    return {
+        "target_generation": target_generation,
+        "predecessor_claim_comment_id": predecessor["comment_id"],
+        "predecessor_terminal_comment_id": terminal["comment_id"],
+        "predecessor_terminal_outcome": terminal["outcome"],
+        "fresh_review_comment_id": review_id,
+        "fresh_authority_comment_id": authority_id,
+    }
 
 
 def c5_wif_repin_review_body(
@@ -4410,6 +4530,14 @@ def verify_c5_wif_repin_pre_effect(
 
     if posted_claim_comment_id is None:
         generation = history["next_generation"]
+        transition = validate_c5_attempt_generation_transition(
+            comments,
+            successor_control_sha,
+            activation_main,
+            history,
+            generation,
+            review_authority,
+        )
         claim_body = c5_attempt_claim_body(
             successor_control_sha,
             activation_main,
@@ -4435,6 +4563,14 @@ def verify_c5_wif_repin_pre_effect(
         if not generations or parsed["generation"] != max(generations):
             raise RecoveryError("C5_POSTED_ATTEMPT_CLAIM_NOT_CURRENT_GENERATION")
         generation = parsed["generation"]
+        transition = validate_c5_attempt_generation_transition(
+            comments,
+            successor_control_sha,
+            activation_main,
+            history,
+            generation,
+            review_authority,
+        )
         claim_body = c5_attempt_claim_body(
             successor_control_sha,
             activation_main,
@@ -4502,6 +4638,7 @@ def verify_c5_wif_repin_pre_effect(
         "precondition_digest_sha256": precondition_digest,
         "attempt_series_id_sha256": history["attempt_series_id_sha256"],
         "attempt_generation": generation,
+        "attempt_transition": transition,
         "attempt_claim_body": claim_body,
         "posted_claim_comment_id": posted_claim_comment_id,
         "ready_for_effect": posted_claim_comment_id is not None,
@@ -6269,6 +6406,8 @@ def validate_c5_wif_repin_terminal(
     successor_control_sha: str,
     activation_main: str,
     terminal_comment_id: int,
+    *,
+    require_current_generation: bool = True,
 ) -> dict[str, Any]:
     terminal = _c5_comment_by_id(comments, terminal_comment_id, "C5_TERMINAL")
     created, body_hash = _require_unedited_owner_comment(
@@ -6305,6 +6444,7 @@ def validate_c5_wif_repin_terminal(
         activation_main,
         claim_comment,
         activation["created_at"],
+        require_current_generation=require_current_generation,
     )
     if (
         claim["body_sha256"] != fields["ATTEMPT_CLAIM_BODY_SHA256"]
