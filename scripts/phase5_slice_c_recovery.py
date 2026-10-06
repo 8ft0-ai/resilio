@@ -3180,6 +3180,128 @@ def validate_c5_posted_attempt_claim(
     return parsed
 
 
+def validate_c5_terminal_attempt_claim_chain(
+    comments: list[dict[str, Any]],
+    successor_control_sha: str,
+    activation_main: str,
+    claim_comment: dict[str, Any],
+    activation_created_at: datetime,
+) -> dict[str, Any]:
+    """Reconstruct the exact gated attempt claim before terminal authority can use it."""
+    claim = _c5_parse_attempt_claim(claim_comment)
+    fields = claim["fields"]
+    if (
+        fields["SUCCESSOR_CONTROL_SHA"] != successor_control_sha
+        or fields["SUCCESSOR_ACTIVATION_MAIN"] != activation_main
+        or fields["OLD_RECOVERY_CONTROL_SHA"] != C5_OLD_RECOVERY_CONTROL_SHA
+        or fields["NEW_RECOVERY_CONTROL_SHA"] != successor_control_sha
+    ):
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_TARGET_MISMATCH")
+
+    history = validate_c5_attempt_history(
+        comments,
+        successor_control_sha,
+        activation_main,
+        C5_OLD_RECOVERY_CONTROL_SHA,
+        successor_control_sha,
+    )
+    matching = [
+        item
+        for item in history["claims"]
+        if item["comment_id"] == claim["comment_id"]
+    ]
+    if (
+        len(matching) != 1
+        or matching[0]["body_sha256"] != claim["body_sha256"]
+        or matching[0]["generation"] != claim["generation"]
+    ):
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_HISTORY_MISMATCH")
+    if (
+        not history["claims"]
+        or claim["generation"] != history["claims"][-1]["generation"]
+    ):
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_NOT_CURRENT_GENERATION")
+
+    review_id = _positive_int(
+        fields["FRESH_REVIEW_COMMENT_ID"], "C5_TERMINAL_ATTEMPT_REVIEW_ID"
+    )
+    authority_id = _positive_int(
+        fields["OWNER_APPLY_AUTHORITY_COMMENT_ID"],
+        "C5_TERMINAL_ATTEMPT_AUTHORITY_ID",
+    )
+    state_serial = _positive_int(
+        fields["BOOTSTRAP_STATE_SERIAL_BEFORE"],
+        "C5_TERMINAL_ATTEMPT_STATE_SERIAL",
+    )
+    review_authority = _c5_validate_plan_review_and_authority(
+        comments,
+        successor_control_sha,
+        activation_main,
+        fields["SAVED_PLAN_SHA256"],
+        fields["STRUCTURAL_MANIFEST_SHA256"],
+        fields["BOOTSTRAP_STATE_LINEAGE_BEFORE"],
+        state_serial,
+        review_id,
+        authority_id,
+    )
+    if (
+        review_authority["review_body_sha256"]
+        != fields["FRESH_REVIEW_BODY_SHA256"]
+        or review_authority["authority_body_sha256"]
+        != fields["OWNER_APPLY_AUTHORITY_BODY_SHA256"]
+    ):
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_REVIEW_AUTHORITY_HASH_MISMATCH")
+    if not (
+        activation_created_at
+        < review_authority["review_created_at"]
+        < review_authority["authority_created_at"]
+        < claim["created_at"]
+    ):
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_AUTHORITY_ORDER_INVALID")
+
+    expected_precondition_digest = c5_precondition_digest_sha256(
+        successor_control_sha,
+        activation_main,
+        fields["SAVED_PLAN_SHA256"],
+        fields["STRUCTURAL_MANIFEST_SHA256"],
+        fields["BOOTSTRAP_STATE_LINEAGE_BEFORE"],
+        state_serial,
+        review_id,
+        review_authority["review_body_sha256"],
+        authority_id,
+        review_authority["authority_body_sha256"],
+        C5_OLD_RECOVERY_CONTROL_SHA,
+        successor_control_sha,
+        0,
+        fields["NONTERMINAL_ACTIONS_DIGEST_SHA256"],
+    )
+    if fields["PRECONDITION_DIGEST_SHA256"] != expected_precondition_digest:
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_PRECONDITION_MISMATCH")
+
+    expected_body = c5_attempt_claim_body(
+        successor_control_sha,
+        activation_main,
+        C5_OLD_RECOVERY_CONTROL_SHA,
+        successor_control_sha,
+        claim["generation"],
+        fields["SAVED_PLAN_SHA256"],
+        fields["STRUCTURAL_MANIFEST_SHA256"],
+        expected_precondition_digest,
+        review_id,
+        review_authority["review_body_sha256"],
+        authority_id,
+        review_authority["authority_body_sha256"],
+    )
+    validated = validate_c5_posted_attempt_claim(
+        claim_comment,
+        review_authority["authority_created_at"],
+        expected_body,
+    )
+    if validated["body_sha256"] != claim["body_sha256"]:
+        raise RecoveryError("C5_TERMINAL_ATTEMPT_CLAIM_HASH_MISMATCH")
+    return claim
+
+
 def c5_wif_repin_review_body(
     successor_control_sha: str,
     successor_activation_main: str,
@@ -6034,14 +6156,22 @@ def validate_c5_wif_repin_terminal(
         or fields["SUCCESSOR_ACTIVATION_MAIN"] != activation_main
     ):
         raise RecoveryError("C5_TERMINAL_TARGET_MISMATCH")
-    claim = _c5_parse_attempt_claim(
-        _c5_comment_by_id(
-            comments,
-            _positive_int(
-                fields["ATTEMPT_CLAIM_COMMENT_ID"], "C5_TERMINAL_CLAIM_ID"
-            ),
-            "C5_TERMINAL_CLAIM",
-        )
+    activation = validate_c5_activation_record(
+        comments, successor_control_sha, activation_main
+    )
+    claim_comment = _c5_comment_by_id(
+        comments,
+        _positive_int(
+            fields["ATTEMPT_CLAIM_COMMENT_ID"], "C5_TERMINAL_CLAIM_ID"
+        ),
+        "C5_TERMINAL_CLAIM",
+    )
+    claim = validate_c5_terminal_attempt_claim_chain(
+        comments,
+        successor_control_sha,
+        activation_main,
+        claim_comment,
+        activation["created_at"],
     )
     if (
         claim["body_sha256"] != fields["ATTEMPT_CLAIM_BODY_SHA256"]
@@ -6099,9 +6229,6 @@ def validate_c5_wif_repin_terminal(
         raise RecoveryError("C5_TERMINAL_OUTCOME_MISMATCH")
     if created <= (obs2 or obs1)["created_at"]:
         raise RecoveryError("C5_TERMINAL_PRECEDES_OBSERVATION")
-    activation = validate_c5_activation_record(
-        comments, successor_control_sha, activation_main
-    )
     review = _c5_comment_by_id(
         comments,
         _positive_int(

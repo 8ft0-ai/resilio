@@ -2378,19 +2378,53 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
     def _c5_v2_chain(self, *, no_effect=False, second_delta_seconds=60):
         control = "d" * 40
         activation = "e" * 40
-        review_body = "c5-review"
-        authority_body = "c5-authority"
+        saved_plan_sha256 = "a" * 64
+        structural_manifest_sha256 = "b" * 64
+        review_body = recovery.c5_wif_repin_review_body(
+            control,
+            activation,
+            saved_plan_sha256,
+            structural_manifest_sha256,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+        )
         review_hash = recovery.sha256(review_body.encode())
+        authority_body = recovery.c5_wif_repin_authority_body(
+            control,
+            activation,
+            saved_plan_sha256,
+            structural_manifest_sha256,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            701,
+            review_hash,
+        )
         authority_hash = recovery.sha256(authority_body.encode())
+        precondition_digest = recovery.c5_precondition_digest_sha256(
+            control,
+            activation,
+            saved_plan_sha256,
+            structural_manifest_sha256,
+            recovery.C5_BOOTSTRAP_STATE_LINEAGE,
+            recovery.C5_BOOTSTRAP_STATE_SERIAL,
+            701,
+            review_hash,
+            702,
+            authority_hash,
+            recovery.C5_OLD_RECOVERY_CONTROL_SHA,
+            control,
+            0,
+            recovery.sha256(recovery.canonical([])),
+        )
         claim_body = recovery.c5_attempt_claim_body(
             control,
             activation,
             recovery.C5_OLD_RECOVERY_CONTROL_SHA,
             control,
             1,
-            "a" * 64,
-            "b" * 64,
-            "f" * 64,
+            saved_plan_sha256,
+            structural_manifest_sha256,
+            precondition_digest,
             701,
             review_hash,
             702,
@@ -2406,7 +2440,7 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             attempt_claim_body_sha256=claim["body_sha256"],
             attempt_series_id_sha256=claim["fields"]["ATTEMPT_SERIES_ID_SHA256"],
             attempt_generation=1,
-            precondition_digest_sha256="f" * 64,
+            precondition_digest_sha256=precondition_digest,
             state_lineage=recovery.C5_BOOTSTRAP_STATE_LINEAGE,
             state_serial=recovery.C5_BOOTSTRAP_STATE_SERIAL,
             state_canonical_sha256="1" * 64,
@@ -2830,6 +2864,76 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             "BOOTSTRAP_STATE_LOCKING=CANONICAL_TERRAFORM_LOCK_TRUE_REQUIRED",
             body,
         )
+
+    def test_c5_terminal_claim_provenance_rejects_substituted_plan_precondition_and_generation(self):
+        chain = self._c5_v2_chain()
+        activation_created_at = recovery._timestamp(
+            "2026-10-05T00:59:00Z", "activation"
+        )
+        claim_comment = next(
+            row for row in chain["comments"] if row["id"] == 703
+        )
+        validated = recovery.validate_c5_terminal_attempt_claim_chain(
+            chain["comments"],
+            chain["control"],
+            chain["activation"],
+            claim_comment,
+            activation_created_at,
+        )
+        self.assertEqual(validated["comment_id"], 703)
+
+        def replaced_claim(old: str, new: str):
+            bad = copy.deepcopy(claim_comment)
+            bad["body"] = bad["body"].replace(old, new, 1)
+            bad["updated_at"] = bad["created_at"]
+            comments = [
+                row if row["id"] != 703 else bad
+                for row in chain["comments"]
+            ]
+            return bad, comments
+
+        bad_plan, comments = replaced_claim(
+            "SAVED_PLAN_SHA256=" + "a" * 64,
+            "SAVED_PLAN_SHA256=" + "9" * 64,
+        )
+        with self.assertRaises(RecoveryError):
+            recovery.validate_c5_terminal_attempt_claim_chain(
+                comments,
+                chain["control"],
+                chain["activation"],
+                bad_plan,
+                activation_created_at,
+            )
+
+        original_precondition = chain["claim"]["fields"][
+            "PRECONDITION_DIGEST_SHA256"
+        ]
+        bad_precondition, comments = replaced_claim(
+            "PRECONDITION_DIGEST_SHA256=" + original_precondition,
+            "PRECONDITION_DIGEST_SHA256=" + "8" * 64,
+        )
+        with self.assertRaisesRegex(
+            RecoveryError, "C5_TERMINAL_ATTEMPT_PRECONDITION_MISMATCH"
+        ):
+            recovery.validate_c5_terminal_attempt_claim_chain(
+                comments,
+                chain["control"],
+                chain["activation"],
+                bad_precondition,
+                activation_created_at,
+            )
+
+        bad_generation, comments = replaced_claim(
+            "ATTEMPT_GENERATION=1", "ATTEMPT_GENERATION=2"
+        )
+        with self.assertRaises(RecoveryError):
+            recovery.validate_c5_terminal_attempt_claim_chain(
+                comments,
+                chain["control"],
+                chain["activation"],
+                bad_generation,
+                activation_created_at,
+            )
 
     def test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready(self):
         control = "d" * 40

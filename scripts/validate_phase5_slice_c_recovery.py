@@ -147,12 +147,25 @@ def c5_semantic_errors(helper: str) -> list[str]:
     terminal = latest("validate_c5_wif_repin_terminal")
     terminal_calls = calls(terminal)
     for required in (
-        "_c5_parse_attempt_claim",
+        "validate_c5_terminal_attempt_claim_chain",
         "validate_c5_wif_repin_observation",
         "validate_c5_activation_record",
     ):
         if required not in terminal_calls:
             errors.append(f"RECOVERY_C5_TERMINAL_MISSING_PROVENANCE_CALL:{required}")
+
+    terminal_claim = latest("validate_c5_terminal_attempt_claim_chain")
+    terminal_claim_calls = calls(terminal_claim)
+    for required in (
+        "validate_c5_attempt_history",
+        "_c5_validate_plan_review_and_authority",
+        "c5_precondition_digest_sha256",
+        "validate_c5_posted_attempt_claim",
+    ):
+        if required not in terminal_claim_calls:
+            errors.append(
+                f"RECOVERY_C5_TERMINAL_CLAIM_PROVENANCE_MISSING:{required}"
+            )
 
     outcome = latest("_c5_observation_outcome")
     outcome_source = (
@@ -674,6 +687,7 @@ def main() -> int:
             "test_c5_complete_nonterminal_actions_set_includes_all_nonterminal_statuses",
             "test_c5_nonterminal_actions_snapshot_is_paginated",
             "test_c5_attempt_claim_binds_protocol_epoch",
+            "test_c5_terminal_claim_provenance_rejects_substituted_plan_precondition_and_generation",
             "test_c5_observation_is_emitted_from_live_verifier_not_caller_outcome",
         ),
         "RECOVERY_C5_TESTS",
