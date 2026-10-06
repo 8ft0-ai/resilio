@@ -3081,6 +3081,30 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                 activation_created_at,
             )
 
+    def test_c5_terminal_claim_provenance_reconstructs_generation_transition(self):
+        chain = self._c5_v2_chain()
+        activation_created_at = recovery._timestamp(
+            "2026-10-05T00:59:00Z", "activation"
+        )
+        claim_comment = next(
+            row for row in chain["comments"] if row["id"] == 703
+        )
+        original = recovery.validate_c5_attempt_generation_transition
+        with patch.object(
+            recovery,
+            "validate_c5_attempt_generation_transition",
+            wraps=original,
+        ) as transition:
+            recovery.validate_c5_terminal_attempt_claim_chain(
+                chain["comments"],
+                chain["control"],
+                chain["activation"],
+                claim_comment,
+                activation_created_at,
+            )
+        transition.assert_called_once()
+        self.assertEqual(transition.call_args.args[4], 1)
+
     def _c5_retry_review_authority(self, chain, review_id=707, authority_id=708):
         review_body = recovery.c5_wif_repin_review_body(
             chain["control"],

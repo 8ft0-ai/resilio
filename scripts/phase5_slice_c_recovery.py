@@ -3303,6 +3303,20 @@ def validate_c5_terminal_attempt_claim_chain(
     )
     if validated["body_sha256"] != claim["body_sha256"]:
         raise RecoveryError("C5_TERMINAL_ATTEMPT_CLAIM_HASH_MISMATCH")
+
+    # Durable terminal provenance must independently reconstruct the generation
+    # transition.  Do not rely on the effect executor having validated it:
+    # canonical attempt claims are owner comments and can exist without that
+    # execution path.  Recursive predecessor-terminal validation is finite
+    # because each transition strictly decreases the generation.
+    validate_c5_attempt_generation_transition(
+        comments,
+        successor_control_sha,
+        activation_main,
+        history,
+        claim["generation"],
+        review_authority,
+    )
     return claim
 
 
@@ -3341,7 +3355,8 @@ def validate_c5_attempt_generation_transition(
     if not isinstance(claims, list):
         raise RecoveryError("C5_TRANSITION_HISTORY_INVALID")
     if target_generation == 1:
-        if any(claim["generation"] != 1 for claim in claims) or len(claims) > 1:
+        generation_one = [claim for claim in claims if claim["generation"] == 1]
+        if len(generation_one) > 1:
             raise RecoveryError("C5_TRANSITION_GENERATION_ONE_HISTORY_INVALID")
         return {"target_generation": 1, "predecessor_terminal": None}
 

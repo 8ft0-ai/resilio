@@ -161,6 +161,7 @@ def c5_semantic_errors(helper: str) -> list[str]:
         "_c5_validate_plan_review_and_authority",
         "c5_precondition_digest_sha256",
         "validate_c5_posted_attempt_claim",
+        "validate_c5_attempt_generation_transition",
     ):
         if required not in terminal_claim_calls:
             errors.append(
@@ -735,6 +736,7 @@ def main() -> int:
             "test_c5_generation_transition_requires_no_effect_terminal_and_fresh_authority",
             "test_c5_generation_transition_rejects_effect_success_and_authority_reuse",
             "test_c5_generation_transition_rejects_missing_terminal",
+            "test_c5_terminal_claim_provenance_reconstructs_generation_transition",
             "test_c5_observation_is_emitted_from_live_verifier_not_caller_outcome",
             "test_c5_handcrafted_owner_observation_is_rejected_even_with_valid_digest",
             "test_c5_observation_execution_witness_rejects_substitution",
