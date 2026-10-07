@@ -2464,7 +2464,15 @@ C5_OWNER_DISPOSITION_COMMENT_ID = 5985897003
 C5_OWNER_DISPOSITION_BODY_SHA256 = "bc0a13d8e972e0f29043a864c8729b1ca15e745c2579c43aa827946bab0804f2"
 C5_RETAINED_BASELINE_COMMENT_ID = 5987054333
 C5_RETAINED_BASELINE_BODY_SHA256 = "8cc150919fb7fe363f0e3c6e5ac0c96456c733e73f9712496b9c865b37b311c9"
+# C5_BASE_MAIN is the historical base from which the immutable C5C1 control
+# was admitted.  It is intentionally not advanced: older C5C1 records remain
+# reconstructable against their exact generation.
 C5_BASE_MAIN = "6512a8df49c56ec797f106d02aae4d4114193779"
+C5C1_CONTROL_SHA = "b4f0d6d2ecc78dea9e15e69d1f2494694bce12a4"
+C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID = 6033074284
+C5C2_ARCHITECTURE_REVIEW_COMMENT_ID = 6033167432
+C5C1_GENERATION = "C5C1"
+C5C2_GENERATION = "C5C2"
 C5_OLD_RECOVERY_CONTROL_SHA = "03123864097df51e6edafd67acc34702f0819de3"
 C5_ARCHITECTURE_CLOSURE_COMMENT_ID = 5993056257
 C5_PROTOCOL_EPOCH_TEXT = "\n".join((
@@ -4732,10 +4740,38 @@ C5_CONTROL_ALLOWED_FILES = (
     "scripts/validate_phase5_slice_c_recovery.py",
     "tests/test_phase5_slice_c_recovery.py",
 )
-C5_ACTIVATION_ALLOWED_FILES = (
+C5_ACTIVATION_AUTHORITY_FILES = (
     ".github/workflows/phase5-slice-c-recovery.yml",
     "infra/bootstrap/phase5_authority.tf",
 )
+# Candidate membership and consequence authority are deliberately separate
+# concepts even while the minimum post-C5C2 candidate contains only the two
+# authority transforms.  Proof-file membership may be added only by a later
+# frozen generation; it never becomes authority merely by being a candidate.
+C5_ACTIVATION_CANDIDATE_FILES = (
+    ".github/workflows/phase5-slice-c-recovery.yml",
+    "infra/bootstrap/phase5_authority.tf",
+)
+
+
+def _c5_control_generation(control_sha: str) -> str:
+    _c5_require_sha(control_sha, "C5_CONTROL_GENERATION_SHA")
+    if control_sha == C5C1_CONTROL_SHA:
+        return C5C1_GENERATION
+    if (
+        control_sha == C5_OLD_RECOVERY_CONTROL_SHA
+        or control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS
+    ):
+        raise RecoveryError("C5_CONTROL_GENERATION_FORBIDDEN")
+    return C5C2_GENERATION
+
+
+def _c5_control_generation_base(generation: str) -> str:
+    if generation == C5C1_GENERATION:
+        return C5_BASE_MAIN
+    if generation == C5C2_GENERATION:
+        return C5C1_CONTROL_SHA
+    raise RecoveryError("C5_CONTROL_GENERATION_INVALID")
 
 
 def _c5_review_field_map(
@@ -4806,26 +4842,55 @@ def verify_c5_control_use_time_currentness(successor_control_sha: str, expected_
 
 
 def c5_control_implementation_review_body(
-    pr_number: int, reviewed_head: str
+    pr_number: int,
+    reviewed_head: str,
+    generation: str = C5C2_GENERATION,
 ) -> str:
     _c5_positive(pr_number, "C5_CONTROL_REVIEW_PR")
     _c5_require_sha(reviewed_head, "C5_CONTROL_REVIEW_HEAD")
+    base = _c5_control_generation_base(generation)
+    if generation == C5C1_GENERATION:
+        return "\n".join(
+            (
+                "COMPLETELY_FRESH_SUBSTANTIVE_C5_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
+                "DISPOSITION=APPROVED",
+                f"PR=8ft0-ai/resilio#{pr_number}",
+                f"EXACT_HEAD={reviewed_head}",
+                f"EXACT_BASE={base}",
+                "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+                f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
+                f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+                f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
+                f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+                "C5_CONTROL_SCOPE=RECOVERY_HELPER_VALIDATOR_TESTS_ONLY",
+                "CALLER_REMAINS=C4",
+                "DESIRED_WIF_REMAINS=C4",
+                "LIVE_WIF_REMAINS=C4",
+                "CLOUD_EFFECT=NONE",
+                "MATERIAL_BLOCKERS=NONE",
+            )
+        )
     return "\n".join(
         (
-            "COMPLETELY_FRESH_SUBSTANTIVE_C5_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5C2_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
             "DISPOSITION=APPROVED",
             f"PR=8ft0-ai/resilio#{pr_number}",
             f"EXACT_HEAD={reviewed_head}",
-            f"EXACT_BASE={C5_BASE_MAIN}",
+            f"EXACT_BASE={base}",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
             f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
-            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
-            f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
-            f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
-            "C5_CONTROL_SCOPE=RECOVERY_HELPER_VALIDATOR_TESTS_ONLY",
+            f"C5C2_ARCHITECTURE_CLOSURE={C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_REVIEW={C5C2_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_CONTROL_GENERATION={C5C2_GENERATION}",
+            f"C5_CONTROL_PREDECESSOR={C5C1_GENERATION}",
+            "C5_CONTROL_SCOPE=EXACT_THREE_FILE_SUCCESSOR_CONTROL_ONLY",
+            "SUCCESSOR_AUTHORIZES_OWN_MERGE=FALSE",
             "CALLER_REMAINS=C4",
             "DESIRED_WIF_REMAINS=C4",
             "LIVE_WIF_REMAINS=C4",
+            "WIF_IAM_EFFECT=NONE",
+            "OIDC_EFFECT=NONE",
+            "RECOVERY_DISPATCH=NONE",
             "CLOUD_EFFECT=NONE",
             "MATERIAL_BLOCKERS=NONE",
         )
@@ -4837,26 +4902,56 @@ def c5_control_merge_authority_body(
     reviewed_head: str,
     review_id: int,
     review_body_sha256: str,
+    generation: str = C5C2_GENERATION,
 ) -> str:
-    c5_control_implementation_review_body(pr_number, reviewed_head)
+    c5_control_implementation_review_body(pr_number, reviewed_head, generation)
     _c5_positive(review_id, "C5_CONTROL_REVIEW_ID")
     _c5_require_hash(review_body_sha256, "C5_CONTROL_REVIEW_BODY_SHA256")
+    base = _c5_control_generation_base(generation)
+    if generation == C5C1_GENERATION:
+        return "\n".join(
+            (
+                "PHASE5_SLICE_C_C5_CONTROL_MERGE_AUTHORITY_V1",
+                "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+                f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
+                f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+                f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
+                f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+                f"C5_CONTROL_PR={pr_number}",
+                f"C5_CONTROL_REVIEWED_HEAD={reviewed_head}",
+                f"C5_CONTROL_BASE={base}",
+                f"C5_FRESH_REVIEW_ID={review_id}",
+                f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+                "AUTHORITY=MERGE_EXACT_REVIEWED_C5_INERT_CONTROL_ONLY",
+                "CALLER_PIN_CHANGE=FORBIDDEN",
+                "DESIRED_WIF_CHANGE=FORBIDDEN",
+                "CLOUD_EFFECT=FORBIDDEN",
+            )
+        )
     return "\n".join(
         (
-            "PHASE5_SLICE_C_C5_CONTROL_MERGE_AUTHORITY_V1",
+            "PHASE5_SLICE_C_C5C1_TO_C5C2_CONTROL_MERGE_AUTHORITY_V1",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
             f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
-            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
-            f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
-            f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_CLOSURE={C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_REVIEW={C5C2_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_CONTROL_GENERATION={C5C2_GENERATION}",
+            f"C5_CONTROL_PREDECESSOR={C5C1_GENERATION}",
+            "C5_CONTROL_FILES=" + ",".join(C5_CONTROL_ALLOWED_FILES),
             f"C5_CONTROL_PR={pr_number}",
             f"C5_CONTROL_REVIEWED_HEAD={reviewed_head}",
-            f"C5_CONTROL_BASE={C5_BASE_MAIN}",
+            f"C5_CONTROL_BASE={base}",
             f"C5_FRESH_REVIEW_ID={review_id}",
             f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
-            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_INERT_CONTROL_ONLY",
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5C1_TO_C5C2_CONTROL_ONLY",
+            "AUTHORITY_CONSUMPTION=ONE_SUCCESSFUL_MERGE_OR_CURRENTNESS_INVALIDATION",
+            "SUCCESSOR_AUTHORIZES_OWN_MERGE=FALSE",
+            "NEXT_CONTROL_GENERATION_AUTHORITY=NONE",
             "CALLER_PIN_CHANGE=FORBIDDEN",
             "DESIRED_WIF_CHANGE=FORBIDDEN",
+            "WIF_IAM_EFFECT=FORBIDDEN",
+            "OIDC_EFFECT=FORBIDDEN",
+            "RECOVERY_DISPATCH=FORBIDDEN",
             "CLOUD_EFFECT=FORBIDDEN",
         )
     )
@@ -4890,7 +4985,7 @@ def verify_c5_control_premerge(
     branch = github(f"/repos/{REPOSITORY}/branches/{DEFAULT_BRANCH}")
     if (
         not isinstance(branch, dict)
-        or branch.get("commit", {}).get("sha") != C5_BASE_MAIN
+        or branch.get("commit", {}).get("sha") != C5C1_CONTROL_SHA
     ):
         raise RecoveryError("C5_CONTROL_PREMERGE_MAIN_MISMATCH")
     pr = github(f"/repos/{REPOSITORY}/pulls/{pr_number}")
@@ -4906,7 +5001,7 @@ def verify_c5_control_premerge(
         raise RecoveryError("C5_CONTROL_PREMERGE_HEAD_MISMATCH")
     if (
         pr.get("base", {}).get("ref") != DEFAULT_BRANCH
-        or pr.get("base", {}).get("sha") != C5_BASE_MAIN
+        or pr.get("base", {}).get("sha") != C5C1_CONTROL_SHA
     ):
         raise RecoveryError("C5_CONTROL_PREMERGE_BASE_MISMATCH")
     head_repo = pr.get("head", {}).get("repo") or {}
@@ -4917,7 +5012,9 @@ def verify_c5_control_premerge(
         raise RecoveryError("C5_CONTROL_PREMERGE_REPOSITORY_MISMATCH")
     files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
     _c5_validate_pr_files(files, C5_CONTROL_ALLOWED_FILES, "C5_CONTROL_PREMERGE")
-    currentness = verify_c5_control_use_time_currentness(reviewed_head, C5_BASE_MAIN)
+    currentness = verify_c5_control_use_time_currentness(
+        reviewed_head, C5C1_CONTROL_SHA
+    )
 
     review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
     if (
@@ -4934,7 +5031,7 @@ def verify_c5_control_premerge(
     ):
         raise RecoveryError("C5_CONTROL_PREMERGE_REVIEW_OWNER_MISMATCH")
     expected_review = c5_control_implementation_review_body(
-        pr_number, reviewed_head
+        pr_number, reviewed_head, C5C2_GENERATION
     )
     if canonical_comment_text(review.get("body")) != expected_review:
         raise RecoveryError("C5_CONTROL_PREMERGE_REVIEW_BODY_MISMATCH")
@@ -4947,7 +5044,11 @@ def verify_c5_control_premerge(
         authority, pr_number, "C5_CONTROL_PREMERGE_AUTHORITY"
     )
     expected_authority = c5_control_merge_authority_body(
-        pr_number, reviewed_head, review_id, review_body_sha256
+        pr_number,
+        reviewed_head,
+        review_id,
+        review_body_sha256,
+        C5C2_GENERATION,
     )
     if canonical_comment_text(authority.get("body")) != expected_authority:
         raise RecoveryError("C5_CONTROL_PREMERGE_AUTHORITY_BODY_MISMATCH")
@@ -4958,9 +5059,10 @@ def verify_c5_control_premerge(
         raise RecoveryError("C5_CONTROL_PREMERGE_TIMELINE_INVALID")
     return {
         "contract": "resilio-phase5-slice-c-c5-control-premerge/v1",
+        "control_generation": C5C2_GENERATION,
         "pr_number": pr_number,
         "reviewed_head": reviewed_head,
-        "base": C5_BASE_MAIN,
+        "base": C5C1_CONTROL_SHA,
         "review_id": review_id,
         "review_body_sha256": actual_review_sha,
         "authority_id": authority_id,
@@ -4982,8 +5084,11 @@ def c5_control_merge_record_body(
     authority_id: int,
     authority_body_sha256: str,
     currentness_digest_sha256: str,
+    generation: str = C5C2_GENERATION,
 ) -> str:
     _c5_require_sha(control_sha, "C5_CONTROL_SHA")
+    if _c5_control_generation(control_sha) != generation:
+        raise RecoveryError("C5_CONTROL_RECORD_GENERATION_MISMATCH")
     _c5_positive(pr_number, "C5_CONTROL_RECORD_PR")
     _c5_require_sha(reviewed_head, "C5_CONTROL_RECORD_REVIEWED_HEAD")
     _c5_require_sha(reviewed_tree, "C5_CONTROL_RECORD_REVIEWED_TREE")
@@ -4998,18 +5103,50 @@ def c5_control_merge_record_body(
     _c5_require_hash(
         currentness_digest_sha256, "C5_CONTROL_RECORD_CURRENTNESS_DIGEST_SHA256"
     )
+    base = _c5_control_generation_base(generation)
+    if generation == C5C1_GENERATION:
+        return "\n".join(
+            (
+                "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
+                "GOVERNING_ISSUE=8ft0-ai/resilio#109",
+                f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
+                f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+                f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
+                f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+                f"C5_CONTROL_PR={pr_number}",
+                f"C5_CONTROL_REVIEWED_HEAD={reviewed_head}",
+                f"C5_CONTROL_REVIEWED_TREE={reviewed_tree}",
+                f"C5_CONTROL_BASE={base}",
+                f"C5_CONTROL_MERGE={control_sha}",
+                f"C5_FRESH_REVIEW_ID={review_id}",
+                f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
+                f"C5_OWNER_MERGE_AUTHORITY_COMMENT_ID={authority_id}",
+                f"C5_OWNER_MERGE_AUTHORITY_BODY_SHA256={authority_body_sha256}",
+                f"C5_CONTROL_CURRENTNESS_DIGEST_SHA256={currentness_digest_sha256}",
+                f"C5_CONTROL_CURRENTNESS_EXPECTED_MAIN={control_sha}",
+                "C5_CONTROL_CURRENTNESS_CAPTURE=FRESH_POST_MERGE",
+                "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
+                "CALLER_REMAINS=C4",
+                "DESIRED_WIF_REMAINS=C4",
+                "LIVE_WIF_REMAINS=C4",
+                "CLOUD_EFFECT=NONE",
+                "STATUS=C5_INERT_CONTROL_MERGED_EXACT",
+            )
+        )
     return "\n".join(
         (
-            "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
+            "PHASE5_SLICE_C_C5_CONTROL_MERGE_V2",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
             f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
-            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
-            f"OWNER_DISPOSITION={C5_OWNER_DISPOSITION_COMMENT_ID}",
-            f"RETAINED_EFFECT_BASELINE={C5_RETAINED_BASELINE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_CLOSURE={C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_REVIEW={C5C2_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_CONTROL_GENERATION={C5C2_GENERATION}",
+            f"C5_CONTROL_PREDECESSOR={C5C1_GENERATION}",
+            "C5_CONTROL_FILES=" + ",".join(C5_CONTROL_ALLOWED_FILES),
             f"C5_CONTROL_PR={pr_number}",
             f"C5_CONTROL_REVIEWED_HEAD={reviewed_head}",
             f"C5_CONTROL_REVIEWED_TREE={reviewed_tree}",
-            f"C5_CONTROL_BASE={C5_BASE_MAIN}",
+            f"C5_CONTROL_BASE={base}",
             f"C5_CONTROL_MERGE={control_sha}",
             f"C5_FRESH_REVIEW_ID={review_id}",
             f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
@@ -5019,16 +5156,23 @@ def c5_control_merge_record_body(
             f"C5_CONTROL_CURRENTNESS_EXPECTED_MAIN={control_sha}",
             "C5_CONTROL_CURRENTNESS_CAPTURE=FRESH_POST_MERGE",
             "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
+            "BRIDGE=C5C1_TO_C5C2_ONLY",
+            "BRIDGE_CONSUMED=TRUE",
+            "SUCCESSOR_AUTHORIZES_OWN_MERGE=FALSE",
+            "NEXT_CONTROL_GENERATION_AUTHORITY=NONE",
             "CALLER_REMAINS=C4",
             "DESIRED_WIF_REMAINS=C4",
             "LIVE_WIF_REMAINS=C4",
+            "WIF_IAM_EFFECT=NONE",
+            "OIDC_EFFECT=NONE",
+            "RECOVERY_DISPATCH=NONE",
             "CLOUD_EFFECT=NONE",
-            "STATUS=C5_INERT_CONTROL_MERGED_EXACT",
+            "STATUS=C5C2_INERT_CONTROL_MERGED_EXACT",
         )
     )
 
 
-C5_CONTROL_RECORD_FIELDS = (
+C5C1_CONTROL_RECORD_FIELDS = (
     "GOVERNING_ISSUE",
     "C5_PROTOCOL_EPOCH_SHA256",
     "C5_ARCHITECTURE",
@@ -5054,17 +5198,59 @@ C5_CONTROL_RECORD_FIELDS = (
     "STATUS",
 )
 
+C5C2_CONTROL_RECORD_FIELDS = (
+    "GOVERNING_ISSUE",
+    "C5_PROTOCOL_EPOCH_SHA256",
+    "C5C2_ARCHITECTURE_CLOSURE",
+    "C5C2_ARCHITECTURE_REVIEW",
+    "C5_CONTROL_GENERATION",
+    "C5_CONTROL_PREDECESSOR",
+    "C5_CONTROL_FILES",
+    "C5_CONTROL_PR",
+    "C5_CONTROL_REVIEWED_HEAD",
+    "C5_CONTROL_REVIEWED_TREE",
+    "C5_CONTROL_BASE",
+    "C5_CONTROL_MERGE",
+    "C5_FRESH_REVIEW_ID",
+    "C5_FRESH_REVIEW_BODY_SHA256",
+    "C5_OWNER_MERGE_AUTHORITY_COMMENT_ID",
+    "C5_OWNER_MERGE_AUTHORITY_BODY_SHA256",
+    "C5_CONTROL_CURRENTNESS_DIGEST_SHA256",
+    "C5_CONTROL_CURRENTNESS_EXPECTED_MAIN",
+    "C5_CONTROL_CURRENTNESS_CAPTURE",
+    "MERGED_TREE_EQUALS_REVIEWED_TREE",
+    "BRIDGE",
+    "BRIDGE_CONSUMED",
+    "SUCCESSOR_AUTHORIZES_OWN_MERGE",
+    "NEXT_CONTROL_GENERATION_AUTHORITY",
+    "CALLER_REMAINS",
+    "DESIRED_WIF_REMAINS",
+    "LIVE_WIF_REMAINS",
+    "WIF_IAM_EFFECT",
+    "OIDC_EFFECT",
+    "RECOVERY_DISPATCH",
+    "CLOUD_EFFECT",
+    "STATUS",
+)
+
 
 def validate_c5_control_merge_record(
     comments: list[dict[str, Any]], control_sha: str
 ) -> dict[str, Any]:
     _c5_require_sha(control_sha, "C5_CONTROL_RECORD_CONTROL_SHA")
+    generation = _c5_control_generation(control_sha)
+    if generation == C5C1_GENERATION:
+        header = "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1"
+        record_fields = C5C1_CONTROL_RECORD_FIELDS
+    else:
+        header = "PHASE5_SLICE_C_C5_CONTROL_MERGE_V2"
+        record_fields = C5C2_CONTROL_RECORD_FIELDS
     candidates = [
         comment
         for comment in comments
         if _owner_issue_comment(comment, GOVERNING_ISSUE)
         and canonical_comment_text(comment.get("body")).startswith(
-            "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1\n"
+            header + "\n"
         )
         and f"C5_CONTROL_MERGE={control_sha}" in canonical_comment_text(
             comment.get("body")
@@ -5078,16 +5264,13 @@ def validate_c5_control_merge_record(
     )
     fields = _record_fields(
         str(comment.get("body") or ""),
-        "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
-        C5_CONTROL_RECORD_FIELDS,
+        header,
+        record_fields,
     )
-    expected = {
+    expected: dict[str, str] = {
         "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
         "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
-        "C5_ARCHITECTURE": str(C5_ARCHITECTURE_COMMENT_ID),
-        "OWNER_DISPOSITION": str(C5_OWNER_DISPOSITION_COMMENT_ID),
-        "RETAINED_EFFECT_BASELINE": str(C5_RETAINED_BASELINE_COMMENT_ID),
-        "C5_CONTROL_BASE": C5_BASE_MAIN,
+        "C5_CONTROL_BASE": _c5_control_generation_base(generation),
         "C5_CONTROL_MERGE": control_sha,
         "C5_CONTROL_CURRENTNESS_EXPECTED_MAIN": control_sha,
         "C5_CONTROL_CURRENTNESS_CAPTURE": "FRESH_POST_MERGE",
@@ -5096,8 +5279,38 @@ def validate_c5_control_merge_record(
         "DESIRED_WIF_REMAINS": "C4",
         "LIVE_WIF_REMAINS": "C4",
         "CLOUD_EFFECT": "NONE",
-        "STATUS": "C5_INERT_CONTROL_MERGED_EXACT",
     }
+    if generation == C5C1_GENERATION:
+        expected.update(
+            {
+                "C5_ARCHITECTURE": str(C5_ARCHITECTURE_COMMENT_ID),
+                "OWNER_DISPOSITION": str(C5_OWNER_DISPOSITION_COMMENT_ID),
+                "RETAINED_EFFECT_BASELINE": str(C5_RETAINED_BASELINE_COMMENT_ID),
+                "STATUS": "C5_INERT_CONTROL_MERGED_EXACT",
+            }
+        )
+    else:
+        expected.update(
+            {
+                "C5C2_ARCHITECTURE_CLOSURE": str(
+                    C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID
+                ),
+                "C5C2_ARCHITECTURE_REVIEW": str(
+                    C5C2_ARCHITECTURE_REVIEW_COMMENT_ID
+                ),
+                "C5_CONTROL_GENERATION": C5C2_GENERATION,
+                "C5_CONTROL_PREDECESSOR": C5C1_GENERATION,
+                "C5_CONTROL_FILES": ",".join(C5_CONTROL_ALLOWED_FILES),
+                "BRIDGE": "C5C1_TO_C5C2_ONLY",
+                "BRIDGE_CONSUMED": "TRUE",
+                "SUCCESSOR_AUTHORIZES_OWN_MERGE": "FALSE",
+                "NEXT_CONTROL_GENERATION_AUTHORITY": "NONE",
+                "WIF_IAM_EFFECT": "NONE",
+                "OIDC_EFFECT": "NONE",
+                "RECOVERY_DISPATCH": "NONE",
+                "STATUS": "C5C2_INERT_CONTROL_MERGED_EXACT",
+            }
+        )
     for key, value in expected.items():
         if fields[key] != value:
             raise RecoveryError(f"C5_CONTROL_RECORD_FIELD_MISMATCH:{key}")
@@ -5135,7 +5348,8 @@ def validate_c5_control_merge_record(
         or pr.get("merged_at") is None
         or pr.get("merge_commit_sha") != control_sha
         or pr.get("head", {}).get("sha") != reviewed_head
-        or pr.get("base", {}).get("sha") != C5_BASE_MAIN
+        or pr.get("base", {}).get("sha")
+        != _c5_control_generation_base(generation)
         or pr.get("base", {}).get("ref") != DEFAULT_BRANCH
     ):
         raise RecoveryError("C5_CONTROL_RECORD_PR_MISMATCH")
@@ -5152,7 +5366,7 @@ def validate_c5_control_merge_record(
         raise RecoveryError("C5_CONTROL_RECORD_TREE_MISMATCH")
     review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
     expected_review = c5_control_implementation_review_body(
-        pr_number, reviewed_head
+        pr_number, reviewed_head, generation
     )
     if (
         not isinstance(review, dict)
@@ -5176,7 +5390,7 @@ def validate_c5_control_merge_record(
     if observed_authority_hash != authority_hash:
         raise RecoveryError("C5_CONTROL_RECORD_AUTHORITY_HASH_MISMATCH")
     if canonical_comment_text(authority.get("body")) != c5_control_merge_authority_body(
-        pr_number, reviewed_head, review_id, review_hash
+        pr_number, reviewed_head, review_id, review_hash, generation
     ):
         raise RecoveryError("C5_CONTROL_RECORD_AUTHORITY_BODY_MISMATCH")
     review_time = _timestamp(
@@ -5190,6 +5404,7 @@ def validate_c5_control_merge_record(
         "created_at": created,
         "body_sha256": body_sha,
         "control_sha": control_sha,
+        "control_generation": generation,
         "pr_number": pr_number,
         "reviewed_head": reviewed_head,
         "reviewed_tree": reviewed_tree,
@@ -5205,24 +5420,31 @@ def c5_activation_review_body(
     control_sha: str, pr_number: int, reviewed_head: str
 ) -> str:
     _c5_require_sha(control_sha, "C5_ACTIVATION_REVIEW_CONTROL_SHA")
-    if control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
-        control_sha == C5_OLD_RECOVERY_CONTROL_SHA
-    ):
+    if _c5_control_generation(control_sha) != C5C2_GENERATION:
         raise RecoveryError("C5_ACTIVATION_REVIEW_CONTROL_FORBIDDEN")
     _c5_positive(pr_number, "C5_ACTIVATION_REVIEW_PR")
     _c5_require_sha(reviewed_head, "C5_ACTIVATION_REVIEW_HEAD")
     return "\n".join(
         (
-            "COMPLETELY_FRESH_SUBSTANTIVE_C5_ACTIVATION_SECURITY_AUTHORITY_REVIEW",
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5C2_ACTIVATION_SECURITY_AUTHORITY_REVIEW",
             "DISPOSITION=APPROVED",
             f"PR=8ft0-ai/resilio#{pr_number}",
             f"EXACT_HEAD={reviewed_head}",
             f"EXACT_BASE={control_sha}",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
             f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
-            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_CLOSURE={C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_REVIEW={C5C2_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_CONTROL_GENERATION={C5C2_GENERATION}",
             f"C5_CONTROL_SHA={control_sha}",
-            "ACTIVATION_EFFECT=REPOSITORY_CALLER_AND_DESIRED_WIF_C4_TO_C5_ONLY",
+            "C5_ACTIVATION_TRANSITION=C5_ACTIVATION_TRANSITION_V3",
+            "ACTIVATION_CANDIDATE_FILES=" + ",".join(C5_ACTIVATION_CANDIDATE_FILES),
+            "ACTIVATION_AUTHORITY_FILES=" + ",".join(C5_ACTIVATION_AUTHORITY_FILES),
+            "ACTIVATION_EFFECT=REPOSITORY_CALLER_AND_DESIRED_WIF_C4_TO_C5C2_ONLY",
+            "PROOF_FILE_AUTHORITY=NONE",
+            "WIF_IAM_EFFECT=NONE",
+            "OIDC_EFFECT=NONE",
+            "RECOVERY_DISPATCH=NONE",
             "LIVE_WIF_EFFECT=NONE",
             "CLOUD_EFFECT=NONE",
             "MATERIAL_BLOCKERS=NONE",
@@ -5242,17 +5464,26 @@ def c5_activation_merge_authority_body(
     _c5_require_hash(review_body_sha256, "C5_ACTIVATION_REVIEW_BODY_SHA256")
     return "\n".join(
         (
-            "PHASE5_SLICE_C_C5_ACTIVATION_MERGE_AUTHORITY_V1",
+            "PHASE5_SLICE_C_C5_ACTIVATION_MERGE_AUTHORITY_V3",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
             f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
-            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_CLOSURE={C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_REVIEW={C5C2_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_CONTROL_GENERATION={C5C2_GENERATION}",
             f"C5_CONTROL_SHA={control_sha}",
+            "C5_ACTIVATION_TRANSITION=C5_ACTIVATION_TRANSITION_V3",
+            "ACTIVATION_CANDIDATE_FILES=" + ",".join(C5_ACTIVATION_CANDIDATE_FILES),
+            "ACTIVATION_AUTHORITY_FILES=" + ",".join(C5_ACTIVATION_AUTHORITY_FILES),
             f"C5_ACTIVATION_PR={pr_number}",
             f"C5_ACTIVATION_REVIEWED_HEAD={reviewed_head}",
             f"C5_ACTIVATION_BASE={control_sha}",
             f"C5_FRESH_REVIEW_ID={review_id}",
             f"C5_FRESH_REVIEW_BODY_SHA256={review_body_sha256}",
-            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_REPOSITORY_ACTIVATION_ONLY",
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5C2_REPOSITORY_ACTIVATION_ONLY",
+            "PROOF_FILE_AUTHORITY=NONE",
+            "WIF_IAM_EFFECT=FORBIDDEN",
+            "OIDC_EFFECT=FORBIDDEN",
+            "RECOVERY_DISPATCH=FORBIDDEN",
             "LIVE_WIF_EFFECT=FORBIDDEN",
             "CLOUD_EFFECT=FORBIDDEN",
         )
@@ -5262,7 +5493,16 @@ def c5_activation_merge_authority_body(
 def _c5_verify_activation_file_transform(
     control_sha: str, reviewed_head: str
 ) -> None:
-    for path in C5_ACTIVATION_ALLOWED_FILES:
+    if tuple(C5_ACTIVATION_AUTHORITY_FILES) != (
+        ".github/workflows/phase5-slice-c-recovery.yml",
+        "infra/bootstrap/phase5_authority.tf",
+    ):
+        raise RecoveryError("C5_ACTIVATION_AUTHORITY_FILE_SET_INVALID")
+    if not set(C5_ACTIVATION_AUTHORITY_FILES).issubset(
+        C5_ACTIVATION_CANDIDATE_FILES
+    ):
+        raise RecoveryError("C5_ACTIVATION_AUTHORITY_NOT_CANDIDATE")
+    for path in C5_ACTIVATION_AUTHORITY_FILES:
         before = _c5_fetch_repo_text(path, control_sha)
         after = _c5_fetch_repo_text(path, reviewed_head)
         count = before.count(C5_OLD_RECOVERY_CONTROL_SHA)
@@ -5273,6 +5513,15 @@ def _c5_verify_activation_file_transform(
         )
         if after != expected:
             raise RecoveryError(f"C5_ACTIVATION_FILE_TRANSFORM_INVALID:{path}")
+
+
+def _c5_validate_activation_relation(
+    control_sha: str, reviewed_head: str, files: Any, label: str
+) -> None:
+    if _c5_control_generation(control_sha) != C5C2_GENERATION:
+        raise RecoveryError(f"{label}_CONTROL_GENERATION_INVALID")
+    _c5_validate_pr_files(files, C5_ACTIVATION_CANDIDATE_FILES, label)
+    _c5_verify_activation_file_transform(control_sha, reviewed_head)
 
 
 def verify_c5_activation_premerge(
@@ -5291,9 +5540,7 @@ def verify_c5_activation_premerge(
         review_body_sha256, "C5_ACTIVATION_PREMERGE_REVIEW_BODY_SHA256"
     )
     _c5_positive(authority_id, "C5_ACTIVATION_PREMERGE_AUTHORITY_ID")
-    if control_sha in C5_FORBIDDEN_RECOVERY_CONTROL_SHAS or (
-        control_sha == C5_OLD_RECOVERY_CONTROL_SHA
-    ):
+    if _c5_control_generation(control_sha) != C5C2_GENERATION:
         raise RecoveryError("C5_ACTIVATION_PREMERGE_CONTROL_FORBIDDEN")
 
     comments = github_issue_comments(GOVERNING_ISSUE)
@@ -5317,8 +5564,9 @@ def verify_c5_activation_premerge(
     ):
         raise RecoveryError("C5_ACTIVATION_PREMERGE_PR_INVALID")
     files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
-    _c5_validate_pr_files(files, C5_ACTIVATION_ALLOWED_FILES, "C5_ACTIVATION")
-    _c5_verify_activation_file_transform(control_sha, reviewed_head)
+    _c5_validate_activation_relation(
+        control_sha, reviewed_head, files, "C5_ACTIVATION"
+    )
 
     review = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/reviews/{review_id}")
     expected_review = c5_activation_review_body(
@@ -5355,7 +5603,9 @@ def verify_c5_activation_premerge(
     if review_time > authority_created:
         raise RecoveryError("C5_ACTIVATION_PREMERGE_TIMELINE_INVALID")
     return {
-        "contract": "resilio-phase5-slice-c-c5-activation-premerge/v1",
+        "contract": "resilio-phase5-slice-c-c5-activation-premerge/v3",
+        "control_generation": C5C2_GENERATION,
+        "activation_transition": "C5_ACTIVATION_TRANSITION_V3",
         "control_sha": control_sha,
         "pr_number": pr_number,
         "reviewed_head": reviewed_head,
@@ -5379,6 +5629,8 @@ def c5_activation_record_body(
     authority_body_sha256: str,
 ) -> str:
     _c5_require_sha(control_sha, "C5_ACTIVATION_RECORD_CONTROL_SHA")
+    if _c5_control_generation(control_sha) != C5C2_GENERATION:
+        raise RecoveryError("C5_ACTIVATION_RECORD_CONTROL_GENERATION_INVALID")
     _c5_require_sha(activation_main, "C5_ACTIVATION_RECORD_MAIN")
     _c5_positive(pr_number, "C5_ACTIVATION_RECORD_PR")
     _c5_require_sha(reviewed_head, "C5_ACTIVATION_RECORD_HEAD")
@@ -5393,11 +5645,16 @@ def c5_activation_record_body(
     )
     return "\n".join(
         (
-            "PHASE5_SLICE_C_C5_ACTIVATION_V1",
+            "PHASE5_SLICE_C_C5_ACTIVATION_V3",
             "GOVERNING_ISSUE=8ft0-ai/resilio#109",
             f"C5_PROTOCOL_EPOCH_SHA256={C5_PROTOCOL_EPOCH_SHA256}",
-            f"C5_ARCHITECTURE={C5_ARCHITECTURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_CLOSURE={C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_REVIEW={C5C2_ARCHITECTURE_REVIEW_COMMENT_ID}",
+            f"C5_CONTROL_GENERATION={C5C2_GENERATION}",
             f"C5_CONTROL_SHA={control_sha}",
+            "C5_ACTIVATION_TRANSITION=C5_ACTIVATION_TRANSITION_V3",
+            "ACTIVATION_CANDIDATE_FILES=" + ",".join(C5_ACTIVATION_CANDIDATE_FILES),
+            "ACTIVATION_AUTHORITY_FILES=" + ",".join(C5_ACTIVATION_AUTHORITY_FILES),
             f"C5_ACTIVATION_PR={pr_number}",
             f"C5_ACTIVATION_REVIEWED_HEAD={reviewed_head}",
             f"C5_ACTIVATION_REVIEWED_TREE={reviewed_tree}",
@@ -5408,11 +5665,15 @@ def c5_activation_record_body(
             f"C5_OWNER_MERGE_AUTHORITY_COMMENT_ID={authority_id}",
             f"C5_OWNER_MERGE_AUTHORITY_BODY_SHA256={authority_body_sha256}",
             "MERGED_TREE_EQUALS_REVIEWED_TREE=TRUE",
-            "REPOSITORY_CALLER=C5",
-            "REPOSITORY_DESIRED_WIF=C5",
+            "REPOSITORY_CALLER=C5C2",
+            "REPOSITORY_DESIRED_WIF=C5C2",
             "LIVE_WIF=C4_ONLY",
+            "PROOF_FILE_AUTHORITY=NONE",
+            "WIF_IAM_EFFECT=NONE",
+            "OIDC_EFFECT=NONE",
+            "RECOVERY_DISPATCH=NONE",
             "CLOUD_EFFECT=NONE",
-            "STATUS=C5_REPOSITORY_ACTIVATION_MERGED_EXACT",
+            "STATUS=C5C2_REPOSITORY_ACTIVATION_MERGED_EXACT",
         )
     )
 
@@ -5420,8 +5681,13 @@ def c5_activation_record_body(
 C5_ACTIVATION_RECORD_FIELDS = (
     "GOVERNING_ISSUE",
     "C5_PROTOCOL_EPOCH_SHA256",
-    "C5_ARCHITECTURE",
+    "C5C2_ARCHITECTURE_CLOSURE",
+    "C5C2_ARCHITECTURE_REVIEW",
+    "C5_CONTROL_GENERATION",
     "C5_CONTROL_SHA",
+    "C5_ACTIVATION_TRANSITION",
+    "ACTIVATION_CANDIDATE_FILES",
+    "ACTIVATION_AUTHORITY_FILES",
     "C5_ACTIVATION_PR",
     "C5_ACTIVATION_REVIEWED_HEAD",
     "C5_ACTIVATION_REVIEWED_TREE",
@@ -5435,6 +5701,10 @@ C5_ACTIVATION_RECORD_FIELDS = (
     "REPOSITORY_CALLER",
     "REPOSITORY_DESIRED_WIF",
     "LIVE_WIF",
+    "PROOF_FILE_AUTHORITY",
+    "WIF_IAM_EFFECT",
+    "OIDC_EFFECT",
+    "RECOVERY_DISPATCH",
     "CLOUD_EFFECT",
     "STATUS",
 )
@@ -5446,12 +5716,14 @@ def validate_c5_activation_record(
     activation_main: str,
 ) -> dict[str, Any]:
     control_record = validate_c5_control_merge_record(comments, control_sha)
+    if control_record["control_generation"] != C5C2_GENERATION:
+        raise RecoveryError("C5_ACTIVATION_RECORD_CONTROL_GENERATION_INVALID")
     candidates = [
         comment
         for comment in comments
         if _owner_issue_comment(comment, GOVERNING_ISSUE)
         and canonical_comment_text(comment.get("body")).startswith(
-            "PHASE5_SLICE_C_C5_ACTIVATION_V1\n"
+            "PHASE5_SLICE_C_C5_ACTIVATION_V3\n"
         )
         and f"C5_CONTROL_SHA={control_sha}" in canonical_comment_text(
             comment.get("body")
@@ -5468,22 +5740,33 @@ def validate_c5_activation_record(
     )
     fields = _record_fields(
         str(comment.get("body") or ""),
-        "PHASE5_SLICE_C_C5_ACTIVATION_V1",
+        "PHASE5_SLICE_C_C5_ACTIVATION_V3",
         C5_ACTIVATION_RECORD_FIELDS,
     )
     expected = {
         "GOVERNING_ISSUE": "8ft0-ai/resilio#109",
         "C5_PROTOCOL_EPOCH_SHA256": C5_PROTOCOL_EPOCH_SHA256,
-        "C5_ARCHITECTURE": str(C5_ARCHITECTURE_COMMENT_ID),
+        "C5C2_ARCHITECTURE_CLOSURE": str(
+            C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID
+        ),
+        "C5C2_ARCHITECTURE_REVIEW": str(C5C2_ARCHITECTURE_REVIEW_COMMENT_ID),
+        "C5_CONTROL_GENERATION": C5C2_GENERATION,
         "C5_CONTROL_SHA": control_sha,
+        "C5_ACTIVATION_TRANSITION": "C5_ACTIVATION_TRANSITION_V3",
+        "ACTIVATION_CANDIDATE_FILES": ",".join(C5_ACTIVATION_CANDIDATE_FILES),
+        "ACTIVATION_AUTHORITY_FILES": ",".join(C5_ACTIVATION_AUTHORITY_FILES),
         "C5_ACTIVATION_BASE": control_sha,
         "C5_ACTIVATION_MAIN": activation_main,
         "MERGED_TREE_EQUALS_REVIEWED_TREE": "TRUE",
-        "REPOSITORY_CALLER": "C5",
-        "REPOSITORY_DESIRED_WIF": "C5",
+        "REPOSITORY_CALLER": "C5C2",
+        "REPOSITORY_DESIRED_WIF": "C5C2",
         "LIVE_WIF": "C4_ONLY",
+        "PROOF_FILE_AUTHORITY": "NONE",
+        "WIF_IAM_EFFECT": "NONE",
+        "OIDC_EFFECT": "NONE",
+        "RECOVERY_DISPATCH": "NONE",
         "CLOUD_EFFECT": "NONE",
-        "STATUS": "C5_REPOSITORY_ACTIVATION_MERGED_EXACT",
+        "STATUS": "C5C2_REPOSITORY_ACTIVATION_MERGED_EXACT",
     }
     for key, value in expected.items():
         if fields[key] != value:
@@ -5526,8 +5809,9 @@ def validate_c5_activation_record(
     ):
         raise RecoveryError("C5_ACTIVATION_RECORD_PR_MISMATCH")
     files = github(f"/repos/{REPOSITORY}/pulls/{pr_number}/files?per_page=100")
-    _c5_validate_pr_files(files, C5_ACTIVATION_ALLOWED_FILES, "C5_ACTIVATION_RECORD")
-    _c5_verify_activation_file_transform(control_sha, reviewed_head)
+    _c5_validate_activation_relation(
+        control_sha, reviewed_head, files, "C5_ACTIVATION_RECORD"
+    )
     reviewed_commit = github(f"/repos/{REPOSITORY}/commits/{reviewed_head}")
     merge_commit = github(f"/repos/{REPOSITORY}/commits/{activation_main}")
     if (
@@ -5584,6 +5868,8 @@ def validate_c5_activation_record(
         "control_record_comment_id": control_record["comment_id"],
         "control_record_body_sha256": control_record["body_sha256"],
         "control_sha": control_sha,
+        "control_generation": C5C2_GENERATION,
+        "activation_transition": "C5_ACTIVATION_TRANSITION_V3",
         "activation_main": activation_main,
         "pr_number": pr_number,
         "reviewed_head": reviewed_head,
