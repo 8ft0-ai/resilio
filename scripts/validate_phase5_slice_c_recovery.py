@@ -19,6 +19,7 @@ TESTS = ROOT / "tests/test_phase5_slice_c_recovery.py"
 NORMAL_CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
 RECOVERY_CONTROL_SHA = "ae4960dd8db54849e7aa3698877c877bdb6433fd"
 SUCCESSOR_CONTROL_SHA = "03123864097df51e6edafd67acc34702f0819de3"
+C5_CONTROL_SHA = "b4f0d6d2ecc78dea9e15e69d1f2494694bce12a4"
 C5_ARCHITECTURE_COMMENT_ID = "5976498714"
 C5_ARCHITECTURE_REVIEW_COMMENT_ID = "5976504154"
 C5_OWNER_DISPOSITION_COMMENT_ID = "5985897003"
@@ -378,21 +379,22 @@ def workflow_structure_errors(workflow: str) -> list[str]:
     return errors
 
 
-def r2_caller_structure_errors(caller: str, control_sha: str) -> list[str]:
+def r2_caller_structure_errors(caller: str, control_shas: tuple[str, ...]) -> list[str]:
     errors: list[str] = []
-    if not FULL_SHA.fullmatch(control_sha):
+    if not control_shas or any(not FULL_SHA.fullmatch(sha) for sha in control_shas):
         return ["RECOVERY_R2_CALLER_CONTROL_SHA_INVALID"]
     lines = caller.splitlines()
     if _root_block(lines, "on:") != ["on:", "  workflow_dispatch:"]:
         errors.append("RECOVERY_R2_CALLER_TRIGGER_NOT_EXACT_WORKFLOW_DISPATCH")
     if "inputs:" in caller:
         errors.append("RECOVERY_R2_CALLER_MUTABLE_INPUTS_FORBIDDEN")
-    expected_use = (
+    expected_uses = tuple(
         "uses: 8ft0-ai/resilio/.github/workflows/"
-        f"phase5-slice-c-recovery-reusable.yml@{control_sha}"
+        f"phase5-slice-c-recovery-reusable.yml@{sha}"
+        for sha in control_shas
     )
     uses = [line.strip() for line in lines if line.strip().startswith("uses:")]
-    if uses != [expected_use]:
+    if len(uses) != 1 or uses[0] not in expected_uses:
         errors.append("RECOVERY_R2_CALLER_REUSABLE_IDENTITY_INVALID")
     permissions = _permission_blocks(lines)
     job_permissions = [values for indent, values in permissions if indent == 4]
@@ -494,7 +496,9 @@ def main() -> int:
         errors.append("RECOVERY_WORKFLOW_ID_TOKEN_COUNT")
     if workflow.count('terraform -chdir="$PLAN_WORK" plan') != 1:
         errors.append("RECOVERY_WORKFLOW_PLAN_COUNT")
-    errors.extend(r2_caller_structure_errors(caller, SUCCESSOR_CONTROL_SHA))
+    errors.extend(
+        r2_caller_structure_errors(caller, (SUCCESSOR_CONTROL_SHA, C5_CONTROL_SHA))
+    )
 
     require(
         helper,
@@ -764,11 +768,12 @@ def main() -> int:
 
     if f'phase5_control_sha = "{NORMAL_CONTROL_SHA}"' not in authority:
         errors.append("RECOVERY_R2_NORMAL_CONTROL_IDENTITY_CHANGED")
-    expected_recovery_ref = (
+    expected_recovery_refs = tuple(
         'phase5_slice_c_recovery_workflow_ref = '
-        f'"8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{SUCCESSOR_CONTROL_SHA}"'
+        f'"8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{sha}"'
+        for sha in (SUCCESSOR_CONTROL_SHA, C5_CONTROL_SHA)
     )
-    if authority.count(expected_recovery_ref) != 1:
+    if sum(authority.count(ref) for ref in expected_recovery_refs) != 1:
         errors.append("RECOVERY_R2_CONTROL_REF_NOT_EXACT")
     if authority.count("${local.phase5_control_sha}") != 7:
         errors.append("RECOVERY_R2_NORMAL_WORKFLOW_REF_COUNT_CHANGED")
