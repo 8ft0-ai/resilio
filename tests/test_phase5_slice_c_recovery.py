@@ -2411,6 +2411,19 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
                 recovery.C5C1_CONTROL_SHA, 141, "f" * 40
             )
 
+    def test_c5c2_successor_candidate_cannot_authorise_its_own_merge(self):
+        with self.assertRaisesRegex(
+            RecoveryError,
+            "C5C2_PREMERGE_REQUIRES_PREDECESSOR_GOVERNANCE_BRIDGE",
+        ):
+            recovery.verify_c5_control_premerge(
+                131,
+                "d" * 40,
+                901,
+                "a" * 64,
+                902,
+            )
+
     def test_c5c2_activation_relation_rejects_extra_or_missing_candidate(self):
         control = "d" * 40
         reviewed = "e" * 40
