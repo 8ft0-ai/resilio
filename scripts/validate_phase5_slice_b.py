@@ -308,7 +308,6 @@ def check() -> None:
         recovery_caller,
         (
             "\n  workflow_dispatch:",
-            f"uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{RECOVERY_CONTROL_SHA}",
             "contents: read",
             "issues: read",
             "actions: read",
@@ -318,6 +317,12 @@ def check() -> None:
         "PHASE5_RECOVERY_CALLER",
         errors,
     )
+    recovery_caller_refs = tuple(
+        f"uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{sha}"
+        for sha in RECOVERY_CONTROL_SHAS
+    )
+    if sum(ref in recovery_caller for ref in recovery_caller_refs) != 1:
+        errors.append("PHASE5_RECOVERY_CALLER:must be canonical C4 or C5 identity")
     for token in (
         "\n  push:",
         "\n  pull_request:",
