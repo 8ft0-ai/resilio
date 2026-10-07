@@ -24,6 +24,9 @@ C5_ARCHITECTURE_REVIEW_COMMENT_ID = "5976504154"
 C5_OWNER_DISPOSITION_COMMENT_ID = "5985897003"
 C5_RETAINED_BASELINE_COMMENT_ID = "5987054333"
 C5_BASE_MAIN = "6512a8df49c56ec797f106d02aae4d4114193779"
+C5C1_CONTROL_SHA = "b4f0d6d2ecc78dea9e15e69d1f2494694bce12a4"
+C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID = "6033074284"
+C5C2_ARCHITECTURE_REVIEW_COMMENT_ID = "6033167432"
 C5_BOOTSTRAP_STATE_LINEAGE = "ae08b2f4-f18f-204c-72aa-53e17f12eea7"
 C5_BOOTSTRAP_STATE_SERIAL = "71"
 BOUNDARY = "5833629251"
@@ -322,10 +325,57 @@ def c5_semantic_errors(helper: str) -> list[str]:
             )
 
     control_record = latest("c5_control_merge_record_body")
-    control_record_calls = calls(control_record)
     control_record_source = ast.get_source_segment(helper, control_record) or "" if control_record is not None else ""
     if "C5_CONTROL_CURRENTNESS_DIGEST_SHA256" not in control_record_source:
         errors.append("RECOVERY_C5_CONTROL_RECORD_CURRENTNESS_NOT_BOUND")
+
+    control_premerge_source = (
+        ast.get_source_segment(helper, latest("verify_c5_control_premerge")) or ""
+    )
+    for required_token in (
+        "C5C1_CONTROL_SHA",
+        "C5C2_GENERATION",
+        "C5_CONTROL_ALLOWED_FILES",
+        "verify_c5_control_use_time_currentness",
+    ):
+        if required_token not in control_premerge_source:
+            errors.append(
+                "RECOVERY_C5C2_CONTROL_BRIDGE_CONTRACT_MISSING:" + required_token
+            )
+    if "C5_BASE_MAIN" in control_premerge_source:
+        errors.append("RECOVERY_C5C2_CONTROL_BRIDGE_USES_HISTORICAL_BASE")
+    if "C5C2_PREMERGE_REQUIRES_PREDECESSOR_GOVERNANCE_BRIDGE" not in control_premerge_source:
+        errors.append("RECOVERY_C5C2_SUCCESSOR_SELF_ADMISSION_NOT_FAIL_CLOSED")
+
+    activation_relation_source = (
+        ast.get_source_segment(helper, latest("_c5_validate_activation_relation"))
+        or ""
+    )
+    for required_token in (
+        "C5C2_GENERATION",
+        "C5_ACTIVATION_CANDIDATE_FILES",
+        "_c5_validate_pr_files",
+        "_c5_verify_activation_file_transform",
+    ):
+        if required_token not in activation_relation_source:
+            errors.append(
+                "RECOVERY_C5C2_ACTIVATION_RELATION_MISSING:" + required_token
+            )
+
+    activation_transform_source = (
+        ast.get_source_segment(helper, latest("_c5_verify_activation_file_transform"))
+        or ""
+    )
+    for required_token in (
+        "C5_ACTIVATION_AUTHORITY_FILES",
+        "C5_ACTIVATION_CANDIDATE_FILES",
+        "C5_OLD_RECOVERY_CONTROL_SHA",
+        "C5_ACTIVATION_AUTHORITY_NOT_CANDIDATE",
+    ):
+        if required_token not in activation_transform_source:
+            errors.append(
+                "RECOVERY_C5C2_ACTIVATION_TRANSFORM_MISSING:" + required_token
+            )
 
     premerge = latest("verify_c5_control_premerge")
     if "verify_c5_control_use_time_currentness" not in calls(premerge):
@@ -662,16 +712,23 @@ def main() -> int:
             "C5_DISPATCH_REQUIRES_EFFECT_SUCCEEDED",
             "C4_DISPATCH_PERMANENTLY_FORBIDDEN",
             "C5_CONTROL_ALLOWED_FILES",
-            "C5_ACTIVATION_ALLOWED_FILES",
+            "C5_ACTIVATION_CANDIDATE_FILES",
+            "C5_ACTIVATION_AUTHORITY_FILES",
+            f'C5C1_CONTROL_SHA = "{C5C1_CONTROL_SHA}"',
+            f"C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID = {C5C2_ARCHITECTURE_CLOSURE_COMMENT_ID}",
+            f"C5C2_ARCHITECTURE_REVIEW_COMMENT_ID = {C5C2_ARCHITECTURE_REVIEW_COMMENT_ID}",
             "COMPLETELY_FRESH_SUBSTANTIVE_C5_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
             "PHASE5_SLICE_C_C5_CONTROL_MERGE_AUTHORITY_V1",
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5C2_IMPLEMENTATION_SECURITY_AUTHORITY_REVIEW",
+            "PHASE5_SLICE_C_C5C1_TO_C5C2_CONTROL_MERGE_AUTHORITY_V1",
             "verify_c5_control_premerge",
             "PHASE5_SLICE_C_C5_CONTROL_MERGE_V1",
+            "PHASE5_SLICE_C_C5_CONTROL_MERGE_V2",
             "validate_c5_control_merge_record",
-            "COMPLETELY_FRESH_SUBSTANTIVE_C5_ACTIVATION_SECURITY_AUTHORITY_REVIEW",
-            "PHASE5_SLICE_C_C5_ACTIVATION_MERGE_AUTHORITY_V1",
+            "COMPLETELY_FRESH_SUBSTANTIVE_C5C2_ACTIVATION_SECURITY_AUTHORITY_REVIEW",
+            "PHASE5_SLICE_C_C5_ACTIVATION_MERGE_AUTHORITY_V3",
             "verify_c5_activation_premerge",
-            "PHASE5_SLICE_C_C5_ACTIVATION_V1",
+            "PHASE5_SLICE_C_C5_ACTIVATION_V3",
             "validate_c5_activation_record",
             "verify_c5_repository_activation",
             "verify_c5_bootstrap_state_and_live_iam",
@@ -717,6 +774,11 @@ def main() -> int:
             "test_c5_bootstrap_live_iam_requires_all_eight_and_c4_only",
             "test_c5_repository_activation_requires_exact_caller_and_desired_pin",
             "test_c5_activation_file_transform_is_exact_two_file_sha_repin",
+            "test_c5c2_control_surface_is_exactly_three_files_and_c4_pins_remain",
+            "test_c5c2_control_bridge_has_no_self_authorisation_or_recursion",
+            "test_c5c2_activation_relation_rejects_extra_or_missing_candidate",
+            "test_c5_control_record_validation_is_generation_aware",
+            "test_c5c2_control_record_rejects_forbidden_effect_or_file_surface",
             "test_c5_control_and_activation_authority_constructors_are_strict",
             "test_c5_pre_effect_verifier_has_distinct_claim_ready_and_effect_ready",
             "test_c5_runtime_protocol_epoch_rejects_predecessor_control",

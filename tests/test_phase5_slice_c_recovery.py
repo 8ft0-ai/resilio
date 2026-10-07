@@ -2366,6 +2366,213 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
         ):
             recovery._c5_verify_activation_file_transform(control, reviewed)
 
+    def test_c5c2_control_surface_is_exactly_three_files_and_c4_pins_remain(self):
+        self.assertEqual(
+            recovery.C5_CONTROL_ALLOWED_FILES,
+            (
+                "scripts/phase5_slice_c_recovery.py",
+                "scripts/validate_phase5_slice_c_recovery.py",
+                "tests/test_phase5_slice_c_recovery.py",
+            ),
+        )
+        head = "d" * 40
+        review = recovery.c5_control_implementation_review_body(140, head)
+        authority = recovery.c5_control_merge_authority_body(
+            140, head, 901, recovery.sha256(review.encode())
+        )
+        for required in (
+            f"C5_CONTROL_BASE={recovery.C5C1_CONTROL_SHA}",
+            "C5_CONTROL_SCOPE=EXACT_THREE_FILE_SUCCESSOR_CONTROL_ONLY",
+            "CALLER_REMAINS=C4",
+            "DESIRED_WIF_REMAINS=C4",
+            "LIVE_WIF_REMAINS=C4",
+            "WIF_IAM_EFFECT=FORBIDDEN",
+            "OIDC_EFFECT=FORBIDDEN",
+            "RECOVERY_DISPATCH=FORBIDDEN",
+            "CLOUD_EFFECT=FORBIDDEN",
+        ):
+            self.assertIn(required, review + "\n" + authority)
+
+    def test_c5c2_control_bridge_has_no_self_authorisation_or_recursion(self):
+        head = "d" * 40
+        review = recovery.c5_control_implementation_review_body(140, head)
+        authority = recovery.c5_control_merge_authority_body(
+            140, head, 901, recovery.sha256(review.encode())
+        )
+        self.assertIn("SUCCESSOR_AUTHORIZES_OWN_MERGE=FALSE", authority)
+        self.assertIn("NEXT_CONTROL_GENERATION_AUTHORITY=NONE", authority)
+        self.assertIn(
+            "AUTHORITY_CONSUMPTION=ONE_SUCCESSFUL_MERGE_OR_CURRENTNESS_INVALIDATION",
+            authority,
+        )
+        self.assertNotIn("C5C2_TO_C5C2", authority)
+        with self.assertRaises(RecoveryError):
+            recovery.c5_activation_review_body(
+                recovery.C5C1_CONTROL_SHA, 141, "f" * 40
+            )
+
+    def test_c5c2_successor_candidate_cannot_authorise_its_own_merge(self):
+        with self.assertRaisesRegex(
+            RecoveryError,
+            "C5C2_PREMERGE_REQUIRES_PREDECESSOR_GOVERNANCE_BRIDGE",
+        ):
+            recovery.verify_c5_control_premerge(
+                131,
+                "d" * 40,
+                901,
+                "a" * 64,
+                902,
+            )
+
+    def test_c5c2_activation_relation_rejects_extra_or_missing_candidate(self):
+        control = "d" * 40
+        reviewed = "e" * 40
+        exact = [{"filename": path} for path in recovery.C5_ACTIVATION_CANDIDATE_FILES]
+        with patch.object(
+            recovery, "_c5_verify_activation_file_transform"
+        ) as transform:
+            recovery._c5_validate_activation_relation(
+                control, reviewed, exact, "TEST_C5_ACTIVATION"
+            )
+            transform.assert_called_once_with(control, reviewed)
+            for hostile in (
+                exact[:-1],
+                exact + [{"filename": "docs/not-authorised.md"}],
+            ):
+                with self.assertRaises(RecoveryError):
+                    recovery._c5_validate_activation_relation(
+                        control, reviewed, hostile, "TEST_C5_ACTIVATION"
+                    )
+
+    def _c5_control_record_fixture(self, generation):
+        control = (
+            recovery.C5C1_CONTROL_SHA
+            if generation == recovery.C5C1_GENERATION
+            else "d" * 40
+        )
+        reviewed = "e" * 40
+        tree = "f" * 40
+        pr_number = 140
+        review_id = 901
+        authority_id = 902
+        review = recovery.c5_control_implementation_review_body(
+            pr_number, reviewed, generation
+        )
+        review_hash = recovery.sha256(review.encode())
+        authority = recovery.c5_control_merge_authority_body(
+            pr_number, reviewed, review_id, review_hash, generation
+        )
+        authority_hash = recovery.sha256(authority.encode())
+        record = recovery.c5_control_merge_record_body(
+            control,
+            pr_number,
+            reviewed,
+            tree,
+            review_id,
+            review_hash,
+            authority_id,
+            authority_hash,
+            "a" * 64,
+            generation,
+        )
+        comments = [owner_comment(903, record, "2026-10-07T00:03:00Z")]
+        routes = {
+            f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}": {
+                "number": pr_number,
+                "state": "closed",
+                "merged_at": "2026-10-07T00:02:00Z",
+                "merge_commit_sha": control,
+                "head": {"sha": reviewed},
+                "base": {
+                    "ref": recovery.DEFAULT_BRANCH,
+                    "sha": recovery._c5_control_generation_base(generation),
+                },
+            },
+            f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/files?per_page=100": [
+                {"filename": path} for path in recovery.C5_CONTROL_ALLOWED_FILES
+            ],
+            f"/repos/{recovery.REPOSITORY}/commits/{reviewed}": {
+                "commit": {"tree": {"sha": tree}}
+            },
+            f"/repos/{recovery.REPOSITORY}/commits/{control}": {
+                "commit": {"tree": {"sha": tree}}
+            },
+            f"/repos/{recovery.REPOSITORY}/pulls/{pr_number}/reviews/{review_id}": {
+                "id": review_id,
+                "state": "COMMENTED",
+                "commit_id": reviewed,
+                "body": review,
+                "submitted_at": "2026-10-07T00:00:00Z",
+                "user": {
+                    "login": recovery.OWNER_LOGIN,
+                    "id": recovery.OWNER_ID,
+                },
+            },
+            f"/repos/{recovery.REPOSITORY}/issues/comments/{authority_id}": owner_comment(
+                authority_id,
+                authority,
+                "2026-10-07T00:01:00Z",
+                issue=pr_number,
+            ),
+        }
+        return control, comments, routes
+
+    def test_c5_control_record_validation_is_generation_aware(self):
+        for generation in (
+            recovery.C5C1_GENERATION,
+            recovery.C5C2_GENERATION,
+        ):
+            with self.subTest(generation=generation):
+                control, comments, routes = self._c5_control_record_fixture(
+                    generation
+                )
+                with patch.object(
+                    recovery, "github", side_effect=lambda path: routes[path]
+                ):
+                    result = recovery.validate_c5_control_merge_record(
+                        comments, control
+                    )
+                self.assertEqual(result["control_generation"], generation)
+
+        with self.assertRaises(RecoveryError):
+            recovery.c5_control_merge_record_body(
+                recovery.C5C1_CONTROL_SHA,
+                140,
+                "e" * 40,
+                "f" * 40,
+                901,
+                "a" * 64,
+                902,
+                "b" * 64,
+                "c" * 64,
+                recovery.C5C2_GENERATION,
+            )
+
+    def test_c5c2_control_record_rejects_forbidden_effect_or_file_surface(self):
+        control, comments, routes = self._c5_control_record_fixture(
+            recovery.C5C2_GENERATION
+        )
+        hostile = copy.deepcopy(comments)
+        hostile[0]["body"] = hostile[0]["body"].replace(
+            "OIDC_EFFECT=NONE", "OIDC_EFFECT=CREATE"
+        )
+        hostile[0]["updated_at"] = hostile[0]["created_at"]
+        with (
+            patch.object(recovery, "github", side_effect=lambda path: routes[path]),
+            self.assertRaises(RecoveryError),
+        ):
+            recovery.validate_c5_control_merge_record(hostile, control)
+
+        routes = copy.deepcopy(routes)
+        routes[f"/repos/{recovery.REPOSITORY}/pulls/140/files?per_page=100"].append(
+            {"filename": "README.md"}
+        )
+        with (
+            patch.object(recovery, "github", side_effect=lambda path: routes[path]),
+            self.assertRaises(RecoveryError),
+        ):
+            recovery.validate_c5_control_merge_record(comments, control)
+
     def test_c5_control_and_activation_authority_constructors_are_strict(self):
         head = "d" * 40
         review = recovery.c5_control_implementation_review_body(140, head)
@@ -2374,7 +2581,7 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             140, head, 901, review_sha
         )
         self.assertIn(
-            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_INERT_CONTROL_ONLY",
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5C1_TO_C5C2_CONTROL_ONLY",
             authority,
         )
         with self.assertRaises(RecoveryError):
@@ -2391,7 +2598,7 @@ class C5RetainedEffectProtocolTests(unittest.TestCase):
             control, 141, "f" * 40, 902, activation_review_sha
         )
         self.assertIn(
-            "AUTHORITY=MERGE_EXACT_REVIEWED_C5_REPOSITORY_ACTIVATION_ONLY",
+            "AUTHORITY=MERGE_EXACT_REVIEWED_C5C2_REPOSITORY_ACTIVATION_ONLY",
             activation_authority,
         )
         with self.assertRaises(RecoveryError):
