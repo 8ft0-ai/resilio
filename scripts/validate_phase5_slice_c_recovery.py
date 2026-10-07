@@ -344,6 +344,8 @@ def c5_semantic_errors(helper: str) -> list[str]:
             )
     if "C5_BASE_MAIN" in control_premerge_source:
         errors.append("RECOVERY_C5C2_CONTROL_BRIDGE_USES_HISTORICAL_BASE")
+    if "C5C2_PREMERGE_REQUIRES_PREDECESSOR_GOVERNANCE_BRIDGE" not in control_premerge_source:
+        errors.append("RECOVERY_C5C2_SUCCESSOR_SELF_ADMISSION_NOT_FAIL_CLOSED")
 
     activation_relation_source = (
         ast.get_source_segment(helper, latest("_c5_validate_activation_relation"))
