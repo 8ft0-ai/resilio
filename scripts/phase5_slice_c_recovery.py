@@ -4974,6 +4974,10 @@ def verify_c5_control_premerge(
     review_body_sha256: str,
     authority_id: int,
 ) -> dict[str, Any]:
+    # B09: C5C1 -> C5C2 is a predecessor/governance-rooted bootstrap bridge.
+    # Successor candidate code is never executable evidence authorising its own merge.
+    raise RecoveryError("C5C2_PREMERGE_REQUIRES_PREDECESSOR_GOVERNANCE_BRIDGE")
+
     _c5_positive(pr_number, "C5_CONTROL_PREMERGE_PR")
     _c5_require_sha(reviewed_head, "C5_CONTROL_PREMERGE_HEAD")
     _c5_positive(review_id, "C5_CONTROL_PREMERGE_REVIEW_ID")
