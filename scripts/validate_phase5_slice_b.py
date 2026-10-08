@@ -12,7 +12,10 @@ from phase5_terraform_control import (
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROL_SHA = "47b3b17d32ffebf3ce8e9b7d15bc3d3539dc7239"
-RECOVERY_CONTROL_SHA = "03123864097df51e6edafd67acc34702f0819de3"
+RECOVERY_CONTROL_SHAS = (
+    "03123864097df51e6edafd67acc34702f0819de3",
+    "b4f0d6d2ecc78dea9e15e69d1f2494694bce12a4",
+)
 AUTHORITY = ROOT / "infra/bootstrap/phase5_authority.tf"
 PHASE4 = ROOT / "infra/bootstrap/phase4_authority.tf"
 CANDIDATE = ROOT / "infra/product/candidate.json"
@@ -149,14 +152,12 @@ def check() -> None:
         "PHASE5_RECOVERY_WIF",
         errors,
     )
-    require(
-        authority,
-        (
-            f'phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{RECOVERY_CONTROL_SHA}"',
-        ),
-        "PHASE5_RECOVERY_CONTROL_REF",
-        errors,
+    recovery_refs = tuple(
+        f'phase5_slice_c_recovery_workflow_ref = "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{sha}"'
+        for sha in RECOVERY_CONTROL_SHAS
     )
+    if sum(ref in authority for ref in recovery_refs) != 1:
+        errors.append("PHASE5_RECOVERY_CONTROL_REF:must be canonical C4 or C5 identity")
 
     exact_roles = {
         "phase5_product_reference_planner": (
@@ -307,7 +308,6 @@ def check() -> None:
         recovery_caller,
         (
             "\n  workflow_dispatch:",
-            f"uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{RECOVERY_CONTROL_SHA}",
             "contents: read",
             "issues: read",
             "actions: read",
@@ -317,6 +317,12 @@ def check() -> None:
         "PHASE5_RECOVERY_CALLER",
         errors,
     )
+    recovery_caller_refs = tuple(
+        f"uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{sha}"
+        for sha in RECOVERY_CONTROL_SHAS
+    )
+    if sum(ref in recovery_caller for ref in recovery_caller_refs) != 1:
+        errors.append("PHASE5_RECOVERY_CALLER:must be canonical C4 or C5 identity")
     for token in (
         "\n  push:",
         "\n  pull_request:",

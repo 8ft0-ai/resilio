@@ -33,6 +33,12 @@ PHASE4_DEPLOY_OLD_WORKFLOW_SHA = "288a0fb525a3e4914d59dc4702914eaa066f061b"
 PHASE4_DEPLOY_SUPERSEDED_WORKFLOW_SHA = "c70afa19c487f6f8d18720028db8e6379fbeed44"
 PHASE4_DEPLOY_PREVIOUS_WORKFLOW_SHA = "6c630f34e3594600acd51164530d1400554dbc5f"
 PHASE4_RECONCILE_PREVIOUS_WORKFLOW_SHA = "7ff8545fd8e094aef7340095e38112227282cb54"
+C5_PREDECESSOR_RECOVERY_SHA = "03123864097df51e6edafd67acc34702f0819de3"
+C5_CONTROL_SHA = "b4f0d6d2ecc78dea9e15e69d1f2494694bce12a4"
+C5_PREDECESSOR_PHASE5_AUTHORITY_BLOB = "4f813fcf262c7bcab69c3b3ccc39d0ce85934c97"
+C5_RECOVERY_WORKFLOW_PREFIX = (
+    "8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@"
+)
 CONTROL_PROJECT_ID = "resilio-control-e882d4"
 CONTROL_PROJECT_NUMBER = "400271474382"
 REFERENCE_PROJECT_ID = "resilio-reference-e882d4"
@@ -149,10 +155,24 @@ def require_file(path: Path, errors: list[str]) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def git_blob_sha(path: Path) -> str:
-    content = path.read_bytes()
+def git_blob_sha_bytes(content: bytes) -> str:
     prefix = f"blob {len(content)}\0".encode("ascii")
     return hashlib.sha1(prefix + content).hexdigest()
+
+
+def git_blob_sha(path: Path) -> str:
+    return git_blob_sha_bytes(path.read_bytes())
+
+
+def is_canonical_c5_phase5_authority_transition(content: bytes) -> bool:
+    old = (C5_RECOVERY_WORKFLOW_PREFIX + C5_PREDECESSOR_RECOVERY_SHA).encode("ascii")
+    new = (C5_RECOVERY_WORKFLOW_PREFIX + C5_CONTROL_SHA).encode("ascii")
+    if content.count(old) == 1 and content.count(new) == 0:
+        return git_blob_sha_bytes(content) == C5_PREDECESSOR_PHASE5_AUTHORITY_BLOB
+    if content.count(old) != 0 or content.count(new) != 1:
+        return False
+    predecessor = content.replace(new, old, 1)
+    return git_blob_sha_bytes(predecessor) == C5_PREDECESSOR_PHASE5_AUTHORITY_BLOB
 
 
 def resource_block(text: str, resource_type: str, resource_name: str) -> str | None:
@@ -195,7 +215,14 @@ def check_bootstrap_terraform_identity(errors: list[str]) -> None:
     for name, expected_sha in EXPECTED_BOOTSTRAP_TERRAFORM_BLOBS.items():
         path = BOOTSTRAP_DIR / name
         actual_sha = git_blob_sha(path)
-        if actual_sha != expected_sha:
+        if name == "phase5_authority.tf":
+            if not is_canonical_c5_phase5_authority_transition(path.read_bytes()):
+                errors.append(
+                    "bootstrap Terraform configuration phase5_authority.tf must be "
+                    "the canonical C4 predecessor or differ from it only by the exact "
+                    "authorised C4->C5 recovery workflow ref transition"
+                )
+        elif actual_sha != expected_sha:
             errors.append(
                 f"bootstrap Terraform configuration {name} must remain at reviewed "
                 f"blob {expected_sha}; found {actual_sha}"

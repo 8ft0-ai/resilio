@@ -808,27 +808,27 @@ jobs:
       id-token: write
     uses: 8ft0-ai/resilio/.github/workflows/phase5-slice-c-recovery-reusable.yml@{control}
 """
-        self.assertEqual(r2_caller_structure_errors(caller, control), [])
+        self.assertEqual(r2_caller_structure_errors(caller, (control,)), [])
         reduced = caller.replace("      pull-requests: read\n", "")
         self.assertIn(
             "RECOVERY_R2_CALLER_PERMISSION_SET_INVALID",
-            r2_caller_structure_errors(reduced, control),
+            r2_caller_structure_errors(reduced, (control,)),
         )
         mutable = caller.replace(
             "  workflow_dispatch:\n", "  workflow_dispatch:\n    inputs:\n      incident:\n"
         )
         self.assertIn(
             "RECOVERY_R2_CALLER_MUTABLE_INPUTS_FORBIDDEN",
-            r2_caller_structure_errors(mutable, control),
+            r2_caller_structure_errors(mutable, (control,)),
         )
 
-    def test_actual_successor_caller_pins_immutable_c4_control(self):
+    def test_actual_successor_caller_pins_immutable_c5_control(self):
         caller = (
             ROOT / ".github/workflows/phase5-slice-c-recovery.yml"
         ).read_text(encoding="utf-8")
         self.assertEqual(
             r2_caller_structure_errors(
-                caller, "03123864097df51e6edafd67acc34702f0819de3"
+                caller, ("b4f0d6d2ecc78dea9e15e69d1f2494694bce12a4",)
             ),
             [],
         )
