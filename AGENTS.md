@@ -92,6 +92,8 @@ While the circuit breaker is active:
 
 If the next fresh substantive review discovers another new systemic blocker, keep the circuit breaker active, treat the closure model itself as incomplete, and return to architecture closure instead of patching the new finding directly. If it identifies only an incomplete implementation of an already frozen row or a plainly bounded non-systemic defect, remediation may continue within the frozen closure model and must again pass candidate readiness and fresh substantive review.
 
+Clear the transaction-level circuit breaker only after a fresh substantive review reports no material blockers. Record `REVIEW_FIX_LOOP_CLEARED` durably on the governing issue, binding the activation record, final closure artefact, exact reviewed candidate and passing review. Historical activation/closure records remain evidence and must not be interpreted as an active circuit breaker after this explicit clearing record.
+
 ## Architecture-closure non-convergence
 
 This Resilio-local second-level breaker applies only while `REVIEW_FIX_LOOP_DETECTED=true` and architecture closure is the active required phase for one governed transaction. It does not replace, clear or weaken the first-level circuit breaker.
@@ -109,8 +111,6 @@ Perform one bounded, read-only `RETAIN | RADICALLY_SIMPLIFY | REMOVE` assessment
 Record an explicit owner disposition before any further architecture amendment or implementation. The disposition cannot itself authorise repository code/policy changes, merge, risk acceptance, deletion or lifecycle control, credential changes, workflow dispatch or cloud effects; these require their separately applicable gates. An unresolved external-provider anomaly may legitimately leave the transaction blocked; it must not be converted into evidence of harmlessness or an admission exception.
 
 The existing `REVIEW_FIX_LOOP_DETECTED` activation and `REVIEW_FIX_LOOP_CLEARED` semantics remain unchanged. This second-level disposition never clears the circuit breaker: only a blocker-free genuinely fresh substantive review plus the existing durable clearing record can do so. Historical pilot decisions remain historical and are not retroactively reclassified.
-
-Clear the transaction-level circuit breaker only after a fresh substantive review reports no material blockers. Record `REVIEW_FIX_LOOP_CLEARED` durably on the governing issue, binding the activation record, final closure artefact, exact reviewed candidate and passing review. Historical activation/closure records remain evidence and must not be interpreted as an active circuit breaker after this explicit clearing record.
 
 The first live pilot is issue #109 / PR #119. At that pilot's next stable review boundary, record a repository-local `RETAIN`, `AMEND` or `REJECT` disposition covering the trigger quality, closure usefulness, remediation convergence and whether the subsequent fresh review exposed any new systemic blocker. Any wider adoption is a separate governed change.
 
