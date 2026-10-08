@@ -174,5 +174,241 @@ def demonstrate():
     }
 
 
+
+# #136: deterministic, credential-free acceptance witnesses. No provider calls.
+import hashlib
+from services.resilio_app.provider import ProviderFailure as _ProviderFailure
+
+ACCEPTANCE_SOURCE = "fcbaa777d05982ebae4311e2cc30763405d6e6d2"
+ACCEPTANCE_CASES = (
+    "R01", "R02", "R03", "R04", "R05", "R06", "R07", "R08", "R09", "R10", "R11", "R12"
+)
+
+
+def _safe(value):
+    """Bound witness JSON to the existing JCS scalar domain."""
+    if value is None:
+        return "<absent>"
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is int:
+        return str(value)
+    if type(value) is tuple:
+        return [_safe(v) for v in value]
+    if type(value) is list:
+        return [_safe(v) for v in value]
+    if type(value) is dict:
+        return {str(k): _safe(v) for k, v in value.items()}
+    if type(value) is str:
+        return value
+    raise TypeError(type(value))
+
+
+class _WitnessClock:
+    def __init__(self):
+        self.trace = []
+
+    def add(self, kind, identity="", outcome="ok", code=""):
+        self.trace.append({
+            "seq": str(len(self.trace) + 1), "kind": kind,
+            "identity": identity, "outcome": outcome, "code": code,
+        })
+
+
+class _WitnessPublisher(FakePublisher):
+    def __init__(self, clock):
+        super().__init__()
+        self.clock = clock
+        self.fail = False
+
+    def publish(self, raw, event_id, digest):
+        self.clock.add("PUBLISH_ATTEMPT", event_id)
+        if self.fail:
+            self.clock.add("INJECT_FAILURE", event_id, "fail", "PUBLISH_UNAVAILABLE")
+            raise _ProviderFailure("PUBLISH_UNAVAILABLE")
+        mid = super().publish(raw, event_id, digest)
+        self.clock.add("PUBLISH_COMMITTED", mid)
+        return mid
+
+
+class _WitnessStore(FakeStore):
+    def __init__(self, clock):
+        super().__init__()
+        self.clock = clock
+        self.fail_create = False
+        self.fail_read = False
+
+    def create_event(self, event_id, canonical, digest, message_id):
+        self.clock.add("CREATE_ATTEMPT", event_id)
+        if self.fail_create:
+            self.clock.add("INJECT_FAILURE", event_id, "fail", "CREATE_FAILED")
+            raise _ProviderFailure("CREATE_FAILED")
+        before = copy.deepcopy(self.events)
+        result = super().create_event(event_id, canonical, digest, message_id)
+        if self.events != before:
+            self.clock.add("CREATE_COMMITTED", event_id)
+        return result
+
+    def record_rejection(self, rejection_id, code, mid, event_id, digest, raw_sha):
+        self.clock.add("REJECTION_ATTEMPT", rejection_id)
+        if self.reject_writes:
+            self.clock.add("INJECT_FAILURE", rejection_id, "fail", "REJECTION_WRITE_FAILED")
+            raise _ProviderFailure("REJECTION_WRITE_FAILED")
+        before = copy.deepcopy(self.rejections)
+        super().record_rejection(rejection_id, code, mid, event_id, digest, raw_sha)
+        if self.rejections != before:
+            self.clock.add("REJECTION_COMMITTED", rejection_id)
+
+    def read_event(self, event_id):
+        self.clock.add("READ_ATTEMPT", event_id)
+        if self.fail_read:
+            self.clock.add("INJECT_FAILURE", event_id, "fail", "READ_UNAVAILABLE")
+            raise _ProviderFailure("READ_UNAVAILABLE")
+        result = super().read_event(event_id)
+        self.clock.add("READ_RESULT", event_id)
+        return result
+
+
+def _snapshot(store, publisher):
+    state = {
+        "events": [{"key": key, "record": _safe(store.events[key])}
+                   for key in sorted(store.events)],
+        "rejections": [{"key": key, "record": _safe(store.rejections[key])}
+                       for key in sorted(store.rejections)],
+        "published": _safe(publisher.messages),
+    }
+    state["state_sha256"] = sha256(jcs(state))
+    return state
+
+
+def _push_bytes(event, mid, attributes=None, data=None):
+    return jcs({"message": {
+        "messageId": mid,
+        "data": base64.b64encode(event.canonical_bytes if data is None else data).decode("ascii"),
+        "attributes": (
+            {"event_id": event.event_id, "payload_sha256": event.payload_sha256}
+            if attributes is None else attributes
+        ),
+    }})
+
+
+def _make_witness(case, variant=""):
+    event = verified_event()
+    clock = _WitnessClock()
+    publisher = _WitnessPublisher(clock)
+    store = _WitnessStore(clock)
+    path = EVENT_PATH + "/" + event.event_id
+    # Seed through the real processor when the case needs a previously accepted state.
+    if case in {"R04", "R05", "R10", "R11", "R12"}:
+        seed = _push_bytes(event, "first-message")
+        status, _ = dispatch("processor", "POST", PUSH_PATH, seed, publisher, store)
+        if status != 200 or event.event_id not in store.events:
+            raise RuntimeError("SEED_FAILURE")
+        clock.trace.clear()
+    component, method, target, body = "processor", "POST", PUSH_PATH, b""
+    if case == "R01":
+        body = _push_bytes(event, "mismatch-id", {"event_id": "wrong", "payload_sha256": event.payload_sha256})
+    elif case == "R02":
+        body = _push_bytes(event, "mismatch-sha", {"event_id": event.event_id, "payload_sha256": "0" * 64})
+    elif case == "R03":
+        packet = json.loads(_push_bytes(event, "temporary"))
+        if variant == "invalid":
+            packet["message"]["messageId"] = "bad id"
+        else:
+            del packet["message"]["messageId"]
+        body = jcs(packet)
+    elif case == "R04":
+        body = _push_bytes(event, "replayed-message")
+    elif case == "R05":
+        observed = copy.deepcopy(event.observed)
+        observed["deployment"]["artifact_digest"] = "sha256:" + "a" * 64
+        other = event_from_bytes(jcs(observed))
+        body = _push_bytes(other, "conflict-message")
+    elif case == "R06":
+        if variant == "noncanonical":
+            body = _push_bytes(event, "notcanonical", data=json.dumps(event.observed, indent=2).encode())
+        else:
+            body = b"bad-envelope"
+    elif case == "R07":
+        body = b"bad-envelope"
+        store.reject_writes = True
+    elif case == "R08":
+        body = _push_bytes(event, "create-failed")
+        store.fail_create = True
+    elif case == "R09":
+        component, method, target, body = "ingest", "POST", EVENT_PATH, event.canonical_bytes
+        publisher.fail = True
+    elif case == "R10":
+        component, method, target, body = "api", "GET", path, b""
+        rec = store.events[event.event_id]
+        if variant == "event_id":
+            rec["event_id"] = "0" * 64
+        elif variant == "observed_json":
+            rec["observed_json"] = "not-json"
+        elif variant == "payload_sha256":
+            rec["payload_sha256"] = "0" * 64
+        elif variant == "first_pubsub_message_id":
+            rec["first_pubsub_message_id"] = ""
+        elif variant == "missing_mid":
+            del rec["first_pubsub_message_id"]
+        elif variant == "mid_type":
+            rec["first_pubsub_message_id"] = 123
+        elif variant == "mid_oversize":
+            rec["first_pubsub_message_id"] = "x" * 129
+        elif variant == "noncanonical":
+            rec["observed_json"] = json.dumps(event.observed, indent=2)
+        elif variant == "missing_observed":
+            del rec["observed_json"]
+        elif variant == "other_identity":
+            other = copy.deepcopy(event.observed)
+            other["deployment"]["id"] = "different"
+            rec["observed_json"] = event_from_bytes(jcs(other)).canonical_bytes.decode()
+        else:
+            raise RuntimeError("UNKNOWN_CORRUPTION")
+    elif case == "R11":
+        component, method, target, body = "api", "GET", path, b""
+    elif case == "R12":
+        component, method, target, body = "api", "POST", EVENT_PATH, event.canonical_bytes
+    else:
+        raise RuntimeError("UNKNOWN_CASE")
+    before = _snapshot(store, publisher)
+    response_status, response_bytes = dispatch(component, method, target, body, publisher, store)
+    clock.add("HTTP_RESPONSE", str(response_status))
+    after = _snapshot(store, publisher)
+    response = json.loads(response_bytes.decode("utf-8"))
+    return {
+        "id": case, "variant": variant,
+        "input": {"component": component, "method": method, "path": target,
+                  "body_b64": base64.b64encode(body).decode("ascii")},
+        "observed": {"status": str(response_status), "response": _safe(response)},
+        "state_before": before, "state_after": after, "trace": clock.trace,
+    }
+
+
+def resilience_acceptance():
+    variants = {
+        "R03": ("missing", "invalid"),
+        "R06": ("malformed", "noncanonical"),
+        "R10": ("event_id", "observed_json", "payload_sha256",
+                "first_pubsub_message_id", "missing_mid", "mid_type",
+                "mid_oversize", "noncanonical", "missing_observed", "other_identity"),
+    }
+    cases = [_make_witness(case, variant)
+             for case in ACCEPTANCE_CASES
+             for variant in variants.get(case, ("",))]
+    report = {
+        "contract": "resilio-phase5-local-acceptance/v1",
+        "scope": "LOCAL_FAKE_PROVIDER_ONLY",
+        "source_commit": ACCEPTANCE_SOURCE,
+        "fixture_version": "phase5-verified-event/v1",
+        "scenarios": cases,
+    }
+    report["acceptance_sha256"] = sha256(jcs(report))
+    return report
+
+
+def resilience_acceptance_bytes():
+    return jcs(resilience_acceptance()) + b"\n"
+
 if __name__ == "__main__":
-    print(json.dumps(demonstrate(), sort_keys=True, separators=(",", ":")))
+    sys.stdout.buffer.write(resilience_acceptance_bytes())
