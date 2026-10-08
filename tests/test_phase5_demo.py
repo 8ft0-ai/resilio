@@ -214,6 +214,74 @@ def verify_resilience_report(report):
             "R12": ["HTTP_RESPONSE"],
         }
         _require(kinds == expected_trace[case], "EXACT_TRANSITION_GRAMMAR")
+        # Independently bind every operation identity and failure to its input
+        # and the exact fake state. A self-rehashed but forged trace must fail.
+        expected_identity = fixture.event_id
+        if case in {"R01", "R02", "R03", "R05", "R06", "R07"}:
+            message_id = {
+                "R01": "mismatch-id", "R02": "mismatch-sha",
+                "R03": "", "R05": "conflict-message",
+                "R06": "notcanonical" if variant == "noncanonical" else "",
+                "R07": "",
+            }[case]
+            expected_rejection = _rejection_id(message_id, raw)
+        else:
+            expected_rejection = ""
+        expected_identities = {
+            "R01": [expected_rejection, expected_rejection, "200"],
+            "R02": [expected_rejection, expected_rejection, "200"],
+            "R03": [expected_rejection, expected_rejection, "200"],
+            "R04": [expected_identity, "200"],
+            "R05": [expected_identity, expected_rejection, expected_rejection, "200"],
+            "R06": [expected_rejection, expected_rejection, "200"],
+            "R07": [expected_rejection, expected_rejection, "503"],
+            "R08": [expected_identity, expected_identity, "503"],
+            "R09": [expected_identity, expected_identity, "503"],
+            "R10": [expected_identity, expected_identity, "503"],
+            "R11": [expected_identity, expected_identity, "200"],
+            "R12": ["404"],
+        }
+        expected_failures = {
+            "R07": "REJECTION_WRITE_FAILED",
+            "R08": "CREATE_FAILED",
+            "R09": "PUBLISH_UNAVAILABLE",
+        }
+        _require(
+            [(item["kind"], item["identity"], item["outcome"], item["code"])
+             for item in trace] == [
+                (kind, identity,
+                 "fail" if kind == "INJECT_FAILURE" else "ok",
+                 expected_failures[case] if kind == "INJECT_FAILURE" else "")
+                for kind, identity in zip(expected_trace[case], expected_identities[case])
+            ], "TRACE_IDENTITY_CAUSAL_BINDING")
+        # B02: the complete new rejection record is derived from the request
+        # and real handler's deterministic context, not trusted from the fake.
+        if case in {"R01", "R02", "R03", "R05", "R06"}:
+            expected_codes = {
+                "R01": "PERMANENT_IDENTITY_MISMATCH",
+                "R02": "PERMANENT_IDENTITY_MISMATCH",
+                "R03": "PUSH_MESSAGE_ID_INVALID",
+                "R05": "PERMANENT_IMMUTABLE_DEPLOYMENT_CONFLICT",
+                "R06": ("NON_CANONICAL_PAYLOAD" if variant == "noncanonical"
+                        else "PUSH_ENVELOPE_INVALID"),
+            }
+            event_ident = (fixture.event_id if case in {"R01", "R02", "R05"} else "")
+            event_digest = ""
+            if case in {"R01", "R02"}:
+                event_digest = fixture.payload_sha256
+            if case == "R05":
+                other = copy.deepcopy(fixture.observed)
+                other["deployment"]["artifact_digest"] = "sha256:" + "a" * 64
+                event_digest = event_from_bytes(jcs(other)).payload_sha256
+            _require(after_reject.get(expected_rejection) == [
+                expected_codes[case],
+                {"R01":"mismatch-id","R02":"mismatch-sha","R03":"",
+                 "R05":"conflict-message",
+                 "R06":"notcanonical" if variant=="noncanonical" else ""}[case],
+                event_ident, event_digest, sha256(raw),
+            ], "EXACT_REJECTION_RECORD")
+            _require(set(after_reject) - set(before_reject) ==
+                     {expected_rejection}, "EXACT_REJECTION_DELTA")
         for item in trace:
             if item["kind"] == "INJECT_FAILURE":
                 _require(item["outcome"] == "fail", "INJECTION_OUTCOME")
@@ -297,7 +365,7 @@ def verify_resilience_report(report):
             elif variant == "missing_mid":
                 del expected["first_pubsub_message_id"]
             elif variant == "mid_type":
-                expected["first_pubsub_message_id"] = "123"
+                expected["first_pubsub_message_id"] = {"$type": "integer", "decimal": "123"}
             elif variant == "mid_oversize":
                 expected["first_pubsub_message_id"] = "x" * 129
             elif variant == "noncanonical":
@@ -432,6 +500,27 @@ class ResilienceWitnessTests(unittest.TestCase):
         altered(lambda r: r["scenarios"][0]["state_after"]["rejections"][0].update(
             key="0" * 64), True)
         altered(lambda r: r.update(acceptance_sha256="0" * 64))
+        # Rehashed forgery attacks must be rejected by the verifier, not by
+        # the outer report digest alone.
+        altered(lambda r: r["scenarios"][0]["trace"][0].update(
+            identity="0" * 64), True)
+        altered(lambda r: r["scenarios"][0]["trace"][1].update(
+            identity="0" * 64), True)
+        altered(lambda r: r["scenarios"][8]["trace"][1].update(
+            code="FABRICATED_FAILURE"), True)
+        altered(lambda r: r["scenarios"][0]["state_after"]["rejections"][0][
+            "record"].__setitem__(0, "FORGED_REJECTION"), True)
+        def typed_corruption_to_valid_string(r):
+            record = r["scenarios"][16]["state_before"]["events"][0]["record"]
+            record["first_pubsub_message_id"] = "123"
+            r["scenarios"][16]["state_after"]["events"][0][
+                "record"]["first_pubsub_message_id"] = "123"
+            for state in ("state_before", "state_after"):
+                entry = r["scenarios"][16][state]
+                preimage = dict(entry)
+                preimage.pop("state_sha256")
+                entry["state_sha256"] = sha256(jcs(preimage))
+        altered(typed_corruption_to_valid_string, True)
         for mutated in candidates:
             with self.assertRaises((ValueError, TypeError, KeyError, IndexError)):
                 verify_resilience_report(mutated)

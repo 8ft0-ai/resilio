@@ -192,7 +192,8 @@ def _safe(value):
     if type(value) is bool:
         return "true" if value else "false"
     if type(value) is int:
-        return str(value)
+        # Preserve the scalar type without extending core.jcs's closed domain.
+        return {"$type": "integer", "decimal": str(value)}
     if type(value) is tuple:
         return [_safe(v) for v in value]
     if type(value) is list:
