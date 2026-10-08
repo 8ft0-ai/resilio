@@ -13,7 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from services.resilio_app.core import event_from_bytes, jcs
+from services.resilio_app.core import event_from_bytes, jcs, sha256
 from services.resilio_app.provider import ProviderFailure
 from services.resilio_app.server import EVENT_PATH, PUSH_PATH, dispatch
 from scripts.phase5_acceptance_fixture import verified_event
@@ -82,8 +82,21 @@ def demonstrate():
         if expected_key is not None:
             key, expected = expected_key
             assert document.get(key) == expected, (name, document)
+        captured = (publisher.messages[-1] if component == "processor"
+                    and publisher.messages and body == publisher.envelope() else None)
+        request_event_id = (document.get("event_id") if component == "ingest"
+                            else path.removeprefix(EVENT_PATH + "/") if method == "GET"
+                            and path.startswith(EVENT_PATH + "/") else
+                            captured["attributes"]["event_id"] if captured else None)
+        request_digest = (document.get("payload_sha256") if component == "ingest"
+                          else captured["attributes"]["payload_sha256"] if captured else None)
+        request_message_id = (document.get("message_id") if component == "ingest"
+                              else captured["messageId"] if captured else None)
         rows.append({
             "phase": name, "http_status": status, "response": document,
+            "request": {"component": component, "method": method, "path": path,
+                        "body_sha256": sha256(body), "event_id": request_event_id,
+                        "payload_sha256": request_digest, "message_id": request_message_id},
             "published_count": len(publisher.messages),
             "stored_count": len(store.events),
             "rejection_count": len(store.rejections),
