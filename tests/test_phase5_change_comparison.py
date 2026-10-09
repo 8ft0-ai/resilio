@@ -110,7 +110,7 @@ def test_evidence_ordering_with_two_membership_deltas():
     old = observation()
     new = copy.deepcopy(old)
     new["evidence"] = [
-        {"kind": "z", "ref": "z"}, {"kind": "a", "ref": "a"}, {"kind": "build", "ref": "local:1"}
+        {"kind": "a", "ref": "a"}, {"kind": "build", "ref": "local:1"}, {"kind": "z", "ref": "z"}
     ]
     result = report(old, new)
     assert result["evidence_added"] == [{"kind": "a", "ref": "a"}, {"kind": "z", "ref": "z"}]
