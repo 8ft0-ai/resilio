@@ -169,7 +169,7 @@ class ComparisonTests(unittest.TestCase):
         assert error_pair(json.dumps(good).encode(), encoded(good)) == ("baseline", "NON_CANONICAL_PAYLOAD")
         bad = copy.deepcopy(good)
         bad["schema_version"] = 2
-        assert error_pair(encoded(bad), encoded(good)) == ("baseline", "SCHEMA_VERSION_UNSUPPORTED")
+        assert error_pair(json.dumps(bad, sort_keys=True, separators=(",", ":")).encode("utf-8"), encoded(good)) == ("baseline", "SCHEMA_VERSION_UNSUPPORTED")
         bad = copy.deepcopy(good)
         bad["evidence"] = [{"kind": "z", "ref": "z"}, {"kind": "a", "ref": "a"}]
         assert error_pair(encoded(bad), encoded(good)) == ("baseline", "NON_CANONICAL_PAYLOAD")
