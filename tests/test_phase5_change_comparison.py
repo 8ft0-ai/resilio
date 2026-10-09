@@ -1,4 +1,5 @@
 """Contract and hostile-input tests for #138 comparison V1."""
+import ast
 import copy
 import json
 import os
@@ -40,7 +41,7 @@ def report(baseline, candidate):
 def error_pair(baseline, candidate):
     with unittest.TestCase().assertRaises(PermanentFailure) as raised:
         compare_deployments(baseline, candidate)
-    err = raised.value
+    err = raised.exception
     assert str(err) == err.code
     return err.role, err.code
 
@@ -206,11 +207,19 @@ class ComparisonTests(unittest.TestCase):
 
     def test_negative_authority_source_surface(self):
         source = (Path(__file__).parents[1] / "services/resilio_app/change_comparison.py").read_text()
-        forbidden = (
-            "import requests", "import socket", "import subprocess",
-            "import urllib", "import http", "import provider",
-            "open(", "write_text(", "write_bytes(", "getenv(",
-            "environ", "credentials", "google.cloud", "terraform", "listen("
-        )
-        assert all(term not in source for term in forbidden)
-
+        tree = ast.parse(source)
+        forbidden_imports = {"socket", "subprocess", "urllib", "http", "requests", "provider",
+                             "google", "terraform", "os", "pathlib"}
+        forbidden_calls = {"open", "getenv", "listen", "write_text", "write_bytes",
+                           "connect", "urlopen", "request", "system", "popen"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                self.assertFalse(any(alias.name.split(".")[0] in forbidden_imports
+                                     for alias in node.names))
+            if isinstance(node, ast.ImportFrom):
+                self.assertNotIn((node.module or "").split(".")[0], forbidden_imports)
+            if isinstance(node, ast.Call):
+                function = node.func
+                name = function.id if isinstance(function, ast.Name) else (
+                    function.attr if isinstance(function, ast.Attribute) else "")
+                self.assertNotIn(name.lower(), forbidden_calls)
