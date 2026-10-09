@@ -37,6 +37,14 @@ def report(baseline, candidate):
     return json.loads(compare_deployments(encoded(baseline), encoded(candidate)))
 
 
+def error_pair(baseline, candidate):
+    with unittest.TestCase().assertRaises(PermanentFailure) as raised:
+        compare_deployments(baseline, candidate)
+    err = raised.value
+    assert str(err) == err.code
+    return err.role, err.code
+
+
 class ComparisonTests(unittest.TestCase):
 
     def test_identical_and_independent_identities(self):
@@ -131,12 +139,6 @@ class ComparisonTests(unittest.TestCase):
         assert json.loads(compare_deployments(raw, raw))["classification"] == "UNCHANGED"
 
 
-    def error_pair(baseline, candidate):
-        with unittest.TestCase().assertRaises(PermanentFailure) as raised:
-            compare_deployments(baseline, candidate)
-        err = raised.value
-        assert str(err) == err.code
-        return err.role, err.code
 
 
     def test_baseline_wrong_type_precedes_other_errors(self):
